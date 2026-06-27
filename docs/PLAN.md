@@ -73,7 +73,8 @@ The parked Stage-1 backend drafts exist (`models/core.py` 8 tables, `config.py`,
 ## Stage 3 — Document pipeline (stub OCR)  ☐
 Upload → store → mock OCR → statements/line_items. Makes real data flow. Detail: `CORE_DESIGN.md`, `OCR_PROTOCOL.md`.
 - [ ] 3.1 `POST /api/documents` (multipart) → save file + `documents` row (queued).
-- [ ] 3.2 `services/ocr_client.py` (`submit`/`poll`, stub vs real by `ocr_worker_url`) + `services/ocr_stub.py` (canned VNM rows incl. planted 270 error).
+- [ ] 3.2 `services/ocr_client.py` (`submit`/`poll` — stub vs live worker; interface unchanged regardless of transport) + `services/ocr_stub.py` (canned VNM rows incl. planted 270 error).
+- [ ] 3.2b `routes/sync.py` — WebSocket coordinator: Mac listens at `/ws/ocr`, laptop worker dials in with a pairing code, jobs dispatched + results returned over WS (chunked-binary PDF). Backs `ocr_client` when a worker is paired; stub otherwise. Matches `OCR_PROTOCOL.md` + the `page-sync` UI.
 - [ ] 3.3 Orchestration: upload → submit → poll → write `statements` + `line_items` (unverified).
 - [ ] 3.4 `GET /api/documents[/{id}]`, `GET /api/statements/{id}`.
 - [ ] 3.5 Mount `StaticFiles` — Core serves the website.
