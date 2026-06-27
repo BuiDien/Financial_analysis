@@ -12,6 +12,7 @@ All planning & design docs for the project. Start with **PLAN.md** (the master b
 - [`CORE_DESIGN.md`](design/CORE_DESIGN.md) — Core (business + data tier) internals
 - [`API_CONTRACT.md`](design/API_CONTRACT.md) — Presentation ↔ Core seam (frozen v1)
 - [`OCR_PROTOCOL.md`](design/OCR_PROTOCOL.md) — Core ↔ external OCR system (the port)
+- [`SYNC_WORKER_GUIDE.md`](design/SYNC_WORKER_GUIDE.md) — how a worker laptop connects + talks to the Sync WebSocket (+ reference worker)
 - [`HERMES_BRAIN.md`](design/HERMES_BRAIN.md) — the agentic brain (Hermes Agent + Qwen3 35B)
 - [`SKILL_INTEGRATION.md`](design/SKILL_INTEGRATION.md) — borrowing financial skills/methodology
 - [`DISCUSSION_BACKLOG.md`](design/DISCUSSION_BACKLOG.md) — parked topics + external-repo decisions
