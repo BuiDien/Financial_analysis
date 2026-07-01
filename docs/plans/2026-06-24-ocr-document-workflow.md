@@ -20,7 +20,7 @@
 - **Fuzzy label match constant:** `LABEL_MATCH_THRESHOLD = 0.72` (difflib ratio over diacritic-stripped, lowercased, whitespace-collapsed strings).
 - Depends on: Stage 2 Core (`db`, `get_db`, `models/core.py`, `tests/conftest.py` db fixture), Stage 3 (`services/ocr_client.py` submit/poll + `services/ocr_stub.py`), Stage 4 (`services/recon.py::reconcile_statement`). Where a dependency is absent at execution time, the task notes a minimal shim.
 - EXCLUDE the OCR engine internals (external machine).
-- Repo not yet git-initialized — `git init` once before starting for commit steps.
+- Repo IS git-initialized (`main`, 7+ commits) — commit steps work as written. Commit any dirty sync-coordinator work first (PLAN.md Stage 0.1).
 - Run tests: `cd "Financial analyze/backend" && pytest`.
 
 ## File Structure
