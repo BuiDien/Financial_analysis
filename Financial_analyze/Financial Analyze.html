@@ -234,12 +234,25 @@
   .ticker-tape {
     flex: 1;
     overflow: hidden;
-    display: flex;
+    mask-image: linear-gradient(to right, transparent, black 5%, black 95%, transparent);
+  }
+  .tape-track {
+    display: inline-flex;
     gap: 24px;
     align-items: center;
     font-family: var(--font-mono);
     font-size: 12px;
-    mask-image: linear-gradient(to right, transparent, black 5%, black 95%, transparent);
+    white-space: nowrap;
+    animation: tape-scroll 40s linear infinite;
+    will-change: transform;
+  }
+  .ticker-tape:hover .tape-track { animation-play-state: paused; }
+  @keyframes tape-scroll {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .tape-track { animation: none; }
   }
   .tape-item { display: inline-flex; gap: 6px; align-items: center; white-space: nowrap; }
   .tape-item .sym { color: var(--text-muted); font-weight: 600; }
@@ -769,7 +782,6 @@
 <script type="text/babel" src="src/page-screener.jsx"></script>
 <script type="text/babel" src="src/page-news.jsx"></script>
 <script type="text/babel" src="src/page-statements.jsx"></script>
-<script type="text/babel" src="src/page-totals.jsx"></script>
 <script type="text/babel" src="src/page-settings.jsx"></script>
 <script type="text/babel" src="src/page-alerts.jsx"></script>
 <script type="text/babel" src="src/page-sync.jsx"></script>

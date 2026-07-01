@@ -46,6 +46,10 @@ const PageFilings = () => {
   const addFiling = (filing) => {
     setFilings(f => [filing, ...f]);
     setShowUpload(false);
+    // Settings → auto-summarize on upload
+    let auto = false;
+    try { auto = !!JSON.parse(localStorage.getItem('helix_settings_v1') || '{}').aiAutoSummary; } catch {}
+    if (auto) { setSelected(filing); analyzeFiling(filing); }
     window.toast && window.toast(`Added "${filing.name}"`, { type: 'success' });
   };
 
@@ -357,7 +361,7 @@ const UploadDialog = ({ onClose, onUpload }) => {
   const handleFile = (f) => {
     if (!f) return;
     if (f.type !== 'application/pdf' && !f.name.toLowerCase().endsWith('.pdf')) {
-      alert('Please upload a PDF file');
+      window.toast && window.toast('Please choose a PDF file', { type: 'error' });
       return;
     }
     setFile(f);
@@ -368,7 +372,7 @@ const UploadDialog = ({ onClose, onUpload }) => {
 
   const submit = () => {
     if (!file || !meta.ticker || !meta.period) {
-      alert('Please fill in ticker and period');
+      window.toast && window.toast('Add a file, ticker, and period', { type: 'error' });
       return;
     }
     const newFiling = {

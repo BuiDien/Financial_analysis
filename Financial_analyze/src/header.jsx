@@ -1,22 +1,33 @@
 // Top header with ticker tape and actions
 
 const TickerTape = ({ indices }) => {
+  // Duplicate the list so the marquee loops seamlessly (track translates -50%)
+  const loop = [...indices, ...indices];
   return (
     <div className="ticker-tape">
-      {indices.map((it, i) => (
-        <div key={i} className="tape-item">
-          <span className="sym">{it.sym}</span>
-          <span className="num">{fmtNum(it.val, it.val < 100 ? 2 : it.val < 1000 ? 2 : 0)}</span>
-          <span className={it.chg >= 0 ? 'pos num' : 'neg num'}>
-            {it.chg >= 0 ? '+' : ''}{it.chg.toFixed(2)}%
-          </span>
-        </div>
-      ))}
+      <div className="tape-track">
+        {loop.map((it, i) => (
+          <div key={i} className="tape-item" aria-hidden={i >= indices.length ? 'true' : undefined}>
+            <span className="sym">{it.sym}</span>
+            <span className="num">{fmtNum(it.val, it.val < 100 ? 2 : it.val < 1000 ? 2 : 0)}</span>
+            <span className={it.chg >= 0 ? 'pos num' : 'neg num'}>
+              {it.chg >= 0 ? '+' : ''}{it.chg.toFixed(2)}%
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 };
 
 const Header = ({ indices, theme, setTheme, aiOpen, setAiOpen, setPage }) => {
+  const readCfg = () => { try { return JSON.parse(localStorage.getItem('helix_settings_v1') || '{}'); } catch { return {}; } };
+  const [cfg, setCfg] = React.useState(readCfg);
+  React.useEffect(() => {
+    const on = () => setCfg(readCfg());
+    window.addEventListener('helix-settings-updated', on);
+    return () => window.removeEventListener('helix-settings-updated', on);
+  }, []);
   return (
     <header className="header">
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', fontSize: 11, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
@@ -25,7 +36,7 @@ const Header = ({ indices, theme, setTheme, aiOpen, setAiOpen, setPage }) => {
         <ApiStatusChip />
       </div>
 
-      <TickerTape indices={indices} />
+      {cfg.tickerTape !== false ? <TickerTape indices={indices} /> : <div style={{ flex: 1 }}></div>}
 
       <div className="header-actions">
         <button className="search" onClick={() => window.dispatchEvent(new Event('open-command-palette'))}

@@ -979,8 +979,8 @@ const DataTracker = ({ tracker, setTracker, filing, currentSection }) => {
     URL.revokeObjectURL(url);
   };
 
-  const reset = () => {
-    if (confirm('Clear all tracked data for this filing?')) setTracker(DEFAULT_TRACKER());
+  const reset = async () => {
+    if (await window.askConfirm({ title: 'Reset tracker', message: 'Clear all tracked data for this filing?', confirmText: 'Reset', danger: true })) setTracker(DEFAULT_TRACKER());
   };
 
   const saveToDatabase = async () => {

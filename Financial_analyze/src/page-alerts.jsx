@@ -36,9 +36,26 @@ const describeAlert = (a) => {
 const PageAlerts = ({ setActiveAsset, setPage }) => {
   const [alerts, setAlerts] = React.useState(loadAlerts);
   const [showForm, setShowForm] = React.useState(false);
+  const [prefillSym, setPrefillSym] = React.useState('');
   const [filter, setFilter] = React.useState('all'); // all | active | triggered
 
+  // Open the form pre-filled when arriving from the Asset Detail "Alert" button
+  React.useEffect(() => {
+    if (window.__alertTicker) {
+      setPrefillSym(window.__alertTicker);
+      setShowForm(true);
+      window.__alertTicker = null;
+    }
+  }, []);
+
   React.useEffect(() => { localStorage.setItem(ALERTS_KEY, JSON.stringify(alerts)); }, [alerts]);
+
+  // Refresh when the app's alert monitor fires a trigger
+  React.useEffect(() => {
+    const reload = () => setAlerts(loadAlerts());
+    window.addEventListener('helix-alerts-updated', reload);
+    return () => window.removeEventListener('helix-alerts-updated', reload);
+  }, []);
 
   const addAlert = (a) => { setAlerts(prev => [{ ...a, id: 'a_' + Date.now(), created: new Date().toISOString().slice(0, 10), triggered: false }, ...prev]); setShowForm(false); window.toast && window.toast(`Alert created for ${a.sym || 'asset'}`, { type: 'success' }); };
   const removeAlert = (id) => { setAlerts(prev => prev.filter(a => a.id !== id)); window.toast && window.toast('Alert removed', { type: 'info' }); };
@@ -170,22 +187,24 @@ const PageAlerts = ({ setActiveAsset, setPage }) => {
         </div>
       </div>
 
-      {showForm && <AlertForm onClose={() => setShowForm(false)} onCreate={addAlert} />}
+      {showForm && <AlertForm defaultSym={prefillSym} onClose={() => { setShowForm(false); setPrefillSym(''); }} onCreate={addAlert} />}
     </div>
   );
 };
 
-const AlertForm = ({ onClose, onCreate }) => {
-  const [ticker, setTicker] = React.useState('');
+const AlertForm = ({ onClose, onCreate, defaultSym = '' }) => {
+  const [ticker, setTicker] = React.useState(defaultSym);
   const [type, setType] = React.useState('price_above');
   const [value, setValue] = React.useState('');
   const [note, setNote] = React.useState('');
   const [channels, setChannels] = React.useState({ inApp: true, email: false });
+  const [error, setError] = React.useState('');
 
   const selectedType = ALERT_TYPES.find(t => t.id === type);
 
   const submit = () => {
-    if (!ticker.trim() || value === '') { alert('Enter a ticker and a value'); return; }
+    if (!ticker.trim()) { setError('Enter a ticker symbol'); return; }
+    if (value === '' || isNaN(parseFloat(value))) { setError('Enter a numeric value'); return; }
     onCreate({ ticker: ticker.toUpperCase(), type, value: parseFloat(value), note: note.trim(), active: true, channels });
   };
 
@@ -240,9 +259,12 @@ const AlertForm = ({ onClose, onCreate }) => {
             </div>
           </div>
         </div>
-        <div style={{ padding: '12px 20px', borderTop: '1px solid var(--border)', background: 'var(--bg-sunken)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <button className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={submit}>Create alert</button>
+        <div style={{ padding: '12px 20px', borderTop: '1px solid var(--border)', background: 'var(--bg-sunken)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 12, color: 'var(--neg)' }}>{error}</span>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn" onClick={onClose}>Cancel</button>
+            <button className="btn btn-primary" onClick={submit}>Create alert</button>
+          </div>
         </div>
       </div>
     </div>

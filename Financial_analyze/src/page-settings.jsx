@@ -40,10 +40,11 @@ const loadSettings = () => {
 
 const CURRENCIES = ['USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF', 'CNY'];
 const LANDING_PAGES = [
+{ id: 'last', label: 'Last visited' },
+{ id: 'home', label: 'Home' },
 { id: 'dashboard', label: 'Dashboard' },
 { id: 'portfolio', label: 'Portfolio' },
 { id: 'statements', label: 'Financial Statements' },
-{ id: 'totals', label: 'Totals' },
 { id: 'news', label: 'News & Insights' }];
 
 
@@ -54,12 +55,14 @@ const PageSettings = ({ theme, setTheme, density, setDensity, accent, setAccent,
   const [saved, setSaved] = React.useState(false);
   const [backendStatus, setBackendStatus] = React.useState(window.HelixAPI?.live ? 'live' : 'mock');
   const [testing, setTesting] = React.useState(false);
+  const [showPlan, setShowPlan] = React.useState(false);
   const [hermesStatus, setHermesStatus] = React.useState('unknown'); // unknown | live | down | checking
 
   const set = (key, value) => {
     setSettings((s) => {
       const next = { ...s, [key]: value };
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
+      window.dispatchEvent(new Event('helix-settings-updated'));
       return next;
     });
     setSaved(true);
@@ -160,7 +163,7 @@ const PageSettings = ({ theme, setTheme, density, setDensity, accent, setAccent,
                     <span className="pill" style={{ background: 'var(--accent-bg)', color: 'var(--accent)' }}>{settings.plan}</span>
                     <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>NYSE real-time · unlimited filings</span>
                   </span>
-                  <button className="btn">Manage plan</button>
+                  <button className="btn" onClick={() => setShowPlan(true)}>Manage plan</button>
                 </div>
               </Field>
             </SettingsCard>
@@ -366,17 +369,17 @@ const PageSettings = ({ theme, setTheme, density, setDensity, accent, setAccent,
           {section === 'data' &&
           <>
               <SettingsCard title="Local data" subtitle="Everything Helix stores in this browser">
-                <DataRow label="Filing trackers" desc="Captured metrics & flags from the Reader" onClear={() => {
-                if (confirm('Clear all filing tracker data?')) {
+                <DataRow label="Filing trackers" desc="Captured metrics & flags from the Reader" onClear={async () => {
+                if (await window.askConfirm({ title: 'Clear tracker data', message: 'Clear all filing tracker data?', confirmText: 'Clear', danger: true })) {
                   Object.keys(localStorage).filter((k) => k.startsWith('helix_reader_tracker')).forEach((k) => localStorage.removeItem(k));
-                  alert('Tracker data cleared.');
+                  window.toast && window.toast('Tracker data cleared', { type: 'info' });
                 }
               }} />
-                <DataRow label="Uploaded filings" desc="PDF filing library metadata" onClear={() => {
-                if (confirm('Clear the filings library?')) {localStorage.removeItem('helix_filings_v1');alert('Filings cleared.');}
+                <DataRow label="Uploaded filings" desc="PDF filing library metadata" onClear={async () => {
+                if (await window.askConfirm({ title: 'Clear filings', message: 'Clear the filings library?', confirmText: 'Clear', danger: true })) { localStorage.removeItem('helix_filings_v1'); window.toast && window.toast('Filings cleared', { type: 'info' }); }
               }} />
-                <DataRow label="Highlights & notes" desc="Saved reading highlights" onClear={() => {
-                if (confirm('Clear highlights?')) {localStorage.removeItem('helix_reader_state_v1');alert('Highlights cleared.');}
+                <DataRow label="Highlights & notes" desc="Saved reading highlights" onClear={async () => {
+                if (await window.askConfirm({ title: 'Clear highlights', message: 'Clear highlights?', confirmText: 'Clear', danger: true })) { localStorage.removeItem('helix_reader_state_v1'); window.toast && window.toast('Highlights cleared', { type: 'info' }); }
               }} />
               </SettingsCard>
 
@@ -397,9 +400,54 @@ const PageSettings = ({ theme, setTheme, density, setDensity, accent, setAccent,
           }
         </div>
       </div>
+      {showPlan && <PlanModal current={settings.plan} onClose={() => setShowPlan(false)}
+        onSelect={(pl) => { set('plan', pl); setShowPlan(false); window.toast && window.toast(`Plan set to ${pl}`, { type: 'success' }); }} />}
     </div>);
 
 };
+
+const PLAN_TIERS = [
+  { id: 'Free', price: '$0', tagline: 'Get started', feats: ['15-min delayed quotes', '1 watchlist', '3 filings / month', 'Basic AI summaries'] },
+  { id: 'Pro', price: '$29/mo', tagline: 'For active investors', feats: ['NYSE real-time data', 'Unlimited watchlists', 'Unlimited filings + OCR', 'Full AI analyst & briefings', 'Alerts & screener presets'] },
+  { id: 'Desk', price: '$99/mo', tagline: 'For teams & desks', feats: ['Everything in Pro', 'Multi-laptop Sync workers', 'Priority data feeds', 'Team sharing & exports', 'Dedicated support'] },
+];
+
+const PlanModal = ({ current, onClose, onSelect }) =>
+  <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'grid', placeItems: 'center', padding: 24 }}>
+    <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 760, background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 12, boxShadow: '0 24px 64px rgba(0,0,0,0.3)', overflow: 'hidden' }}>
+      <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h3 className="serif" style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>Choose your plan</h3>
+        <button className="icon-btn" onClick={onClose} style={{ width: 28, height: 28 }}><Icon name="close" size={13} /></button>
+      </div>
+      <div style={{ padding: 20, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+        {PLAN_TIERS.map(t => {
+          const active = current === t.id;
+          return (
+            <div key={t.id} style={{ border: active ? '2px solid var(--accent)' : '1px solid var(--border)', borderRadius: 10, padding: 16, display: 'flex', flexDirection: 'column', gap: 10, background: active ? 'var(--accent-bg)' : 'var(--bg-elev)' }}>
+              <div>
+                <div className="row" style={{ justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: 15, fontWeight: 700 }}>{t.id}</span>
+                  {active && <span className="pill" style={{ background: 'var(--accent)', color: '#fff' }}>Current</span>}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{t.tagline}</div>
+              </div>
+              <div className="num" style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.02em' }}>{t.price}</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
+                {t.feats.map((f, i) => (
+                  <div key={i} style={{ display: 'flex', gap: 7, fontSize: 12, color: 'var(--text-muted)' }}>
+                    <span style={{ color: 'var(--pos)', fontWeight: 700 }}>✓</span> {f}
+                  </div>
+                ))}
+              </div>
+              <button className={active ? 'btn' : 'btn btn-primary'} disabled={active} onClick={() => onSelect(t.id)}>
+                {active ? 'Current plan' : `Switch to ${t.id}`}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  </div>;
 
 const SettingsCard = ({ title, subtitle, children }) =>
 <div className="card">

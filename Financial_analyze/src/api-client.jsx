@@ -87,6 +87,15 @@ const HelixAPI = {
   filingFileUrl(id)                { return `${this.base}/api/filings/${id}/file`; },
   deleteFiling(id)                 { return this._send('DELETE', `/api/filings/${id}`); },
 
+  // ── Sync (distributed OCR coordinator) ─────────────────────────────
+  // Drives backend/app/routes/sync.py: the Mac is the coordinator, worker
+  // laptops connect to ws://<base>/ws/ocr with the pairing code.
+  syncStatus()                     { return this._get('/api/sync/status'); },
+  syncRegenCode()                  { return this._send('POST', '/api/sync/pair-code'); },
+  syncDispatch(filingId)           { return this._send('POST', `/api/sync/dispatch/${filingId}`); },
+  syncResult(jobId)                { return this._get(`/api/sync/result/${jobId}`); },
+  syncWsUrl()                      { return this.base.replace(/^http/, 'ws') + '/ws/ocr'; },
+
   // ── AI chat (sidebar) ─────────────────────────────────────
   // messages: [{role, content}], page: 'dashboard' | ... , pageContext: {}
   async aiChat(page, pageContext, messages) {
@@ -183,6 +192,22 @@ const ApiStatusChip = () => {
     </span>
   );
 };
+
+// Mock shim — window.claude.complete only exists inside the Claude artifact
+// sandbox. In a plain browser with no backend (and no local Hermes), define a
+// stub so AI features degrade to a canned reply instead of throwing
+// ReferenceError. Real providers (Hermes / Python backend) take priority in
+// complete() above; this only runs as the last-resort fallback.
+if (!window.claude || typeof window.claude.complete !== 'function') {
+  window.claude = {
+    async complete(prompt) {
+      await new Promise(r => setTimeout(r, 400));
+      return '_[Mock AI — no backend connected]_\n\n' +
+        'Start the FastAPI core and the local Hermes/Ollama agent to get real analysis. ' +
+        'This placeholder confirms the AI wiring works end-to-end on mock data.';
+    },
+  };
+}
 
 window.HelixAPI = HelixAPI;
 window.ApiStatusChip = ApiStatusChip;

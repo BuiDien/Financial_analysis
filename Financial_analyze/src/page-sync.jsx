@@ -1,16 +1,18 @@
 // Sync — distributed OCR coordinator.
 //
-// This machine opens a listening endpoint and waits. A worker laptop connects,
-// receives PDF financial statements that need OCR, runs the parse locally, and
-// sends back structured statement data. This page is the control panel for that.
+// This machine (the Mac/Core) is the coordinator: it listens, and a worker
+// laptop dials IN with a pairing code, receives PDF filings to OCR, and returns
+// structured statement rows. This page is the control panel.
 //
-// In production the transport is a WebSocket on the Python backend:
-//   ws://<this-host>:8000/ws/ocr   (see backend/app/routes/sync.py)
-// Workers authenticate with the pairing code, then exchange JSON frames:
-//   server → worker : { type:"job", jobId, filingId, filename, pdf_b64 }
-//   worker → server : { type:"result", jobId, rows:[{id,section,metric,curr,prev,page,confidence}] }
-// When no backend is reachable, this panel runs a built-in simulation so the
-// whole flow is demonstrable offline.
+// LIVE mode (backend reachable): drives backend/app/routes/sync.py over
+//   HelixAPI.sync* — GET /api/sync/status (poll workers+jobs), POST /api/sync/pair-code,
+//   POST /api/sync/dispatch/{filingId}. Workers connect to HelixAPI.syncWsUrl()
+//   ( ws://<base>/ws/ocr ) with the pairing code.
+// OFFLINE mode (no backend): a built-in simulation runs so the flow is demoable.
+//
+// NOTE (OCR_PROTOCOL alignment, follow-ups): the live wire currently uses the
+// backend's pdf_b64 + row `id`; the target protocol is binary chunks + Mã số
+// `code`. Tracked in OCR_PROTOCOL.md; not blocking this integration.
 
 const SYNC_JOBS_KEY = 'helix_sync_jobs_v1';
 
@@ -41,6 +43,8 @@ const loadFilingsLib = () => {
 };
 
 const PageSync = ({ setPage }) => {
+  const isLive = () => !!window.HelixAPI?.live;
+
   const [listening, setListening] = React.useState(false);
   const [pairCode, setPairCode] = React.useState(genPairCode);
   const [host] = React.useState(() => localIP());
@@ -52,6 +56,7 @@ const PageSync = ({ setPage }) => {
   });
   const [log, setLog] = React.useState([]);
   const [filings] = React.useState(loadFilingsLib);
+  const [verifyJob, setVerifyJob] = React.useState(null);
   const timersRef = React.useRef([]);
 
   React.useEffect(() => {
@@ -64,7 +69,35 @@ const PageSync = ({ setPage }) => {
     setLog(l => [{ id: Date.now() + Math.random(), kind, text, ts: new Date() }, ...l].slice(0, 60));
   };
 
-  const wsUrl = `ws://${host}:${port}/ws/ocr`;
+  const wsUrl = isLive() ? window.HelixAPI.syncWsUrl() : `ws://${host}:${port}/ws/ocr`;
+
+  // ── LIVE: poll the backend coordinator for workers + jobs while listening ──
+  React.useEffect(() => {
+    if (!listening || !isLive()) return undefined;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const s = await window.HelixAPI.syncStatus();
+        if (cancelled) return;
+        if (s.pair_code) setPairCode(s.pair_code);
+        setWorkers((s.workers || []).map(w => ({
+          id: w.id, name: w.name, ip: w.ip, status: w.status, done: w.done || 0,
+        })));
+        setJobs(prev => {
+          const appliedMap = {};
+          prev.forEach(j => { if (j.applied) appliedMap[j.id] = true; });
+          return (s.jobs || []).map(j => ({
+            id: j.id, filingId: j.filingId, filename: j.filename, ticker: j.ticker,
+            worker: j.worker, status: j.status, progress: j.progress || 0,
+            rows: j.rows || null, applied: appliedMap[j.id] || false,
+          }));
+        });
+      } catch (e) { /* keep last state; backend may be momentarily unreachable */ }
+    };
+    tick();
+    const iv = setInterval(tick, 1500);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [listening]);
 
   // ── Start / stop listening ─────────────────────────────────
   const toggleListen = () => {
@@ -80,21 +113,46 @@ const PageSync = ({ setPage }) => {
     addLog('sys', `Listening on ${wsUrl}`);
     addLog('sys', `Pairing code ${pairCode} — share with the worker laptop`);
 
-    // Simulate a worker connecting shortly after (unless a real backend is live)
-    if (!window.HelixAPI?.live) {
-      const t = setTimeout(() => {
-        const w = { id: 'w1', name: "Dien's MacBook Pro", ip: localIP(), status: 'idle', done: 0, connectedAt: new Date() };
-        setWorkers([w]);
-        addLog('worker', `${w.name} connected from ${w.ip}`);
-      }, 2200);
-      timersRef.current.push(t);
+    if (isLive()) {
+      addLog('sys', 'Live: coordinator running on the backend. Waiting for a worker to pair…');
+      return;  // the poll effect takes over
     }
+
+    // Simulate a worker connecting shortly after (offline demo)
+    const t = setTimeout(() => {
+      const w = { id: 'w1', name: "Dien's MacBook Pro", ip: localIP(), status: 'idle', done: 0, connectedAt: new Date() };
+      setWorkers([w]);
+      addLog('worker', `${w.name} connected from ${w.ip}`);
+    }, 2200);
+    timersRef.current.push(t);
   };
 
-  const regenCode = () => { setPairCode(genPairCode()); addLog('sys', 'Pairing code regenerated.'); };
+  const regenCode = async () => {
+    if (isLive()) {
+      try {
+        const r = await window.HelixAPI.syncRegenCode();
+        if (r && r.pair_code) setPairCode(r.pair_code);
+        addLog('sys', 'Pairing code regenerated.');
+        return;
+      } catch (e) { addLog('error', `Could not regenerate code: ${e.message || e}`); return; }
+    }
+    setPairCode(genPairCode());
+    addLog('sys', 'Pairing code regenerated.');
+  };
 
   // ── Dispatch a filing to a worker for OCR ──────────────────
-  const dispatch = (filing) => {
+  const dispatch = async (filing) => {
+    if (isLive()) {
+      try {
+        const r = await window.HelixAPI.syncDispatch(filing.id);
+        addLog('out', `Dispatched "${filing.name}" → worker (job ${r.jobId || '?'})`);
+      } catch (e) {
+        addLog('error', `Dispatch failed: ${e.message || e}`);
+      }
+      return;  // the poll effect reflects job progress + result
+    }
+
+    // Offline simulation
     const worker = workers.find(w => w.status === 'idle') || workers[0];
     if (!worker) { addLog('error', 'No worker connected. Start listening and pair a laptop first.'); return; }
     const job = {
@@ -103,7 +161,7 @@ const PageSync = ({ setPage }) => {
       filename: filing.name,
       ticker: filing.ticker,
       worker: worker.name,
-      status: 'sent',          // sent → parsing → done | error
+      status: 'sent',
       progress: 0,
       rows: null,
       sentAt: new Date(),
@@ -112,26 +170,32 @@ const PageSync = ({ setPage }) => {
     addLog('out', `Sent "${filing.name}" → ${worker.name}`);
     setWorkers(ws => ws.map(w => w.id === worker.id ? { ...w, status: 'busy' } : w));
 
-    // Simulate the worker doing OCR and returning results
-    if (!window.HelixAPI?.live) {
-      const t1 = setTimeout(() => {
-        setJobs(j => j.map(x => x.id === job.id ? { ...x, status: 'parsing' } : x));
-        addLog('worker', `${worker.name} parsing ${filing.ticker}…`);
-        // progress ticks
-        let p = 0;
-        const iv = setInterval(() => {
-          p += 12 + Math.random() * 10;
-          if (p >= 100) { p = 100; clearInterval(iv); }
-          setJobs(j => j.map(x => x.id === job.id ? { ...x, progress: Math.min(100, Math.round(p)) } : x));
-        }, 260);
-      }, 900);
-      const t2 = setTimeout(() => {
-        setJobs(j => j.map(x => x.id === job.id ? { ...x, status: 'done', progress: 100, rows: WORKER_RESULT_ROWS, doneAt: new Date() } : x));
-        setWorkers(ws => ws.map(w => w.id === worker.id ? { ...w, status: 'idle', done: w.done + 1 } : w));
-        addLog('in', `${worker.name} returned ${WORKER_RESULT_ROWS.length} metrics for ${filing.ticker}`);
-      }, 4200);
-      timersRef.current.push(t1, t2);
-    }
+    const t1 = setTimeout(() => {
+      setJobs(j => j.map(x => x.id === job.id ? { ...x, status: 'parsing' } : x));
+      addLog('worker', `${worker.name} parsing ${filing.ticker}…`);
+      let p = 0;
+      const iv = setInterval(() => {
+        p += 12 + Math.random() * 10;
+        if (p >= 100) { p = 100; clearInterval(iv); }
+        setJobs(j => j.map(x => x.id === job.id ? { ...x, progress: Math.min(100, Math.round(p)) } : x));
+      }, 260);
+    }, 900);
+    const t2 = setTimeout(() => {
+      setJobs(j => j.map(x => x.id === job.id ? { ...x, status: 'done', progress: 100, rows: WORKER_RESULT_ROWS, doneAt: new Date() } : x));
+      setWorkers(ws => ws.map(w => w.id === worker.id ? { ...w, status: 'idle', done: w.done + 1 } : w));
+      addLog('in', `${worker.name} returned ${WORKER_RESULT_ROWS.length} metrics for ${filing.ticker}`);
+    }, 4200);
+    timersRef.current.push(t1, t2);
+  };
+
+  // Step 2 of 2 — confirm: apply data into the tracker AND register the
+  // company so it shows up in the Financial Statements list.
+  const confirmResult = (job) => {
+    applyResult(job);
+    const added = registerCompanyFromJob(job);
+    if (added) addLog('sys', `${job.ticker} added to the Financial Statements company list`);
+    window.toast && window.toast(`${job.ticker} verified & added to companies`, { type: 'success' });
+    setVerifyJob(null);
   };
 
   // Apply returned data into that filing's tracker
@@ -148,7 +212,7 @@ const PageSync = ({ setPage }) => {
       else arr.push({ id: r.id, metric: r.metric, curr: r.curr, prev: r.prev, unit: '$M', notes: `Sync · ${job.worker} · p.${r.page}` });
     });
     localStorage.setItem(key, JSON.stringify(tracker));
-    if (window.HelixAPI?.live && typeof job.filingId === 'number') {
+    if (isLive() && typeof job.filingId === 'number') {
       window.HelixAPI.saveTracker(job.filingId, tracker).catch(() => {});
     }
     setJobs(j => j.map(x => x.id === job.id ? { ...x, applied: true } : x));
@@ -290,7 +354,7 @@ const PageSync = ({ setPage }) => {
               No jobs yet. Dispatch a filing above and watch it flow: sent → parsing → returned.
             </div>
           ) : (
-            <table className="table">
+            <table className="table sync-jobs-table">
               <thead>
                 <tr>
                   <th>Document</th>
@@ -327,7 +391,7 @@ const PageSync = ({ setPage }) => {
                       {j.status === 'done' && (
                         j.applied
                           ? <span style={{ fontSize: 11, color: 'var(--pos)', fontWeight: 600 }}>Applied ✓</span>
-                          : <button className="btn btn-primary" onClick={() => applyResult(j)}>Apply data</button>
+                          : <button className="btn btn-primary" onClick={() => setVerifyJob(j)}>Verify data</button>
                       )}
                     </td>
                   </tr>
@@ -376,11 +440,157 @@ const PageSync = ({ setPage }) => {
           </div>
         </div>
       </div>
+
+      {verifyJob && (
+        <VerifyModal
+          job={verifyJob}
+          onClose={() => setVerifyJob(null)}
+          onConfirm={() => confirmResult(verifyJob)}
+          goStatements={() => { setVerifyJob(null); setPage && setPage('statements'); }}
+        />
+      )}
     </div>
   );
 };
 
-const logColor = (k) => ({ sys: 'var(--text-muted)', worker: 'var(--info)', out: 'var(--accent)', in: 'var(--pos)', error: 'var(--neg)' }[k] || 'var(--text-muted)');
+// Step 1: review the OCR'd rows before committing them
+const VERIFY_SECTIONS = { income: 'Income Statement', balance: 'Balance Sheet', cashflow: 'Cash Flow' };
+
+const VerifyModal = ({ job, onClose, onConfirm, goStatements }) => {
+  const [confirmed, setConfirmed] = React.useState(false);
+  const rows = job.rows || [];
+  const bySection = {};
+  rows.forEach(r => { (bySection[r.section] = bySection[r.section] || []).push(r); });
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'grid', placeItems: 'center', padding: 24 }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 560, maxHeight: '86vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 10, boxShadow: '0 24px 64px rgba(0,0,0,0.3)', overflow: 'hidden' }}>
+        {/* Header with step indicator */}
+        <div style={{ padding: '16px 18px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ fontFamily: 'var(--font-serif)', fontSize: 17, fontWeight: 600 }}>
+              {confirmed ? 'Step 2 · Confirm' : 'Step 1 · Verify data'}
+            </div>
+            <button className="icon-btn" onClick={onClose} style={{ width: 26, height: 26 }}><Icon name="close" size={12} /></button>
+          </div>
+          <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+            <span style={{ flex: 1, height: 3, borderRadius: 2, background: 'var(--accent)' }}></span>
+            <span style={{ flex: 1, height: 3, borderRadius: 2, background: confirmed ? 'var(--accent)' : 'var(--border-strong)' }}></span>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 10 }}>
+            <span className="ticker">{job.ticker}</span> · {rows.length} metrics parsed by {job.worker} from <strong style={{ color: 'var(--text)' }}>{job.filename}</strong>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: confirmed ? 20 : 0 }}>
+          {!confirmed ? (
+            Object.keys(bySection).map(sec => (
+              <div key={sec}>
+                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-subtle)', padding: '12px 18px 6px', background: 'var(--bg-sunken)' }}>{VERIFY_SECTIONS[sec] || sec}</div>
+                {bySection[sec].map(r => (
+                  <div key={r.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 14, alignItems: 'center', padding: '9px 18px', borderBottom: '1px solid var(--border)' }}>
+                    <span style={{ fontSize: 13 }}>{r.metric} <span style={{ fontSize: 10, color: 'var(--text-subtle)' }}>p.{r.page}</span></span>
+                    <span className="num" style={{ fontSize: 12, color: 'var(--text-muted)', width: 70, textAlign: 'right' }}>{r.prev}</span>
+                    <span className="num" style={{ fontSize: 13, fontWeight: 600, width: 70, textAlign: 'right' }}>{r.curr}</span>
+                  </div>
+                ))}
+              </div>
+            ))
+          ) : (
+            <div style={{ textAlign: 'center', padding: '12px 8px' }}>
+              <div style={{ width: 48, height: 48, borderRadius: '50%', background: 'var(--pos-bg)', display: 'grid', placeItems: 'center', margin: '0 auto 14px' }}>
+                <Icon name="starFill" size={20} style={{ color: 'var(--pos)' }} />
+              </div>
+              <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>Add {job.ticker} to your companies?</div>
+              <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6, maxWidth: 380, margin: '0 auto' }}>
+                Confirming applies these {rows.length} metrics to the filing's tracker and adds <strong style={{ color: 'var(--text)' }}>{job.ticker}</strong> to the Financial Statements company list, so you can review it there.
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{ padding: '12px 18px', borderTop: '1px solid var(--border)', background: 'var(--bg-sunken)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          {!confirmed ? (
+            <>
+              <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>Review the values, then continue</span>
+              <div className="row">
+                <button className="btn" onClick={onClose}>Cancel</button>
+                <button className="btn btn-primary" onClick={() => setConfirmed(true)}>Looks right → Confirm</button>
+              </div>
+            </>
+          ) : (
+            <>
+              <button className="btn" onClick={() => setConfirmed(false)}>← Back</button>
+              <div className="row">
+                <button className="btn" onClick={onConfirm}>Confirm</button>
+                <button className="btn btn-primary" onClick={() => { onConfirm(); goStatements(); }}>Confirm & open statements →</button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Build a minimal company dataset from OCR rows and register it on window.COMPANIES
+// so the Financial Statements dropdown picks it up.
+const COMPANY_TEMPLATE = {
+  income: [
+    { id: 'rev', key: 'revenue', label: 'Revenue', bold: true },
+    { id: 'gp', key: 'gp', label: 'Gross Profit', bold: true },
+    { id: 'oi', key: 'opinc', label: 'Operating Income', bold: true },
+    { id: 'ni', key: 'ni', label: 'Net Income', bold: true, accent: true },
+    { id: 'eps', key: 'eps', label: 'EPS (diluted)', format: 'currency' },
+  ],
+  balance: [
+    { id: 'cash', key: 'cash', label: 'Cash & Equivalents' },
+    { id: 'ta', key: 'ta', label: 'Total Assets', bold: true, accent: true },
+    { id: 'ltd', key: 'ltd', label: 'Long-Term Debt' },
+    { id: 'te', key: 'te', label: 'Total Equity', bold: true },
+  ],
+  cashflow: [
+    { id: 'ocf', key: 'cfo', label: 'Operating Cash Flow', bold: true, accent: true },
+    { id: 'capex', key: 'capex', label: 'Capex' },
+    { id: 'fcf', key: 'fcf', label: 'Free Cash Flow', bold: true },
+    { id: 'buyback', key: 'buyback', label: 'Buybacks' },
+  ],
+};
+
+const registerCompanyFromJob = (job) => {
+  if (!window.COMPANIES || !job.rows) return false;
+  const t = job.ticker;
+  if (window.COMPANIES[t]) return false; // already present
+  const num = (v) => { const n = parseFloat(String(v).replace(/[,$]/g, '')); return isNaN(n) ? 0 : n; };
+  const find = (id) => job.rows.find(r => r.id === id);
+  const build = (tmpl) => tmpl.map(row => {
+    const hit = find(row.id);
+    return { ...row, values: [hit ? num(hit.prev) : 0, hit ? num(hit.curr) : 0] };
+  });
+  window.COMPANIES[t] = {
+    ticker: t, name: `${t} (imported)`, exchange: 'OCR', sector: 'Imported via Sync', fyEnd: '—',
+    lastReported: { label: 'OCR', date: new Date().toISOString().slice(0, 10) },
+    years: ['Prior', 'Latest'],
+    income: build(COMPANY_TEMPLATE.income),
+    balance: build(COMPANY_TEMPLATE.balance),
+    cashflow: build(COMPANY_TEMPLATE.cashflow),
+    ratios: [],
+    scorecard: [],
+  };
+  return true;
+};
 const logTag = (k) => ({ sys: 'SYS', worker: 'WORKER', out: 'SENT→', in: '←RECV', error: 'ERR' }[k] || 'LOG');
+const logColor = (k) => ({ sys: 'var(--text-muted)', worker: 'var(--info)', out: 'var(--accent)', in: 'var(--pos)', error: 'var(--neg)' }[k] || 'var(--text-muted)');
+
+if (!document.getElementById('sync-style')) {
+  const s = document.createElement('style');
+  s.id = 'sync-style';
+  s.textContent = `
+    .sync-jobs-table td { height: auto; padding-top: 14px; padding-bottom: 14px; }
+  `;
+  document.head.appendChild(s);
+}
 
 window.PageSync = PageSync;

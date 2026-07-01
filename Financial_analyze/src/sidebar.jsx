@@ -7,7 +7,6 @@ const NAV = [
   { id: 'portfolio', label: 'Portfolio', icon: 'portfolio' },
   { id: 'screener', label: 'Screener', icon: 'screener' },
   { id: 'statements', label: 'Financial Statements', icon: 'portfolio' },
-  { id: 'totals', label: 'Totals', icon: 'screener' },
   { id: 'sync', label: 'Sync', icon: 'sync' },
   { id: 'news', label: 'News & Insights', icon: 'news' },
 ];
@@ -22,11 +21,18 @@ const Sidebar = ({ page, setPage }) => {
   const store = useWatchlists();
   const lists = store.getLists();
   const activeId = store.getState().activeId;
+  const [, forceTick] = React.useReducer(x => x + 1, 0);
+  React.useEffect(() => {
+    const on = () => forceTick();
+    window.addEventListener('helix-alerts-updated', on);
+    return () => window.removeEventListener('helix-alerts-updated', on);
+  }, []);
+  const triggeredAlerts = (() => { try { return JSON.parse(localStorage.getItem('helix_alerts_v1') || '[]').filter(a => a.triggered).length; } catch { return 0; } })();
 
   const openList = (id) => { store.setActive(id); setPage('dashboard'); };
-  const newList = () => {
-    const name = prompt('Name your watchlist');
-    if (name && name.trim()) { store.create(name.trim()); setPage('dashboard'); }
+  const newList = async () => {
+    const name = await window.askPrompt({ title: 'New watchlist', label: 'Name', placeholder: 'e.g. AI & Semis', confirmText: 'Create' });
+    if (name) { store.create(name); setPage('dashboard'); window.toast && window.toast(`Created "${name}"`, { type: 'success' }); }
   };
 
   return (
@@ -69,7 +75,9 @@ const Sidebar = ({ page, setPage }) => {
         <button className="nav-item" aria-current={page === 'alerts' ? 'page' : undefined} onClick={() => setPage('alerts')}>
           <Icon name="alerts" className="icon" />
           <span style={{ flex: 1 }}>Alerts</span>
-          <span style={{ fontSize: 10, fontWeight: 600, padding: '1px 6px', background: 'var(--accent-bg)', color: 'var(--accent)', borderRadius: 999 }}>1</span>
+          {triggeredAlerts > 0 && (
+            <span style={{ fontSize: 10, fontWeight: 600, padding: '1px 6px', background: 'var(--accent-bg)', color: 'var(--accent)', borderRadius: 999 }}>{triggeredAlerts}</span>
+          )}
         </button>
         <button className="nav-item" aria-current={page === 'settings' ? 'page' : undefined} onClick={() => setPage('settings')}>
           <Icon name="settings" className="icon" />

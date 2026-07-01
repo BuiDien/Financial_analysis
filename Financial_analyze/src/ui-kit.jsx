@@ -213,5 +213,73 @@ if (!document.getElementById('uikit-style')) {
   document.head.appendChild(s);
 }
 
+// ── Prompt modal (replaces browser prompt()) ─────────────────
+// Usage: const name = await window.askPrompt({ title, label, placeholder, value, confirmText });
+//        returns the trimmed string, or null if cancelled.
+let _promptSub = null;
+
+window.askPrompt = (opts = {}) => new Promise((resolve) => {
+  if (!_promptSub) { resolve(null); return; }
+  _promptSub({ opts, resolve });
+});
+
+// Confirm modal — returns true/false. Usage: if (await window.askConfirm({ title, message, confirmText, danger }))
+window.askConfirm = (opts = {}) => new Promise((resolve) => {
+  if (!_promptSub) { resolve(window.confirm(opts.message || 'Are you sure?')); return; }
+  _promptSub({ opts: { ...opts, __confirm: true }, resolve });
+});
+
+const PromptHost = () => {
+  const [req, setReq] = React.useState(null);  // { opts, resolve }
+  const [value, setValue] = React.useState('');
+  const inputRef = React.useRef(null);
+
+  React.useEffect(() => {
+    _promptSub = (r) => { setReq(r); setValue(r.opts.value || ''); };
+    return () => { _promptSub = null; };
+  }, []);
+
+  React.useEffect(() => {
+    if (req) setTimeout(() => { inputRef.current?.focus(); inputRef.current?.select(); }, 30);
+  }, [req]);
+
+  if (!req) return null;
+  const o = req.opts;
+  const isConfirm = !!o.__confirm;
+
+  const close = (result) => { req.resolve(result); setReq(null); };
+  const submit = () => { if (isConfirm) { close(true); return; } const v = value.trim(); close(v || null); };
+
+  return (
+    <div onClick={() => close(null)}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 2147483200, display: 'grid', placeItems: 'center', padding: 24 }}>
+      <div onClick={e => e.stopPropagation()}
+        style={{ width: '100%', maxWidth: 400, background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 10, boxShadow: '0 24px 64px rgba(0,0,0,0.3)', overflow: 'hidden' }}>
+        <div style={{ padding: '16px 18px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h3 className="serif" style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>{o.title || (isConfirm ? 'Please confirm' : 'Enter a value')}</h3>
+          <button className="icon-btn" onClick={() => close(isConfirm ? false : null)} style={{ width: 26, height: 26 }}><Icon name="close" size={12} /></button>
+        </div>
+        <div style={{ padding: 18 }}>
+          {isConfirm ? (
+            <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.6 }}>{o.message}</div>
+          ) : (<>
+          {o.label && <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 6 }}>{o.label}</label>}
+          <input ref={inputRef} value={value}
+            onChange={e => setValue(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); submit(); } if (e.key === 'Escape') close(null); }}
+            placeholder={o.placeholder || ''}
+            style={{ width: '100%', padding: '10px 12px', fontSize: 14, fontFamily: 'inherit', background: 'var(--bg-sunken)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text)', outline: 'none' }} />
+          </>)}
+        </div>
+        <div style={{ padding: '12px 18px', borderTop: '1px solid var(--border)', background: 'var(--bg-sunken)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <button className="btn" onClick={() => close(isConfirm ? false : null)}>Cancel</button>
+          <button className={o.danger ? 'btn' : 'btn btn-primary'} onClick={submit} style={o.danger ? { color: 'var(--neg)', borderColor: 'var(--neg-soft)' } : undefined}>{o.confirmText || (isConfirm ? 'Confirm' : 'Save')}</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 window.ToastHost = ToastHost;
+window.PromptHost = PromptHost;
 window.CommandPalette = CommandPalette;

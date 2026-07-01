@@ -2,7 +2,7 @@
 
 const PORTFOLIO_NAMES = { VTI: 'Vanguard Total Mkt', 'BRK.B': 'Berkshire Hathaway B', TLT: 'iShares 20+Y Treasury', JNJ: 'Johnson & Johnson', AVGO: 'Broadcom' };
 
-const PageDetail = ({ activeAsset = 'NVDA', data, setActiveAsset }) => {
+const PageDetail = ({ activeAsset = 'NVDA', data, setActiveAsset, setPage }) => {
   const [range, setRange] = React.useState('1M');
   const [chartType, setChartType] = React.useState('candle'); // candle | area
   const [switcherOpen, setSwitcherOpen] = React.useState(false);
@@ -126,8 +126,8 @@ const PageDetail = ({ activeAsset = 'NVDA', data, setActiveAsset }) => {
             style={inWatchlist ? { background: 'var(--accent-bg)', borderColor: 'var(--accent-soft)', color: 'var(--accent)' } : undefined}>
             <Icon name={inWatchlist ? 'starFill' : 'star'} size={12} /> {inWatchlist ? 'In watchlist' : 'Watchlist'}
           </button>
-          <button className="btn"><Icon name="alerts" size={12} /> Alert</button>
-          <button className="btn btn-primary">Trade →</button>
+          <button className="btn" onClick={() => { window.__statementsTicker = asset.sym; setPage && setPage('statements'); }}><Icon name="portfolio" size={12} /> Financials</button>
+          <button className="btn" onClick={() => { window.__alertTicker = asset.sym; setPage && setPage('alerts'); }}><Icon name="alerts" size={12} /> Alert</button>
         </div>
       </div>
 

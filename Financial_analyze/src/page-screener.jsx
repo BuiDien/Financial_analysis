@@ -20,6 +20,37 @@ const SCREENER_DATA = [
 
 const SECTORS = ['All sectors', 'Technology', 'Healthcare', 'Financials', 'Consumer Disc.', 'Communication', 'Industrials', 'Energy', 'Consumer Staples'];
 
+// Generate a large realistic mock universe on demand (stands in for a real
+// 10,000-stock backend screen until the API is wired up).
+const SECTOR_POOL = ['Technology', 'Healthcare', 'Financials', 'Consumer Disc.', 'Communication', 'Industrials', 'Energy', 'Consumer Staples', 'Utilities', 'Materials', 'Real Estate'];
+const SUFFIX = ['Corp', 'Inc', 'Group', 'Holdings', 'Industries', 'Partners', 'Systems', 'Labs', 'Technologies', 'Capital'];
+let _universeCache = null;
+const buildUniverse = (n = 800) => {
+  if (_universeCache) return _universeCache;
+  const out = [...SCREENER_DATA];
+  const seen = new Set(out.map(r => r.sym));
+  let seed = 12345;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  const L = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  while (out.length < n) {
+    let sym = '';
+    const len = 3 + Math.floor(rnd() * 2);
+    for (let i = 0; i < len; i++) sym += L[Math.floor(rnd() * 26)];
+    if (seen.has(sym)) continue;
+    seen.add(sym);
+    const sector = SECTOR_POOL[Math.floor(rnd() * SECTOR_POOL.length)];
+    const mcap = Math.round((rnd() ** 3) * 800 + 2);          // skew small
+    const pe = +(rnd() * 80 + 6).toFixed(1);
+    const divYield = +(rnd() < 0.4 ? 0 : rnd() * 4).toFixed(2);
+    const perf1y = +((rnd() - 0.4) * 120).toFixed(1);
+    const perf3m = +((rnd() - 0.45) * 40).toFixed(1);
+    const vol = +(rnd() * 60 + 0.5).toFixed(1);
+    out.push({ sym, name: `${sym} ${SUFFIX[Math.floor(rnd() * SUFFIX.length)]}`, sector, mcap, pe, divYield, perf1y, perf3m, vol });
+  }
+  _universeCache = out;
+  return out;
+};
+
 const PageScreener = ({ setActiveAsset, setPage }) => {
   const [sector, setSector] = React.useState('All sectors');
   const [mcapMin, setMcapMin] = React.useState(0);
@@ -28,8 +59,37 @@ const PageScreener = ({ setActiveAsset, setPage }) => {
   const [perfMin, setPerfMin] = React.useState(-50);
   const [sortKey, setSortKey] = React.useState('mcap');
   const [sortDir, setSortDir] = React.useState('desc');
+  const [universe, setUniverse] = React.useState(SCREENER_DATA);
+  const [scanning, setScanning] = React.useState(false);
+  const [fullRun, setFullRun] = React.useState(false);
+  const [scanPct, setScanPct] = React.useState(0);
+  const [scanCount, setScanCount] = React.useState(0);
+  const TOTAL_UNIVERSE = 10000;
 
-  const filtered = SCREENER_DATA.filter(r =>
+  const runFullScreen = () => {
+    if (scanning) return;
+    setScanning(true);
+    setScanPct(0);
+    setScanCount(0);
+    const started = Date.now();
+    const DURATION = 1400;
+    const tick = setInterval(() => {
+      const t = Math.min(1, (Date.now() - started) / DURATION);
+      // ease-out
+      const eased = 1 - Math.pow(1 - t, 2);
+      setScanPct(Math.round(eased * 100));
+      setScanCount(Math.round(eased * TOTAL_UNIVERSE));
+      if (t >= 1) {
+        clearInterval(tick);
+        setUniverse(buildUniverse(800));
+        setFullRun(true);
+        setScanning(false);
+        window.toast && window.toast('Scanned 10,000 stocks · expanded universe', { type: 'success' });
+      }
+    }, 60);
+  };
+
+  const filtered = universe.filter(r =>
     (sector === 'All sectors' || r.sector === sector) &&
     r.mcap >= mcapMin &&
     r.pe <= peMax &&
@@ -45,6 +105,44 @@ const PageScreener = ({ setActiveAsset, setPage }) => {
     else { setSortKey(key); setSortDir('desc'); }
   };
 
+  // ── Saved presets (localStorage) ───────────────────────────
+  const PRESETS_KEY = 'helix_screener_presets_v1';
+  const [presets, setPresets] = React.useState(() => {
+    try { return JSON.parse(localStorage.getItem(PRESETS_KEY) || '[]'); } catch { return []; }
+  });
+  const persistPresets = (next) => { setPresets(next); localStorage.setItem(PRESETS_KEY, JSON.stringify(next)); };
+
+  const savePreset = async () => {
+    const name = await window.askPrompt({ title: 'Save screen preset', label: 'Preset name', value: `Screen ${presets.length + 1}`, confirmText: 'Save' });
+    if (!name) return;
+    const preset = { id: 'p_' + Date.now(), name, sector, mcapMin, peMax, divMin, perfMin, sortKey, sortDir };
+    persistPresets([preset, ...presets.filter(p => p.name !== name)]);
+    window.toast && window.toast(`Saved preset “${name}”`, { type: 'success' });
+  };
+
+  const applyPreset = (p) => {
+    setSector(p.sector); setMcapMin(p.mcapMin); setPeMax(p.peMax);
+    setDivMin(p.divMin); setPerfMin(p.perfMin);
+    setSortKey(p.sortKey || 'mcap'); setSortDir(p.sortDir || 'desc');
+    window.toast && window.toast(`Applied “${p.name}”`, { type: 'info' });
+  };
+
+  const deletePreset = (id) => persistPresets(presets.filter(p => p.id !== id));
+
+  const exportResultsCSV = () => {
+    const header = ['Ticker', 'Name', 'Sector', 'Market Cap ($B)', 'P/E', 'Div Yield %', '3M %', '1Y %'];
+    const rows = [header.join(',')];
+    filtered.forEach(r => {
+      rows.push([r.sym, `"${r.name}"`, `"${r.sector}"`, r.mcap, r.pe, r.divYield, r.perf3m, r.perf1y].join(','));
+    });
+    const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'screener_results.csv'; a.click();
+    URL.revokeObjectURL(url);
+    window.toast && window.toast(`Exported ${filtered.length} matches`, { type: 'success' });
+  };
+
   return (
     <div className="page">
       <div className="page-header">
@@ -53,10 +151,26 @@ const PageScreener = ({ setActiveAsset, setPage }) => {
           <p className="page-sub">Filter the market by what matters to you</p>
         </div>
         <div className="row">
-          <button className="btn">Save preset</button>
-          <button className="btn btn-primary">Run on 10,000 stocks →</button>
+          <button className="btn" onClick={savePreset}>Save preset</button>
+          <button className="btn btn-primary" onClick={runFullScreen} disabled={scanning}>
+            {scanning ? `Scanning… ${scanPct}%` : fullRun ? 'Re-run full screen ↻' : 'Run on 10,000 stocks →'}
+          </button>
         </div>
       </div>
+
+      {presets.length > 0 && (
+        <div className="row" style={{ gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 11, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Presets</span>
+          {presets.map(p => (
+            <span key={p.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 6px 5px 12px', background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 999, fontSize: 12 }}>
+              <button onClick={() => applyPreset(p)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12, padding: 0 }}>{p.name}</button>
+              <button onClick={() => deletePreset(p.id)} title="Delete preset" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)', display: 'grid', placeItems: 'center', padding: 2, borderRadius: '50%' }}>
+                <Icon name="close" size={10} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* Filters card */}
       <div className="card" style={{ marginBottom: 20 }}>
@@ -78,12 +192,26 @@ const PageScreener = ({ setActiveAsset, setPage }) => {
       </div>
 
       {/* Results */}
-      <div className="card">
+      <div className="card" style={{ position: 'relative' }}>
+        {scanning && (
+          <div style={{
+            position: 'absolute', inset: 0, zIndex: 5, borderRadius: 'var(--radius-lg)',
+            background: 'color-mix(in srgb, var(--bg-elev) 85%, transparent)',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12,
+          }}>
+            <div className="num" style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-0.02em' }}>
+              {scanCount.toLocaleString()} <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-muted)' }}>screened</span>
+            </div>
+            <div style={{ width: 220, height: 4, background: 'var(--bg-sunken)', borderRadius: 2, overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${scanPct}%`, background: 'var(--accent)', transition: 'width 60ms linear' }} />
+            </div>
+          </div>
+        )}
         <div className="card-header">
-          <h3 className="card-title">{filtered.length} matches</h3>
+          <h3 className="card-title">{filtered.length.toLocaleString()} matches</h3>
           <div className="row">
-            <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>Sorted by {sortKey} · {sortDir}</span>
-            <button className="btn"><Icon name="download" size={12} /> Export</button>
+            <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>of {universe.length.toLocaleString()} screened · sorted by {sortKey} · {sortDir}</span>
+            <button className="btn" onClick={exportResultsCSV}><Icon name="download" size={12} /> Export</button>
           </div>
         </div>
         <div className="card-body flush">
@@ -101,7 +229,7 @@ const PageScreener = ({ setActiveAsset, setPage }) => {
               </tr>
             </thead>
             <tbody>
-              {filtered.map(r => (
+              {filtered.slice(0, 100).map(r => (
                 <tr key={r.sym} onClick={() => { setActiveAsset(r.sym); setPage('detail'); }}>
                   <td><span className="ticker">{r.sym}</span></td>
                   <td style={{ color: 'var(--text-muted)' }}>{r.name}</td>
@@ -117,6 +245,11 @@ const PageScreener = ({ setActiveAsset, setPage }) => {
               ))}
             </tbody>
           </table>
+          {filtered.length > 100 && (
+            <div style={{ padding: '12px 16px', fontSize: 12, color: 'var(--text-subtle)', textAlign: 'center', borderTop: '1px solid var(--border)' }}>
+              Showing first 100 of {filtered.length.toLocaleString()} matches · tighten filters or Export to see all
+            </div>
+          )}
         </div>
       </div>
     </div>

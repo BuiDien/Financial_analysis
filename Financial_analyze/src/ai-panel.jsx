@@ -7,7 +7,6 @@ const AI_SUGGESTIONS = {
   portfolio: ['How am I doing today?', 'Concentration risks', 'Rebalance suggestions'],
   screener: ['Stocks like NVDA but cheaper', 'Defensive dividend plays', 'Oversold quality names'],
   statements: ['Is this company healthy?', 'Red flags in the financials', 'How sustainable are the margins?'],
-  totals: ['Summarize what I’ve collected', 'Which flags matter most?', 'What’s the headline takeaway?'],
   news: ['Top story summary', 'What does this mean for my holdings?', 'Macro implications'],
   alerts: ['What alerts should I set for NVDA?', 'Good RSI levels to watch', 'Explain my triggered alert']
 };
@@ -19,7 +18,6 @@ const PAGE_CONTEXT = {
   portfolio: 'The user is viewing their portfolio: $248,731 total value, +1.32% today (+$3,247), +23.81% all-time. Top holdings: NVDA (14%), AAPL (10%), MSFT (10%), GOOGL (9%). Bonds (TLT) are down 8%.',
   screener: 'The user is using the stock screener to filter equities by market cap, P/E ratio, dividend yield, and sector.',
   statements: 'The user is analyzing financial statements (income, balance sheet, cash flow, ratios) for NVDA. FY25: Revenue $130B (+114% YoY), Net Income $73B (+145%), FCF $61B. Margins: gross 75%, op 62%, net 56%. ROE 119%. P/E 48x. They can compare line items 5 years back and benchmark ratios against sector peers.',
-  totals: 'The user is on the Totals page — a consolidated rollup of everything collected: headline statement totals, every line item across income/balance/cash flow with YoY and 5Y CAGR, plus data and flags captured from their PDF filing trackers.',
   news: 'The user is reading market news. Top stories include Fed rate signals, NVIDIA Q3 earnings (data center +94%), Tesla delivery miss, and Apple AI partnership.',
   alerts: 'The user is on the Alerts page, where they configure price, technical (RSI), percentage-move, and volume alerts on tickers. Help them set sensible alert thresholds.'
 };
@@ -75,7 +73,14 @@ const AIPanel = ({ page, onClose }) => {
     setMessages((m) => [...m, { role: 'user', content: q }]);
     setLoading(true);
     try {
-      const prompt = `You are Helix, a sharp, concise financial market assistant inside an analysis app. Current view: ${PAGE_CONTEXT[page] || ''}\n\nUser asks: "${q}"\n\nRespond in 2-4 short paragraphs OR a tight bulleted list. Use **bold** for key figures and *italic* for ticker symbols. Be direct, no fluff. Don't add disclaimers about not being a financial advisor — the user knows. Do not use emoji.`;
+      const toneMap = {
+        concise: 'Respond in 2-4 short paragraphs OR a tight bulleted list.',
+        detailed: 'Give a thorough answer: short sections with a bulleted breakdown of drivers, context, and caveats.',
+        'numbers-only': 'Answer almost entirely in figures: a tight bulleted list of numbers with minimal prose.',
+      };
+      let aiTone = 'concise';
+      try { aiTone = JSON.parse(localStorage.getItem('helix_settings_v1') || '{}').aiTone || 'concise'; } catch {}
+      const prompt = `You are Helix, a sharp financial market assistant inside an analysis app. Current view: ${PAGE_CONTEXT[page] || ''}\n\nUser asks: "${q}"\n\n${toneMap[aiTone] || toneMap.concise} Use **bold** for key figures and *italic* for ticker symbols. Be direct, no fluff. Don't add disclaimers about not being a financial advisor — the user knows. Do not use emoji.`;
       const reply = await window.HelixAPI.complete(prompt, { page, context: { view: PAGE_CONTEXT[page] || '' } });
       setMessages((m) => [...m, { role: 'assistant', content: reply }]);
     } catch (e) {
@@ -242,7 +247,6 @@ function getInitialMessage(page) {
     portfolio: "You're up **+1.32% today** ($3,247), led by *NVDA* and *META*. Heads up: tech concentration is at **40%** of portfolio — worth considering. Bonds (*TLT*) are dragging.",
     screener: "Tell me what you're hunting for — quality, value, momentum, dividend, defensive — and I'll suggest filters.",
     statements: "*NVDA* FY25 is extraordinary: revenue **$130B (+114%)**, net income **$73B (+145%)**, FCF **$61B**. Op margin **62.5%** — best-in-class. The catch: P/E **48×**, ~50% premium to sector. Want me to flag risks or compare to peers?",
-    totals: "This is your collection hub — statement totals plus everything you've tracked and flagged from filings. Ask me to summarize the headline numbers or rank the flags by what matters.",
     news: "Three stories actually matter today: **Fed rate posture**, **NVIDIA's data-center beat**, and **Tesla delivery miss**. Want me to break any of those down?",
     alerts: "Set alerts so the market tells you when to act. Good starting points: a **price target** to trim, a **buy-the-dip** level, and an **RSI > 70** overbought warning. Tell me a ticker and I'll suggest levels."
   };

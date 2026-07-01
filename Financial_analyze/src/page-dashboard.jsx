@@ -114,13 +114,16 @@ const WatchlistCard = ({ data, onSelect }) => {
   const active = store.getActive();
   const rows = active.symbols.map(sym => quoteFor(sym, data));
 
-  const renameList = () => {
-    const name = prompt('Rename watchlist', active.name);
-    if (name && name.trim()) store.rename(active.id, name.trim());
+  const renameList = async () => {
+    const name = await window.askPrompt({ title: 'Rename watchlist', label: 'Name', value: active.name, confirmText: 'Rename' });
+    if (name) { store.rename(active.id, name); window.toast && window.toast('Watchlist renamed', { type: 'info' }); }
   };
-  const deleteList = () => {
-    if (lists.length <= 1) { alert('Keep at least one watchlist.'); return; }
-    if (confirm(`Delete "${active.name}"?`)) store.remove(active.id);
+  const deleteList = async () => {
+    if (lists.length <= 1) { window.toast && window.toast('Keep at least one watchlist', { type: 'error' }); return; }
+    if (await window.askConfirm({ title: 'Delete watchlist', message: `Delete "${active.name}"? This can't be undone.`, confirmText: 'Delete', danger: true })) {
+      store.remove(active.id);
+      window.toast && window.toast('Watchlist deleted', { type: 'info' });
+    }
   };
 
   return (
@@ -138,7 +141,7 @@ const WatchlistCard = ({ data, onSelect }) => {
               {l.name} <span style={{ opacity: 0.6, fontFamily: 'var(--font-mono)' }}>{l.symbols.length}</span>
             </button>
           ))}
-          <button onClick={() => { const n = prompt('Name your watchlist'); if (n && n.trim()) store.create(n.trim()); }}
+          <button onClick={async () => { const n = await window.askPrompt({ title: 'New watchlist', label: 'Name', placeholder: 'e.g. AI & Semis', confirmText: 'Create' }); if (n) { store.create(n); window.toast && window.toast(`Created "${n}"`, { type: 'success' }); } }}
             className="icon-btn" title="New watchlist" style={{ width: 28, height: 28 }}>
             <Icon name="plus" size={13} />
           </button>
@@ -218,6 +221,20 @@ const PageDashboard = ({ data, setPage, setActiveAsset }) => {
   const gainers = [...data.watchlist].sort((a, b) => b.chg - a.chg).slice(0, 5);
   const losers = [...data.watchlist].sort((a, b) => a.chg - b.chg).slice(0, 5);
 
+  const exportMarketCSV = () => {
+    const header = ['Ticker', 'Name', 'Price', 'Change %', 'Volume', 'Market Cap'];
+    const rows = [header.join(',')];
+    data.watchlist.forEach(w => {
+      rows.push([w.sym, `"${w.name}"`, w.price, w.chg, `"${w.vol}"`, `"${w.mcap}"`].join(','));
+    });
+    const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'market_watchlist.csv'; a.click();
+    URL.revokeObjectURL(url);
+    window.toast && window.toast('Exported market data', { type: 'success' });
+  };
+
   return (
     <div className="page">
       <div className="page-header">
@@ -227,7 +244,7 @@ const PageDashboard = ({ data, setPage, setActiveAsset }) => {
         </div>
         <div className="row">
           <span style={{ fontSize: 11, color: 'var(--text-subtle)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Last update 09:42:18 ET</span>
-          <button className="btn"><Icon name="download" size={12} /> Export</button>
+          <button className="btn" onClick={exportMarketCSV}><Icon name="download" size={12} /> Export</button>
         </div>
       </div>
 
