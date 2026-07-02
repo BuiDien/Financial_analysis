@@ -2,6 +2,37 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+## Implementation Status: DONE (2026-07-01/02, branch `feature/vn-market-scanner`)
+
+All 8 tasks built and verified against real VN market data (live VCI calls, not mocks). 28 backend tests passing. 8 commits on `feature/vn-market-scanner`, pushed to origin — not yet merged to `main`.
+
+**Where it landed (differs from the paths below):**
+- Backend root is `Financial_analyze/backend` (underscore — the design re-export renamed the space'd folder; see [[design-source-of-truth]]).
+- Models: `app/models/scan.py` (new file), not `app/models/core.py` — this backend never had a `core.py`; registered in `app/db.py :: init_db()`.
+- Scheduler: `app/services/scheduler.py` is a brand-new file (none existed) — APScheduler `BackgroundScheduler`, daily job, gated by a new `enable_scheduler` setting in `app/config.py`, off in tests.
+- `tests/conftest.py` created fresh with the `db` fixture (didn't exist), plus disables the scheduler via `ENABLE_SCHEDULER=false` before `app.config` loads.
+
+**Plan vs. reality — vnstock (biggest deviation):** the plan was written against vnstock 3.x. Installed version is **4.0.4**, which dropped the TCBS source and the `Screener` class entirely (`from vnstock import Screener` → `ImportError`). Task 0's spike (`docs/superpowers/spikes/2026-06-23-vnstock-broad-data.md`) documents the real path used instead:
+- Universe: `Listing().symbols_by_exchange()` (HOSE/HNX/UPCOM, ~1,600 tradable tickers).
+- Fundamentals/valuation: `Company(symbol).ratio_summary()` (VCI) — one call per symbol, TTM rows.
+- Technicals: **no pre-computed indicators exist in 4.x** — SMA50/200, Wilder RSI-14, and volume ratio are all computed locally in `universe.py` from raw daily OHLCV (`Quote(symbol).history()`). `sector_pe` is likewise computed locally as the industry-median P/E, not sourced from vnstock.
+- `revenue_growth` is unavailable from this data source in v1 — mapped to `None`, scored as 0 in `signals.py` (documented, not silently dropped).
+
+**Rate limit (found during real-data verification, not in the original plan):** the vnstock guest tier caps at 20 requests/minute, 2 calls per symbol → full-universe scan is rate-limit-bound, not compute-bound. Added request pacing (3.1s between calls) + one long retry on trip, in `universe.py` only (never touches `signals.py`/`score.py`, preserving the plan's "network only in universe.py" constraint). A full ~1,600-symbol scan takes hours at guest pace; a free vnstocks.com community API key (60 req/min) would cut that to roughly 1 hour. Also found and fixed: VCI returns `year`/`quarter` as strings, which broke the EBITDA-YoY and latest-row lookups — both now coerce to int, with regression tests.
+
+**Verified with real data**, not just fixtures: an 8-symbol live scan ran end-to-end (fetch → score → rank → persist) and returned sane, differentiated rankings (e.g. GVT #1 at 87.3, TTZ/SLD correctly landing in `avoid`).
+
+**Extra beyond the plan's explicit scope** (screener UI wiring was called "out of this backend plan" in the plan's own Self-Review, but was done anyway per follow-up request):
+- `Financial_analyze/src/api-client.jsx` — `scanLatest()` / `scanRun(limit)`.
+- `Financial_analyze/src/page-screener.jsx` — the existing "Run on 10,000 stocks" button now branches on `HelixAPI.live`: real VN scan when the backend is up (VN-shaped columns: lean, sub-scores, UNVERIFIED badge), original mock animation when it's not. (First pass added a separate button/card; corrected per user feedback — see [[feedback-reuse-existing-ui]].)
+- **Frontend caveat:** `src/` is exported from a design artifact and gets wiped on re-export — this UI change needs to be ported into the artifact by hand, it won't survive automatically (see [[design-source-of-truth]]).
+
+**Not done / open follow-ups:**
+- Branch not yet merged to `main` — a PR exists to open at `https://github.com/BuiDien/Financial_analysis/compare/main...feature/vn-market-scanner`.
+- No full-universe scan has completed yet (started once, stopped partway through per request — safe to re-run, e.g. via the scheduled job or `run_scan(db, mode="manual")` with no `limit`).
+- Tier 2 (deep-dive) is out of scope here, as planned — `POST /api/scan/{symbol}/deep-dive` from the design spec is unbuilt.
+- Registering a paid/free vnstock API key to lift the 20 req/min guest cap.
+
 **Goal:** Build the broad-scan tier of the VN Market Scanner — screen the whole VN market on deterministic fundamental/valuation/technical signals, score + rank + classify long/short/avoid, and expose results via REST for the Screener page.
 
 **Architecture:** A `backend/app/scanner/` package with single-responsibility modules: `universe.py` (fetch broad vnstock data, tagged unverified), `signals.py` (pure deterministic sub-scores per dimension), `score.py` (pure deterministic total + lean + rank), `runner.py` (orchestrate a run, persist). New `scan_runs`/`scan_results` SQLite models. Routes `POST /api/scan`, `GET /api/scan/latest`. The scoring path is pure functions over plain dicts — no ORM, no LLM — so it is exactly unit-testable.
@@ -47,7 +78,7 @@
 - Consumes: nothing.
 - Produces: a documented decision — does vnstock return market-wide fundamentals/valuation, and the **exact field names** `universe.py` will map. This locks the `stock` dict shape used by every later task.
 
-- [ ] **Step 1: Probe vnstock for a listing + one company's fundamentals/valuation**
+- [x] **Step 1: Probe vnstock for a listing + one company's fundamentals/valuation**
 
 Run (from `Financial analyze/backend`, venv active):
 ```bash
@@ -79,7 +110,7 @@ PY
 ```
 Expected: prints available columns OR errors. Capture actual output.
 
-- [ ] **Step 2: Write the spike findings**
+- [x] **Step 2: Write the spike findings**
 
 Record in `docs/superpowers/spikes/2026-06-23-vnstock-broad-data.md`:
 - **Does `Screener().stock()` work?** If yes → it's the universe source (one call, market-wide). If no →
@@ -106,7 +137,7 @@ The canonical `stock` dict for the rest of this plan (adjust names to match the 
 }
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add "Financial analyze/backend/docs/superpowers/spikes/2026-06-23-vnstock-broad-data.md" 2>/dev/null || git add docs/superpowers/spikes/2026-06-23-vnstock-broad-data.md
@@ -133,7 +164,7 @@ git commit -m "spike(scanner): confirm vnstock market-wide fundamentals/valuatio
   - `compute_signals(stock: dict) -> dict` → `{"fundamentals","valuation","technical","catalysts"}` floats.
   - `tests/scanner_fixtures.py :: good_stock()`, `weak_stock()` returning `stock` dicts.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # tests/scanner_fixtures.py
@@ -186,12 +217,12 @@ def test_compute_signals_keys():
     assert set(out) == {"fundamentals", "valuation", "technical", "catalysts"}
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/test_signals.py -v`
 Expected: FAIL — `ModuleNotFoundError: app.scanner.signals`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```python
 # app/scanner/__init__.py
@@ -266,12 +297,12 @@ def compute_signals(stock: dict) -> dict:
     }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_signals.py -v`
 Expected: PASS (4 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add "Financial analyze/backend/app/scanner/__init__.py" "Financial analyze/backend/app/scanner/signals.py" "Financial analyze/backend/tests/scanner_fixtures.py" "Financial analyze/backend/tests/test_signals.py"
@@ -293,7 +324,7 @@ git commit -m "feat(scanner): deterministic fundamentals/valuation/technical sub
   - `score_stock(signals: dict) -> dict` → `{"total_score": float, "lean": "long"|"short"|"avoid"}`.
   - `rank(results: list[dict]) -> list[dict]` — sorts by `total_score` desc, sets `result["rank"]` (1-based), returns the list.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # tests/test_score.py
@@ -334,12 +365,12 @@ def test_rank_orders_desc_and_sets_rank():
     assert [r["rank"] for r in ranked] == [1, 2, 3]
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/test_score.py -v`
 Expected: FAIL — `ModuleNotFoundError: app.scanner.score`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```python
 # app/scanner/score.py
@@ -372,12 +403,12 @@ def rank(results: list[dict]) -> list[dict]:
     return ordered
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_score.py -v`
 Expected: PASS (5 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add "Financial analyze/backend/app/scanner/score.py" "Financial analyze/backend/tests/test_score.py"
@@ -398,7 +429,7 @@ git commit -m "feat(scanner): deterministic weighted total, lean, ranking"
   - `ScanRun(id, started_at, mode, universe_size)`.
   - `ScanResult(id, run_id→scan_runs, symbol, scores(JSON), total_score(Float), lean(String), rank(Integer), verified(Boolean default False))`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # tests/test_runner.py
@@ -439,12 +470,12 @@ def db():
         s.close()
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/test_runner.py::test_scan_models_roundtrip -v`
 Expected: FAIL — `ImportError: cannot import name 'ScanRun'`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Append to `app/models/core.py`:
 ```python
@@ -480,12 +511,12 @@ from sqlalchemy import (
 )
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_runner.py::test_scan_models_roundtrip -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add "Financial analyze/backend/app/models/core.py" "Financial analyze/backend/tests/test_runner.py" "Financial analyze/backend/tests/conftest.py"
@@ -504,7 +535,7 @@ git commit -m "feat(scanner): scan_runs + scan_results models"
 - Consumes: vnstock (network); the `stock` dict shape from Task 0.
 - Produces: `fetch_universe(limit: int | None = None) -> list[dict]` — returns `stock` dicts, each with `verified=False`. Network failures per symbol are skipped (logged), never crash the run. `map_row(raw: dict) -> dict` — pure mapper from a vnstock record to the canonical `stock` dict (unit-testable without network).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # tests/test_universe.py
@@ -528,12 +559,12 @@ def test_map_row_produces_canonical_stock():
     assert out["news_count"] == 0 and out["news_sentiment"] == 0.0
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/test_universe.py -v`
 Expected: FAIL — `ModuleNotFoundError: app.scanner.universe`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```python
 # app/scanner/universe.py
@@ -607,12 +638,12 @@ Note: exact vnstock field names come from the Task 0 spike — refine `_FIELD_MA
 `map_row` is tested in isolation (no network); `fetch_universe` is covered indirectly via the runner test
 with an injected universe. The forbidden-verdict list is enforced by `_FIELD_MAP` containing **only raw inputs**.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_universe.py -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add "Financial analyze/backend/app/scanner/universe.py" "Financial analyze/backend/tests/test_universe.py"
@@ -631,7 +662,7 @@ git commit -m "feat(scanner): vnstock universe fetch + pure row mapper"
 - Consumes: `universe.fetch_universe` (Task 4, injectable), `signals.compute_signals` (Task 1), `score.score_stock`+`rank` (Task 2), `ScanRun`+`ScanResult` (Task 3).
 - Produces: `run_scan(db, mode: str = "manual", universe: list[dict] | None = None) -> dict` → `{"run_id": int, "count": int}`. If `universe` is None, calls `fetch_universe()`; tests inject a fixture universe so no network is hit. Persists one `ScanRun` + N `ScanResult` rows (all `verified=False`).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # append to tests/test_runner.py
@@ -655,12 +686,12 @@ def test_run_scan_persists_ranked_results(db):
     assert set(results[0].scores) == {"fundamentals", "valuation", "technical", "catalysts"}
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/test_runner.py::test_run_scan_persists_ranked_results -v`
 Expected: FAIL — `ModuleNotFoundError: app.scanner.runner`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```python
 # app/scanner/runner.py
@@ -695,12 +726,12 @@ def run_scan(db, mode: str = "manual", universe: list[dict] | None = None) -> di
     return {"run_id": run.id, "count": len(scored)}
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_runner.py -v`
 Expected: PASS (model round-trip + run_scan).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add "Financial analyze/backend/app/scanner/runner.py" "Financial analyze/backend/tests/test_runner.py"
@@ -722,7 +753,7 @@ git commit -m "feat(scanner): run_scan orchestration persists ranked results"
   - `POST /api/scan` body `{"limit": int | null}` → `{"run_id","count"}` (manual scan; passes `limit` to the universe fetch via `run_scan` — for tests, inject through a small indirection).
   - `GET /api/scan/latest` → `{"run_id", "started_at", "results": [{"symbol","total_score","lean","rank","verified","scores"}]}` for the most recent run, ordered by rank.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # tests/test_scan_route.py
@@ -773,12 +804,12 @@ def test_get_latest_returns_ranked_results(client):
     assert body["results"][0]["verified"] is False
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/test_scan_route.py -v`
 Expected: FAIL — 404 (route not registered).
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```python
 # app/routes/scan.py
@@ -826,12 +857,12 @@ from .routes import market, scan
 app.include_router(scan.router, prefix="/api", tags=["scanner"])
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_scan_route.py -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add "Financial analyze/backend/app/routes/scan.py" "Financial analyze/backend/app/main.py" "Financial analyze/backend/tests/test_scan_route.py"
@@ -850,7 +881,7 @@ git commit -m "feat(scanner): POST /api/scan + GET /api/scan/latest"
 - Consumes: `run_scan` (Task 5); `SessionLocal` from `app.db`.
 - Produces: `scheduled_scan()` — opens a DB session, calls `run_scan(db, mode="scheduled")`, closes it. Registered as an APScheduler interval job in `start()`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # tests/test_scheduled_scan.py
@@ -867,12 +898,12 @@ def test_scheduled_scan_calls_run_scan():
         assert m.call_args.kwargs.get("mode") == "scheduled" or "scheduled" in m.call_args.args
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/test_scheduled_scan.py -v`
 Expected: FAIL — `AttributeError: module ... has no attribute 'scheduled_scan'`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Add to `app/services/scheduler.py` (top: ensure `from ..db import SessionLocal` exists; add `from ..scanner.runner import run_scan`):
 ```python
@@ -892,17 +923,17 @@ In `start()`, after the existing price-refresh job registration, add:
     _scheduler.add_job(scheduled_scan, "interval", hours=24, id="scheduled_scan")
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_scheduled_scan.py -v`
 Expected: PASS.
 
-- [ ] **Step 5: Run the full suite**
+- [x] **Step 5: Run the full suite**
 
 Run: `pytest -v`
 Expected: PASS (all scanner tests).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add "Financial analyze/backend/app/services/scheduler.py" "Financial analyze/backend/tests/test_scheduled_scan.py"
