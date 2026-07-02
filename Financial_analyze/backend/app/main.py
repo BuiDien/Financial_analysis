@@ -26,6 +26,9 @@ app.add_middleware(
 @app.on_event("startup")
 def on_startup():
     init_db()
+    if settings.enable_scheduler:
+        from .services.scheduler import start as start_scheduler
+        start_scheduler()
 
 
 @app.get("/")

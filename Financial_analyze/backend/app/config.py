@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     alpaca_api_key: str = ""
     alpaca_secret_key: str = ""
 
+    # Scheduler (daily VN market scan)
+    enable_scheduler: bool = True
+
     # CORS
     allowed_origins: str = "*"
 
