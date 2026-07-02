@@ -25,7 +25,7 @@ def get_db():
 def init_db():
     """Create all tables. Run once on startup or via `python -m app.db init`."""
     # Import models so they're registered on Base.metadata
-    from .models import user, portfolio, filing  # noqa: F401
+    from .models import user, portfolio, filing, scan  # noqa: F401
     Base.metadata.create_all(bind=engine)
     print("✓ Database initialized at", settings.database_url)
 
