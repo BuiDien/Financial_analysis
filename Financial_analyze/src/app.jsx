@@ -58,6 +58,37 @@ const App = () => {
   // Remember the last page for the "Last visited" landing option
   React.useEffect(() => { try { localStorage.setItem('helix_last_page', page); } catch {} }, [page]);
 
+  // ── Browser back/forward ────────────────────────────────────────────
+  // The app never touched window.history, so the mouse back button did
+  // nothing. Seed one entry on mount, push a new entry on every
+  // page/asset change, and restore state on popstate (fired for both
+  // back and forward). historyMounted guards the seed effect's own
+  // [page, activeAsset] dependency from pushing a duplicate entry;
+  // fromHistory guards a popstate-driven state update from re-pushing.
+  const historyMounted = React.useRef(false);
+  const fromHistory = React.useRef(false);
+
+  React.useEffect(() => {
+    window.history.replaceState({ page, activeAsset }, '');
+  }, []);
+
+  React.useEffect(() => {
+    if (!historyMounted.current) { historyMounted.current = true; return; }
+    if (fromHistory.current) { fromHistory.current = false; return; }
+    window.history.pushState({ page, activeAsset }, '');
+  }, [page, activeAsset]);
+
+  React.useEffect(() => {
+    const onPopState = (e) => {
+      fromHistory.current = true;
+      const s = e.state || {};
+      setPage(s.page || 'home');
+      setActiveAsset(s.activeAsset || 'NVDA');
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
   // ── Live data overlay ──────────────────────────────────────────────
   // When the Python backend is reachable, replace mock numbers with real
   // ones. Every fetch is independent and falls back silently, so the UI
