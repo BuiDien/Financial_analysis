@@ -54,6 +54,23 @@ def test_ebitda_yoy():
     assert u.ebitda_yoy([{"year": 2025, "quarter": 4, "ebitda": 110.0}]) is None
 
 
+def test_ebitda_yoy_handles_string_years():
+    # real VCI ratio_summary returns year/quarter as strings
+    rows = [
+        {"year": "2024", "quarter": "4", "ebitda": 100.0},
+        {"year": "2025", "quarter": "4", "ebitda": 110.0},
+    ]
+    assert abs(u.ebitda_yoy(rows) - 0.10) < 1e-9
+
+
+def test_latest_ratio_row_handles_string_years():
+    rows = [
+        {"year": "2024", "quarter": "4", "pe": 10.0},
+        {"year": "2025", "quarter": "1", "pe": 12.0},
+    ]
+    assert u._latest_ratio_row(rows)["pe"] == 12.0
+
+
 def test_attach_sector_pe_uses_industry_median():
     stocks = [
         {"symbol": "A", "pe": 10.0}, {"symbol": "B", "pe": 20.0}, {"symbol": "C", "pe": 30.0},

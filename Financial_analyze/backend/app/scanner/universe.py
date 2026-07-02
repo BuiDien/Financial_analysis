@@ -8,6 +8,30 @@ It must NEVER copy a pre-baked verdict/signal field — a third party's decision
 SMA/RSI/vol_ratio are computed HERE from raw OHLCV: our arithmetic, reproducible.
 """
 import statistics
+import time
+
+# vnstock guest tier allows 20 requests/minute — pace calls to stay under it.
+REQUEST_INTERVAL_S = 3.1
+RATE_LIMIT_WAIT_S = 61.0
+_last_call = 0.0
+
+
+def _paced(fn, *args, **kwargs):
+    """Run one vnstock call: paced under the rate limit, one long retry if it trips."""
+    global _last_call
+    wait = _last_call + REQUEST_INTERVAL_S - time.monotonic()
+    if wait > 0:
+        time.sleep(wait)
+    try:
+        return fn(*args, **kwargs)
+    except Exception as e:
+        if "limit" not in str(e).lower() and "rate" not in str(e).lower():
+            raise
+        print(f"  scanner: rate limited, waiting {RATE_LIMIT_WAIT_S:.0f}s")
+        time.sleep(RATE_LIMIT_WAIT_S)
+        return fn(*args, **kwargs)
+    finally:
+        _last_call = time.monotonic()
 
 # raw-input fields only (no third-party verdicts). Keys = our canonical names;
 # values = vnstock VCI Company.ratio_summary() column names.
@@ -51,19 +75,32 @@ def volume_ratio(volumes: list[float], n: int = 20) -> float | None:
     return volumes[-1] / avg if avg > 0 else None
 
 
+def _yq(row: dict) -> tuple[int, int]:
+    """(year, quarter) as ints — VCI returns them as strings."""
+    try:
+        year = int(row.get("year") or 0)
+    except (TypeError, ValueError):
+        year = 0
+    try:
+        quarter = int(row.get("quarter") or 0)
+    except (TypeError, ValueError):
+        quarter = 0
+    return year, quarter
+
+
 def ebitda_yoy(rows: list[dict]) -> float | None:
     """YoY EBITDA growth from ratio_summary rows (same quarter, latest vs prior year)."""
     latest = None
     for r in rows:
         if r.get("ebitda") in (None, 0):
             continue
-        if latest is None or (r["year"], r.get("quarter") or 0) > (latest["year"], latest.get("quarter") or 0):
+        if latest is None or _yq(r) > _yq(latest):
             latest = r
     if latest is None:
         return None
+    ly, lq = _yq(latest)
     for r in rows:
-        if r.get("year") == latest["year"] - 1 and r.get("quarter") == latest.get("quarter") \
-                and r.get("ebitda") not in (None, 0):
+        if _yq(r) == (ly - 1, lq) and r.get("ebitda") not in (None, 0):
             return (latest["ebitda"] - r["ebitda"]) / abs(r["ebitda"])
     return None
 
@@ -115,8 +152,7 @@ def _latest_ratio_row(rows: list[dict]) -> dict | None:
     for r in rows:
         if r.get("pe") is None:
             continue
-        key = (r.get("year") or 0, r.get("quarter") or 0)
-        if best is None or key > (best.get("year") or 0, best.get("quarter") or 0):
+        if best is None or _yq(r) > _yq(best):
             best = r
     return best or (rows[-1] if rows else None)
 
@@ -125,14 +161,14 @@ def _fetch_symbol(symbol: str, exchange: str, start: str, end: str) -> dict | No
     """Two network calls: TTM ratios + 1y daily OHLCV. Returns a canonical stock dict."""
     from vnstock.explorer.vci import Company, Quote
 
-    rows = Company(symbol).ratio_summary().to_dict("records")
+    rows = _paced(Company(symbol).ratio_summary).to_dict("records")
     latest = _latest_ratio_row(rows)
     if latest is None:
         return None
     raw = {**latest, "symbol": symbol, "exchange": exchange,
            "profit_growth": ebitda_yoy(rows)}
 
-    hist = Quote(symbol).history(start=start, end=end, interval="1D")
+    hist = _paced(Quote(symbol).history, start=start, end=end, interval="1D")
     closes = [float(c) for c in hist["close"].tolist()]
     vols = [float(v) for v in hist["volume"].tolist()]
     if closes:
@@ -149,7 +185,7 @@ def fetch_universe(limit: int | None = None) -> list[dict]:
     from datetime import date, timedelta
     from vnstock import Listing
 
-    listing = Listing().symbols_by_exchange()
+    listing = _paced(Listing().symbols_by_exchange)
     stocks_meta = [r for r in listing.to_dict("records")
                    if r.get("type") == "stock" and r.get("exchange") in ("HOSE", "HNX", "UPCOM")]
     if limit:
@@ -176,7 +212,7 @@ def _industry_map() -> dict:
     """symbol -> ICB industry name (used only to group OUR median-P/E computation)."""
     from vnstock import Listing
     try:
-        df = Listing().symbols_by_industries()
+        df = _paced(Listing().symbols_by_industries)
         records = df.to_dict("records")
         for key in ("icb_name3", "icb_name2", "industry", "icb_code2"):
             if records and key in records[0]:
