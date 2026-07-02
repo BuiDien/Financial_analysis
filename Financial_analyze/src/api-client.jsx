@@ -22,14 +22,23 @@ const HelixAPI = {
   onStatusChange(fn) { this.listeners.push(fn); },
 
   async detect() {
-    try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 1500);
-      const res = await fetch(`${this.base}/health`, { signal: ctrl.signal });
-      clearTimeout(t);
-      this.live = res.ok;
-    } catch {
-      this.live = false;
+    // A cold backend (pandas/yfinance/anthropic imports) can take longer to
+    // answer than one 1.5s ping — a single failed check used to lock `live`
+    // false for the rest of the page session (nothing ever re-checked it).
+    // Retry a few times before giving up.
+    const ATTEMPTS = 3;
+    for (let i = 0; i < ATTEMPTS; i++) {
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 1500);
+        const res = await fetch(`${this.base}/health`, { signal: ctrl.signal });
+        clearTimeout(t);
+        this.live = res.ok;
+      } catch {
+        this.live = false;
+      }
+      if (this.live || i === ATTEMPTS - 1) break;
+      await new Promise(r => setTimeout(r, 500));
     }
     this.checked = true;
     this.listeners.forEach(fn => fn(this.live));
@@ -95,6 +104,12 @@ const HelixAPI = {
   syncDispatch(filingId)           { return this._send('POST', `/api/sync/dispatch/${filingId}`); },
   syncResult(jobId)                { return this._get(`/api/sync/result/${jobId}`); },
   syncWsUrl()                      { return this.base.replace(/^http/, 'ws') + '/ws/ocr'; },
+
+  // ── VN Market Scanner (broad scan tier) ───────────────────
+  // Drives backend/app/routes/scan.py. Results are third-party (vnstock)
+  // data, always verified=false — screening only, deep-dive to verify.
+  scanLatest()                     { return this._get('/api/scan/latest'); },
+  scanRun(limit = null)            { return this._send('POST', '/api/scan', { limit }); },
 
   // ── AI chat (sidebar) ─────────────────────────────────────
   // messages: [{role, content}], page: 'dashboard' | ... , pageContext: {}

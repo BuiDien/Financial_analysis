@@ -51,6 +51,119 @@ const buildUniverse = (n = 800) => {
   return out;
 };
 
+// ── VN Market Scan (backend scanner tier) ─────────────────────
+// Renders the latest ranked broad-scan from GET /api/scan/latest.
+// All rows are unverified vnstock data — screening only; trust is
+// earned down the funnel (deep-dive verifies a chosen symbol).
+
+const LEAN_STYLE = {
+  long:  { label: 'LONG',  color: 'var(--green, #16a34a)' },
+  short: { label: 'SHORT', color: 'var(--red, #dc2626)' },
+  avoid: { label: 'AVOID', color: 'var(--text-subtle)' },
+};
+
+const LeanBadge = ({ lean }) => {
+  const s = LEAN_STYLE[lean] || LEAN_STYLE.avoid;
+  return (
+    <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', padding: '2px 7px', borderRadius: 999, color: s.color, border: `1px solid ${s.color}`, opacity: lean === 'avoid' ? 0.7 : 1 }}>
+      {s.label}
+    </span>
+  );
+};
+
+const VnScanCard = ({ setActiveAsset, setPage }) => {
+  const [scan, setScan] = React.useState(null);
+  const [running, setRunning] = React.useState(false);
+  const [live, setLive] = React.useState(!!window.HelixAPI?.live);
+
+  const load = React.useCallback(() => {
+    if (!window.HelixAPI?.live) return;
+    window.HelixAPI.scanLatest().then(setScan).catch(() => {});
+  }, []);
+
+  React.useEffect(() => {
+    if (window.HelixAPI) window.HelixAPI.onStatusChange(ok => { setLive(ok); if (ok) load(); });
+    load();
+  }, [load]);
+
+  const runScan = async (limit) => {
+    if (running) return;
+    setRunning(true);
+    try {
+      await window.HelixAPI.scanRun(limit);
+      load();
+      window.toast && window.toast('VN scan complete', { type: 'success' });
+    } catch (e) {
+      window.toast && window.toast('Scan failed — see backend logs', { type: 'error' });
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  if (!live) return null;               // backend offline → mock screener only
+  const results = scan?.results || [];
+
+  return (
+    <div className="card" style={{ marginBottom: 20 }}>
+      <div className="card-header">
+        <div className="row" style={{ gap: 8 }}>
+          <h3 className="card-title">VN market scan</h3>
+          <span title="Broad-scan data is third-party (vnstock) and unverified — for screening only. Deep-dive a symbol to verify." style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', padding: '2px 7px', borderRadius: 999, background: 'var(--bg-sunken)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
+            UNVERIFIED
+          </span>
+          {scan?.started_at && (
+            <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>
+              run #{scan.run_id} · {new Date(scan.started_at).toLocaleString()}
+            </span>
+          )}
+        </div>
+        <button className="btn" onClick={() => runScan(20)} disabled={running}>
+          {running ? 'Scanning…' : 'Run scan (top 20) →'}
+        </button>
+      </div>
+      <div className="card-body flush">
+        {results.length === 0 ? (
+          <div style={{ padding: '16px', fontSize: 12, color: 'var(--text-subtle)' }}>
+            No scan results yet — run a scan or wait for the daily scheduled run.
+          </div>
+        ) : (
+          <table className="table">
+            <thead>
+              <tr>
+                <th className="right">#</th>
+                <th>Ticker</th>
+                <th>Lean</th>
+                <th className="right">Score</th>
+                <th className="right">Fund.</th>
+                <th className="right">Valuation</th>
+                <th className="right">Technical</th>
+              </tr>
+            </thead>
+            <tbody>
+              {results.slice(0, 25).map(r => (
+                <tr key={r.symbol} onClick={() => { setActiveAsset(r.symbol); setPage('detail'); }}>
+                  <td className="right num" style={{ color: 'var(--text-subtle)' }}>{r.rank}</td>
+                  <td><span className="ticker">{r.symbol}</span></td>
+                  <td><LeanBadge lean={r.lean} /></td>
+                  <td className="right num" style={{ fontWeight: 700 }}>{r.total_score.toFixed(1)}</td>
+                  <td className="right num">{(r.scores?.fundamentals ?? 0).toFixed(0)}</td>
+                  <td className="right num">{(r.scores?.valuation ?? 0).toFixed(0)}</td>
+                  <td className="right num">{(r.scores?.technical ?? 0).toFixed(0)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {results.length > 25 && (
+          <div style={{ padding: '10px 16px', fontSize: 12, color: 'var(--text-subtle)', textAlign: 'center', borderTop: '1px solid var(--border)' }}>
+            Showing top 25 of {results.length.toLocaleString()} scanned
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const PageScreener = ({ setActiveAsset, setPage }) => {
   const [sector, setSector] = React.useState('All sectors');
   const [mcapMin, setMcapMin] = React.useState(0);
@@ -157,6 +270,8 @@ const PageScreener = ({ setActiveAsset, setPage }) => {
           </button>
         </div>
       </div>
+
+      <VnScanCard setActiveAsset={setActiveAsset} setPage={setPage} />
 
       {presets.length > 0 && (
         <div className="row" style={{ gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
