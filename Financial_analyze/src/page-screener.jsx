@@ -21,7 +21,7 @@ const SCREENER_DATA = [
 const SECTORS = ['All sectors', 'Technology', 'Healthcare', 'Financials', 'Consumer Disc.', 'Communication', 'Industrials', 'Energy', 'Consumer Staples'];
 
 // Generate a large realistic mock universe on demand (stands in for a real
-// 10,000-stock backend screen until the API is wired up).
+// 10,000-stock backend screen when the backend isn't reachable).
 const SECTOR_POOL = ['Technology', 'Healthcare', 'Financials', 'Consumer Disc.', 'Communication', 'Industrials', 'Energy', 'Consumer Staples', 'Utilities', 'Materials', 'Real Estate'];
 const SUFFIX = ['Corp', 'Inc', 'Group', 'Holdings', 'Industries', 'Partners', 'Systems', 'Labs', 'Technologies', 'Capital'];
 let _universeCache = null;
@@ -51,11 +51,10 @@ const buildUniverse = (n = 800) => {
   return out;
 };
 
-// ── VN Market Scan (backend scanner tier) ─────────────────────
-// Renders the latest ranked broad-scan from GET /api/scan/latest.
-// All rows are unverified vnstock data — screening only; trust is
-// earned down the funnel (deep-dive verifies a chosen symbol).
-
+// VN market scan (backend scanner tier): broad-scan rows are third-party
+// (vnstock) data, always unverified — screening only. Rendered through the
+// SAME "Run on 10,000 stocks" button + results table as the mock screener,
+// swapping to VN-shaped columns (lean/scores) when the backend is live.
 const LEAN_STYLE = {
   long:  { label: 'LONG',  color: 'var(--green, #16a34a)' },
   short: { label: 'SHORT', color: 'var(--red, #dc2626)' },
@@ -68,99 +67,6 @@ const LeanBadge = ({ lean }) => {
     <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', padding: '2px 7px', borderRadius: 999, color: s.color, border: `1px solid ${s.color}`, opacity: lean === 'avoid' ? 0.7 : 1 }}>
       {s.label}
     </span>
-  );
-};
-
-const VnScanCard = ({ setActiveAsset, setPage }) => {
-  const [scan, setScan] = React.useState(null);
-  const [running, setRunning] = React.useState(false);
-  const [live, setLive] = React.useState(!!window.HelixAPI?.live);
-
-  const load = React.useCallback(() => {
-    if (!window.HelixAPI?.live) return;
-    window.HelixAPI.scanLatest().then(setScan).catch(() => {});
-  }, []);
-
-  React.useEffect(() => {
-    if (window.HelixAPI) window.HelixAPI.onStatusChange(ok => { setLive(ok); if (ok) load(); });
-    load();
-  }, [load]);
-
-  const runScan = async (limit) => {
-    if (running) return;
-    setRunning(true);
-    try {
-      await window.HelixAPI.scanRun(limit);
-      load();
-      window.toast && window.toast('VN scan complete', { type: 'success' });
-    } catch (e) {
-      window.toast && window.toast('Scan failed — see backend logs', { type: 'error' });
-    } finally {
-      setRunning(false);
-    }
-  };
-
-  if (!live) return null;               // backend offline → mock screener only
-  const results = scan?.results || [];
-
-  return (
-    <div className="card" style={{ marginBottom: 20 }}>
-      <div className="card-header">
-        <div className="row" style={{ gap: 8 }}>
-          <h3 className="card-title">VN market scan</h3>
-          <span title="Broad-scan data is third-party (vnstock) and unverified — for screening only. Deep-dive a symbol to verify." style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', padding: '2px 7px', borderRadius: 999, background: 'var(--bg-sunken)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
-            UNVERIFIED
-          </span>
-          {scan?.started_at && (
-            <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>
-              run #{scan.run_id} · {new Date(scan.started_at).toLocaleString()}
-            </span>
-          )}
-        </div>
-        <button className="btn" onClick={() => runScan(20)} disabled={running}>
-          {running ? 'Scanning…' : 'Run scan (top 20) →'}
-        </button>
-      </div>
-      <div className="card-body flush">
-        {results.length === 0 ? (
-          <div style={{ padding: '16px', fontSize: 12, color: 'var(--text-subtle)' }}>
-            No scan results yet — run a scan or wait for the daily scheduled run.
-          </div>
-        ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th className="right">#</th>
-                <th>Ticker</th>
-                <th>Lean</th>
-                <th className="right">Score</th>
-                <th className="right">Fund.</th>
-                <th className="right">Valuation</th>
-                <th className="right">Technical</th>
-              </tr>
-            </thead>
-            <tbody>
-              {results.slice(0, 25).map(r => (
-                <tr key={r.symbol} onClick={() => { setActiveAsset(r.symbol); setPage('detail'); }}>
-                  <td className="right num" style={{ color: 'var(--text-subtle)' }}>{r.rank}</td>
-                  <td><span className="ticker">{r.symbol}</span></td>
-                  <td><LeanBadge lean={r.lean} /></td>
-                  <td className="right num" style={{ fontWeight: 700 }}>{r.total_score.toFixed(1)}</td>
-                  <td className="right num">{(r.scores?.fundamentals ?? 0).toFixed(0)}</td>
-                  <td className="right num">{(r.scores?.valuation ?? 0).toFixed(0)}</td>
-                  <td className="right num">{(r.scores?.technical ?? 0).toFixed(0)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-        {results.length > 25 && (
-          <div style={{ padding: '10px 16px', fontSize: 12, color: 'var(--text-subtle)', textAlign: 'center', borderTop: '1px solid var(--border)' }}>
-            Showing top 25 of {results.length.toLocaleString()} scanned
-          </div>
-        )}
-      </div>
-    </div>
   );
 };
 
@@ -177,10 +83,11 @@ const PageScreener = ({ setActiveAsset, setPage }) => {
   const [fullRun, setFullRun] = React.useState(false);
   const [scanPct, setScanPct] = React.useState(0);
   const [scanCount, setScanCount] = React.useState(0);
+  const [vnMode, setVnMode] = React.useState(false);   // true once a real VN scan has rendered
+  const [vnMeta, setVnMeta] = React.useState(null);    // { runId, startedAt }
   const TOTAL_UNIVERSE = 10000;
 
-  const runFullScreen = () => {
-    if (scanning) return;
+  const runMockScreen = () => {
     setScanning(true);
     setScanPct(0);
     setScanCount(0);
@@ -188,12 +95,12 @@ const PageScreener = ({ setActiveAsset, setPage }) => {
     const DURATION = 1400;
     const tick = setInterval(() => {
       const t = Math.min(1, (Date.now() - started) / DURATION);
-      // ease-out
-      const eased = 1 - Math.pow(1 - t, 2);
+      const eased = 1 - Math.pow(1 - t, 2);   // ease-out
       setScanPct(Math.round(eased * 100));
       setScanCount(Math.round(eased * TOTAL_UNIVERSE));
       if (t >= 1) {
         clearInterval(tick);
+        setVnMode(false);
         setUniverse(buildUniverse(800));
         setFullRun(true);
         setScanning(false);
@@ -202,16 +109,44 @@ const PageScreener = ({ setActiveAsset, setPage }) => {
     }, 60);
   };
 
-  const filtered = universe.filter(r =>
-    (sector === 'All sectors' || r.sector === sector) &&
-    r.mcap >= mcapMin &&
-    r.pe <= peMax &&
-    r.divYield >= divMin &&
-    r.perf1y >= perfMin
-  ).sort((a, b) => {
-    const m = sortDir === 'asc' ? 1 : -1;
-    return (a[sortKey] - b[sortKey]) * m;
-  });
+  const runVnScan = async () => {
+    setScanning(true);
+    try {
+      let data = await window.HelixAPI.scanLatest();
+      if (!data?.results?.length) {
+        await window.HelixAPI.scanRun(30);   // no prior run yet — do a bounded on-demand scan
+        data = await window.HelixAPI.scanLatest();
+      }
+      setVnMode(true);
+      setVnMeta({ runId: data.run_id, startedAt: data.started_at });
+      setUniverse(data.results);
+      setFullRun(true);
+      window.toast && window.toast(`VN scan loaded · ${data.results.length} symbols · unverified`, { type: 'success' });
+    } catch (e) {
+      window.toast && window.toast('VN scan failed — check the backend', { type: 'error' });
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  const runFullScreen = () => {
+    if (scanning) return;
+    if (window.HelixAPI?.live) runVnScan();
+    else runMockScreen();
+  };
+
+  const filtered = vnMode
+    ? [...universe].sort((a, b) => a.rank - b.rank)
+    : universe.filter(r =>
+        (sector === 'All sectors' || r.sector === sector) &&
+        r.mcap >= mcapMin &&
+        r.pe <= peMax &&
+        r.divYield >= divMin &&
+        r.perf1y >= perfMin
+      ).sort((a, b) => {
+        const m = sortDir === 'asc' ? 1 : -1;
+        return (a[sortKey] - b[sortKey]) * m;
+      });
 
   const setSort = (key) => {
     if (sortKey === key) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
@@ -243,11 +178,12 @@ const PageScreener = ({ setActiveAsset, setPage }) => {
   const deletePreset = (id) => persistPresets(presets.filter(p => p.id !== id));
 
   const exportResultsCSV = () => {
-    const header = ['Ticker', 'Name', 'Sector', 'Market Cap ($B)', 'P/E', 'Div Yield %', '3M %', '1Y %'];
-    const rows = [header.join(',')];
-    filtered.forEach(r => {
-      rows.push([r.sym, `"${r.name}"`, `"${r.sector}"`, r.mcap, r.pe, r.divYield, r.perf3m, r.perf1y].join(','));
-    });
+    const rows = vnMode
+      ? [['Ticker', 'Rank', 'Lean', 'Total Score', 'Fundamentals', 'Valuation', 'Technical'].join(','),
+         ...filtered.map(r => [r.symbol, r.rank, r.lean, r.total_score,
+                                r.scores?.fundamentals ?? '', r.scores?.valuation ?? '', r.scores?.technical ?? ''].join(','))]
+      : [['Ticker', 'Name', 'Sector', 'Market Cap ($B)', 'P/E', 'Div Yield %', '3M %', '1Y %'].join(','),
+         ...filtered.map(r => [r.sym, `"${r.name}"`, `"${r.sector}"`, r.mcap, r.pe, r.divYield, r.perf3m, r.perf1y].join(','))];
     const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -266,12 +202,13 @@ const PageScreener = ({ setActiveAsset, setPage }) => {
         <div className="row">
           <button className="btn" onClick={savePreset}>Save preset</button>
           <button className="btn btn-primary" onClick={runFullScreen} disabled={scanning}>
-            {scanning ? `Scanning… ${scanPct}%` : fullRun ? 'Re-run full screen ↻' : 'Run on 10,000 stocks →'}
+            {scanning
+              ? (window.HelixAPI?.live ? 'Scanning VN market…' : `Scanning… ${scanPct}%`)
+              : fullRun ? 'Re-run full screen ↻'
+              : (window.HelixAPI?.live ? 'Run VN market scan →' : 'Run on 10,000 stocks →')}
           </button>
         </div>
       </div>
-
-      <VnScanCard setActiveAsset={setActiveAsset} setPage={setPage} />
 
       {presets.length > 0 && (
         <div className="row" style={{ gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
@@ -287,28 +224,30 @@ const PageScreener = ({ setActiveAsset, setPage }) => {
         </div>
       )}
 
-      {/* Filters card */}
-      <div className="card" style={{ marginBottom: 20 }}>
-        <div className="card-header">
-          <h3 className="card-title">Filters</h3>
-          <button className="card-action" onClick={() => { setSector('All sectors'); setMcapMin(0); setPeMax(100); setDivMin(0); setPerfMin(-50); }}>Reset</button>
+      {/* Filters card — only meaningful for the mock US universe */}
+      {!vnMode && (
+        <div className="card" style={{ marginBottom: 20 }}>
+          <div className="card-header">
+            <h3 className="card-title">Filters</h3>
+            <button className="card-action" onClick={() => { setSector('All sectors'); setMcapMin(0); setPeMax(100); setDivMin(0); setPerfMin(-50); }}>Reset</button>
+          </div>
+          <div className="card-body" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 16 }}>
+            <FilterField label="Sector">
+              <select value={sector} onChange={e => setSector(e.target.value)} style={selectStyle}>
+                {SECTORS.map(s => <option key={s}>{s}</option>)}
+              </select>
+            </FilterField>
+            <FilterRange label="Market Cap (min, $B)" value={mcapMin} setValue={setMcapMin} min={0} max={4000} step={50} suffix="B" />
+            <FilterRange label="P/E Ratio (max)" value={peMax} setValue={setPeMax} min={5} max={200} step={5} />
+            <FilterRange label="Div Yield (min %)" value={divMin} setValue={setDivMin} min={0} max={5} step={0.1} suffix="%" />
+            <FilterRange label="1Y Performance (min %)" value={perfMin} setValue={setPerfMin} min={-50} max={200} step={5} suffix="%" />
+          </div>
         </div>
-        <div className="card-body" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 16 }}>
-          <FilterField label="Sector">
-            <select value={sector} onChange={e => setSector(e.target.value)} style={selectStyle}>
-              {SECTORS.map(s => <option key={s}>{s}</option>)}
-            </select>
-          </FilterField>
-          <FilterRange label="Market Cap (min, $B)" value={mcapMin} setValue={setMcapMin} min={0} max={4000} step={50} suffix="B" />
-          <FilterRange label="P/E Ratio (max)" value={peMax} setValue={setPeMax} min={5} max={200} step={5} />
-          <FilterRange label="Div Yield (min %)" value={divMin} setValue={setDivMin} min={0} max={5} step={0.1} suffix="%" />
-          <FilterRange label="1Y Performance (min %)" value={perfMin} setValue={setPerfMin} min={-50} max={200} step={5} suffix="%" />
-        </div>
-      </div>
+      )}
 
       {/* Results */}
       <div className="card" style={{ position: 'relative' }}>
-        {scanning && (
+        {scanning && !vnMode && (
           <div style={{
             position: 'absolute', inset: 0, zIndex: 5, borderRadius: 'var(--radius-lg)',
             background: 'color-mix(in srgb, var(--bg-elev) 85%, transparent)',
@@ -323,28 +262,61 @@ const PageScreener = ({ setActiveAsset, setPage }) => {
           </div>
         )}
         <div className="card-header">
-          <h3 className="card-title">{filtered.length.toLocaleString()} matches</h3>
+          <div className="row" style={{ gap: 8 }}>
+            <h3 className="card-title">{filtered.length.toLocaleString()} matches</h3>
+            {vnMode && (
+              <span title="Broad-scan data is third-party (vnstock) and unverified — for screening only. Deep-dive a symbol to verify." style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', padding: '2px 7px', borderRadius: 999, background: 'var(--bg-sunken)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
+                UNVERIFIED
+              </span>
+            )}
+          </div>
           <div className="row">
-            <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>of {universe.length.toLocaleString()} screened · sorted by {sortKey} · {sortDir}</span>
+            <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>
+              {vnMode
+                ? `run #${vnMeta?.runId} · ${vnMeta?.startedAt ? new Date(vnMeta.startedAt).toLocaleString() : ''}`
+                : `of ${universe.length.toLocaleString()} screened · sorted by ${sortKey} · ${sortDir}`}
+            </span>
             <button className="btn" onClick={exportResultsCSV}><Icon name="download" size={12} /> Export</button>
           </div>
         </div>
         <div className="card-body flush">
           <table className="table">
             <thead>
-              <tr>
-                <th>Ticker</th>
-                <th>Name</th>
-                <th>Sector</th>
-                <SortHeader label="Mkt Cap" k="mcap" sk={sortKey} sd={sortDir} onClick={() => setSort('mcap')} />
-                <SortHeader label="P/E" k="pe" sk={sortKey} sd={sortDir} onClick={() => setSort('pe')} />
-                <SortHeader label="Div Yield" k="divYield" sk={sortKey} sd={sortDir} onClick={() => setSort('divYield')} />
-                <SortHeader label="3M" k="perf3m" sk={sortKey} sd={sortDir} onClick={() => setSort('perf3m')} />
-                <SortHeader label="1Y" k="perf1y" sk={sortKey} sd={sortDir} onClick={() => setSort('perf1y')} />
-              </tr>
+              {vnMode ? (
+                <tr>
+                  <th className="right">#</th>
+                  <th>Ticker</th>
+                  <th>Lean</th>
+                  <th className="right">Score</th>
+                  <th className="right">Fund.</th>
+                  <th className="right">Valuation</th>
+                  <th className="right">Technical</th>
+                </tr>
+              ) : (
+                <tr>
+                  <th>Ticker</th>
+                  <th>Name</th>
+                  <th>Sector</th>
+                  <SortHeader label="Mkt Cap" k="mcap" sk={sortKey} sd={sortDir} onClick={() => setSort('mcap')} />
+                  <SortHeader label="P/E" k="pe" sk={sortKey} sd={sortDir} onClick={() => setSort('pe')} />
+                  <SortHeader label="Div Yield" k="divYield" sk={sortKey} sd={sortDir} onClick={() => setSort('divYield')} />
+                  <SortHeader label="3M" k="perf3m" sk={sortKey} sd={sortDir} onClick={() => setSort('perf3m')} />
+                  <SortHeader label="1Y" k="perf1y" sk={sortKey} sd={sortDir} onClick={() => setSort('perf1y')} />
+                </tr>
+              )}
             </thead>
             <tbody>
-              {filtered.slice(0, 100).map(r => (
+              {vnMode ? filtered.slice(0, 100).map(r => (
+                <tr key={r.symbol} onClick={() => { setActiveAsset(r.symbol); setPage('detail'); }}>
+                  <td className="right num" style={{ color: 'var(--text-subtle)' }}>{r.rank}</td>
+                  <td><span className="ticker">{r.symbol}</span></td>
+                  <td><LeanBadge lean={r.lean} /></td>
+                  <td className="right num" style={{ fontWeight: 700 }}>{r.total_score.toFixed(1)}</td>
+                  <td className="right num">{(r.scores?.fundamentals ?? 0).toFixed(0)}</td>
+                  <td className="right num">{(r.scores?.valuation ?? 0).toFixed(0)}</td>
+                  <td className="right num">{(r.scores?.technical ?? 0).toFixed(0)}</td>
+                </tr>
+              )) : filtered.slice(0, 100).map(r => (
                 <tr key={r.sym} onClick={() => { setActiveAsset(r.sym); setPage('detail'); }}>
                   <td><span className="ticker">{r.sym}</span></td>
                   <td style={{ color: 'var(--text-muted)' }}>{r.name}</td>
@@ -362,7 +334,7 @@ const PageScreener = ({ setActiveAsset, setPage }) => {
           </table>
           {filtered.length > 100 && (
             <div style={{ padding: '12px 16px', fontSize: 12, color: 'var(--text-subtle)', textAlign: 'center', borderTop: '1px solid var(--border)' }}>
-              Showing first 100 of {filtered.length.toLocaleString()} matches · tighten filters or Export to see all
+              Showing first 100 of {filtered.length.toLocaleString()} matches{vnMode ? '' : ' · tighten filters or Export to see all'}
             </div>
           )}
         </div>
