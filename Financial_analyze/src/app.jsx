@@ -43,7 +43,9 @@ class PageErrorBoundary extends React.Component {
 
 const App = () => {
   const mockData = React.useMemo(() => JSON.parse(document.getElementById('market-data').textContent), []);
-  const [data, setData] = React.useState(mockData);
+  // null = still deciding real-vs-mock. Renders a loading screen instead of
+  // ever painting mock numbers when the backend turns out to be live.
+  const [data, setData] = React.useState(null);
   const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
   const [page, setPage] = React.useState(() => {
     try {
@@ -89,73 +91,76 @@ const App = () => {
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
-  // ── Live data overlay ──────────────────────────────────────────────
-  // When the Python backend is reachable, replace mock numbers with real
-  // ones. Every fetch is independent and falls back silently, so the UI
-  // keeps working whether or not the backend is running.
+  // ── Live data ────────────────────────────────────────────────────────
+  // `data` starts null. If the backend is live we wait for a full real
+  // snapshot (all 4 sections, fetched concurrently) before the first
+  // setData — the app never paints mock numbers when it's about to show
+  // real ones. Only when the backend is unreachable does mock data get
+  // shown at all. After that first snapshot, refresh on a 5-minute timer.
+  const applyIndices = (base, idx) => {
+    const map = { 'S&P 500': 'sp500', 'NASDAQ': 'nasdaq', 'DOW': 'dow', 'RUSSELL': 'russell', 'VIX': 'vix', '10Y YIELD': 'ten_year', 'GOLD': 'gold', 'OIL': 'oil' };
+    return base.indices.map(i => {
+      const q = idx?.[map[i.sym]];
+      return q && q.price ? { ...i, val: q.price, chg: q.change_pct ?? i.chg } : i;
+    });
+  };
+  const applyWatchlist = (base, quotes) => base.watchlist.map(w => {
+    const hit = quotes?.find(x => x && x.sym === w.sym);
+    return hit && hit.q.price ? { ...w, price: hit.q.price, chg: hit.q.change_pct ?? w.chg } : w;
+  });
+  const applyPortfolio = (base, pf) => {
+    if (!pf || !pf.holdings || !pf.holdings.length) return base.portfolio;
+    return {
+      ...base.portfolio,
+      totalValue: pf.total_value, totalGain: pf.total_gain, totalGainPct: pf.total_gain_pct,
+      holdings: pf.holdings.map(h => ({
+        sym: h.ticker, shares: h.shares, avgCost: h.cost_basis / (h.shares || 1),
+        price: h.price, value: h.value, gain: h.gain, gainPct: h.gain_pct,
+        weight: pf.total_value ? (h.value / pf.total_value) * 100 : 0,
+      })),
+    };
+  };
+  const applyNews = (base, news) => {
+    if (!Array.isArray(news) || !news.length) return base.news;
+    return news.map(n => ({
+      time: n.published ? new Date(n.published * 1000).toTimeString().slice(0, 5) : '—',
+      title: n.title, src: n.publisher || 'Wire',
+      tags: (n.tickers || []).slice(0, 3), sentiment: 'neutral',
+    }));
+  };
+
   React.useEffect(() => {
     let cancelled = false;
+
     const hydrate = async () => {
-      if (!window.HelixAPI) return;
+      if (!window.HelixAPI) { setData(prev => prev || mockData); return; }
       if (!window.HelixAPI.checked) await window.HelixAPI.detect();
-      if (!window.HelixAPI.live || cancelled) return;
+      if (!window.HelixAPI.live) { setData(prev => prev || mockData); return; }
 
-      const next = JSON.parse(JSON.stringify(mockData));
-
-      // Indices
-      try {
-        const idx = await window.HelixAPI.indices();
-        const map = { 'S&P 500': 'sp500', 'NASDAQ': 'nasdaq', 'DOW': 'dow', 'RUSSELL': 'russell', 'VIX': 'vix', '10Y YIELD': 'ten_year' };
-        next.indices = next.indices.map(i => {
-          const q = idx[map[i.sym]];
-          return q && q.price ? { ...i, val: q.price, chg: q.change_pct ?? i.chg } : i;
-        });
-      } catch {}
-
-      // Watchlist quotes
-      try {
-        const quotes = await Promise.all(next.watchlist.map(w =>
-          window.HelixAPI.quote(w.sym).then(q => ({ sym: w.sym, q })).catch(() => null)));
-        next.watchlist = next.watchlist.map(w => {
-          const hit = quotes.find(x => x && x.sym === w.sym);
-          return hit && hit.q.price ? { ...w, price: hit.q.price, chg: hit.q.change_pct ?? w.chg } : w;
-        });
-      } catch {}
-
-      // Portfolio
-      try {
-        const pf = await window.HelixAPI.portfolio();
-        if (pf && pf.holdings && pf.holdings.length) {
-          next.portfolio = {
-            ...next.portfolio,
-            totalValue: pf.total_value,
-            totalGain: pf.total_gain,
-            totalGainPct: pf.total_gain_pct,
-            holdings: pf.holdings.map(h => ({
-              sym: h.ticker, shares: h.shares, avgCost: h.cost_basis / (h.shares || 1),
-              price: h.price, value: h.value, gain: h.gain, gainPct: h.gain_pct,
-              weight: pf.total_value ? (h.value / pf.total_value) * 100 : 0,
-            })),
-          };
-        }
-      } catch {}
-
-      // News
-      try {
-        const news = await window.HelixAPI._get('/api/news?limit=9');
-        if (Array.isArray(news) && news.length) {
-          next.news = news.map(n => ({
-            time: n.published ? new Date(n.published * 1000).toTimeString().slice(0, 5) : '—',
-            title: n.title, src: n.publisher || 'Wire',
-            tags: (n.tickers || []).slice(0, 3), sentiment: 'neutral',
-          }));
-        }
-      } catch {}
-
-      if (!cancelled) setData(next);
+      const [idx, quotes, pf, news] = await Promise.all([
+        window.HelixAPI.indices().catch(() => null),
+        Promise.all(mockData.watchlist.map(w =>
+          window.HelixAPI.quote(w.sym).then(q => ({ sym: w.sym, q })).catch(() => null))),
+        window.HelixAPI.portfolio().catch(() => null),
+        window.HelixAPI._get('/api/news?limit=9').catch(() => null),
+      ]);
+      if (cancelled) return;
+      setData(prev => {
+        const base = prev || mockData;
+        return {
+          ...base,
+          indices: applyIndices(base, idx),
+          watchlist: applyWatchlist(base, quotes),
+          portfolio: applyPortfolio(base, pf),
+          news: applyNews(base, news),
+        };
+      });
     };
+
     hydrate();
-    return () => { cancelled = true; };
+    const REFRESH_MS = 5 * 60 * 1000;   // keep indices/quotes/portfolio/news live, not just on load
+    const interval = setInterval(hydrate, REFRESH_MS);
+    return () => { cancelled = true; clearInterval(interval); };
   }, [mockData]);
 
   // Apply theme
@@ -231,6 +236,16 @@ const App = () => {
       'go-alerts':     () => setPage('alerts'),
     });
   }, []);
+
+  if (!data) {
+    return (
+      <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14 }}>
+        <div style={{ width: 28, height: 28, borderRadius: '50%', border: '3px solid var(--border)', borderTopColor: 'var(--accent)', animation: 'helix-spin 0.8s linear infinite' }} />
+        <div className="num" style={{ fontSize: 12, color: 'var(--text-muted)' }}>Loading market data…</div>
+        <style>{'@keyframes helix-spin { to { transform: rotate(360deg); } }'}</style>
+      </div>
+    );
+  }
 
   const Page = {
     home: PageHome,

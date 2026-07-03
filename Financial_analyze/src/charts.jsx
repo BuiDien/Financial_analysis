@@ -1,5 +1,18 @@
 // Charts — candlestick / area / line, all hand-rolled SVG
 
+// Redraw the line from left to right whenever its data changes (e.g. a new
+// live quote lands) — pathLength normalizes stroke-dasharray to a fixed
+// unit regardless of actual on-screen path length.
+if (!document.getElementById('helix-linedraw-style')) {
+  const s = document.createElement('style');
+  s.id = 'helix-linedraw-style';
+  s.textContent = `
+    @keyframes helix-line-draw { from { stroke-dashoffset: 100; } to { stroke-dashoffset: 0; } }
+    .helix-line-draw { stroke-dasharray: 100; animation: helix-line-draw 500ms ease-out; }
+  `;
+  document.head.appendChild(s);
+}
+
 // Generate plausible OHLC data
 const genOHLC = (n, basePrice = 100, volatility = 0.02, seed = 1) => {
   let s = seed * 9999;
@@ -82,7 +95,7 @@ const Candlestick = ({ data, width = 760, height = 320, padding = { t: 10, r: 50
   );
 };
 
-const AreaChart = ({ data, width = 760, height = 320, padding = { t: 10, r: 50, b: 30, l: 0 }, color }) => {
+const AreaChart = ({ data, width = 760, height = 320, padding = { t: 10, r: 50, b: 30, l: 0 }, color, drawKey }) => {
   if (!data || !data.length) return null;
   const W = width - padding.l - padding.r;
   const H = height - padding.t - padding.b;
@@ -128,7 +141,11 @@ const AreaChart = ({ data, width = 760, height = 320, padding = { t: 10, r: 50, 
         </text>
       ))}
       <path d={areaPath} fill={`url(#${gradId})`} />
-      <path d={linePath} fill="none" stroke={lineColor} strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" />
+      {/* drawKey: caller-controlled redraw generation (e.g. bumped once per data
+          poll) so the draw-in replays exactly when new data arrives — never from
+          unrelated re-renders. Falls back to the last value for static charts. */}
+      <path key={drawKey ?? values[values.length - 1]} d={linePath} pathLength="100" className="helix-line-draw"
+        fill="none" stroke={lineColor} strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" />
     </svg>
   );
 };

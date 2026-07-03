@@ -14,6 +14,20 @@ const INSTRUMENTS = {
   'VIX':  { name: 'Volatility Index', cls: 'Index', base: 14.23, dp: 2 },
   'FTSE': { name: 'FTSE 100', cls: 'Index', base: 8234.10, dp: 2 },
   'N225': { name: 'Nikkei 225', cls: 'Index', base: 38901.40, dp: 2 },
+  'DAX':  { name: 'DAX (Germany)', cls: 'Index', base: 24010.30, dp: 2 },
+  'CAC':  { name: 'CAC 40 (France)', cls: 'Index', base: 8215.60, dp: 2 },
+  'HSI':  { name: 'Hang Seng (HK)', cls: 'Index', base: 25120.40, dp: 2 },
+  'SSE':  { name: 'Shanghai Composite', cls: 'Index', base: 3985.20, dp: 2 },
+  'KOSPI':{ name: 'KOSPI (Korea)', cls: 'Index', base: 4890.50, dp: 2 },
+  // Vietnam (via vnstock/VCI on the backend; prices in nghìn đồng for stocks)
+  'VNINDEX': { name: 'VN-Index (HOSE)', cls: 'Vietnam', base: 1862.08, dp: 2 },
+  'VN30':    { name: 'VN30 Index', cls: 'Vietnam', base: 2002.56, dp: 2 },
+  'VNM':     { name: 'Vinamilk', cls: 'Vietnam', base: 54.90, dp: 2 },
+  'FPT':     { name: 'FPT Corp', cls: 'Vietnam', base: 72.30, dp: 2 },
+  'HPG':     { name: 'Hòa Phát Group', cls: 'Vietnam', base: 28.40, dp: 2 },
+  'VCB':     { name: 'Vietcombank', cls: 'Vietnam', base: 62.10, dp: 2 },
+  'VIC':     { name: 'Vingroup', cls: 'Vietnam', base: 95.30, dp: 2 },
+  'MWG':     { name: 'Thế Giới Di Động', cls: 'Vietnam', base: 65.80, dp: 2 },
   // Commodities
   'XAU':  { name: 'Gold (spot /oz)', cls: 'Commodity', base: 2683.10, dp: 2, unit: '$' },
   'XAG':  { name: 'Silver (spot /oz)', cls: 'Commodity', base: 31.42, dp: 2, unit: '$' },
@@ -43,6 +57,10 @@ const LIVE_TICKER = {
   NG: 'NG=F', HG: 'HG=F', US10Y: '^TNX', DXY: 'DX-Y.NYB', BTC: 'BTC-USD',
   NVDA: 'NVDA', AAPL: 'AAPL', MSFT: 'MSFT', TSLA: 'TSLA', AMZN: 'AMZN',
   GOOGL: 'GOOGL', META: 'META', GLD: 'GLD', NEM: 'NEM',
+  DAX: '^GDAXI', CAC: '^FCHI', HSI: '^HSI', SSE: '000001.SS', KOSPI: '^KS11',
+  // VN: prefix routes these to vnstock/VCI on the backend (Yahoo has no HOSE data)
+  VNINDEX: 'VN:VNINDEX', VN30: 'VN:VN30', VNM: 'VN:VNM', FPT: 'VN:FPT',
+  HPG: 'VN:HPG', VCB: 'VN:VCB', VIC: 'VN:VIC', MWG: 'VN:MWG',
 };
 
 const DEFAULT_WATCH = ['XAU', 'SPX', 'NDX', 'US10Y', 'NVDA', 'BTC', 'WTI', 'VIX'];
@@ -89,32 +107,43 @@ const PageHome = ({ setActiveAsset, setPage }) => {
   const [showAdd, setShowAdd] = React.useState(false);
   const [live, setLive] = React.useState(!!window.HelixAPI?.live);
   const [now, setNow] = React.useState(new Date());
+  // Each quote carries its own `gen`, bumped only when a poll delivers data
+  // for a market that's actually trading — the ONLY thing that re-triggers
+  // that chart's draw-in animation. Closed markets (q.state === 'CLOSED')
+  // keep their series and gen frozen: no fake movement, no redraws.
   const [currency, setCurrency] = React.useState(() => localStorage.getItem(CURRENCY_KEY) || 'USD');
   React.useEffect(() => { localStorage.setItem(CURRENCY_KEY, currency); }, [currency]);
 
-  // Per-symbol live state: { price, chg, series }
+  // Per-symbol live state: { price, chg, series }. By the time this page
+  // mounts, App has already resolved HelixAPI.checked/.live (it gates the
+  // whole app behind a loading screen until that's known) — so when live,
+  // never seed the hardcoded INSTRUMENTS base as a fake price; wait for the
+  // real first fetch instead, same "no mock flash" rule as the rest of the app.
   const [quotes, setQuotes] = React.useState(() => {
     const q = {};
+    const liveNow = !!window.HelixAPI?.live;
     watch.forEach((sym, i) => {
+      if (liveNow) { q[sym] = { price: null, chg: 0, series: null, state: null, gen: 0 }; return; }
       const inst = INSTRUMENTS[sym];
       const series = makeSeries(inst.base, sym.charCodeAt(0) + i);
       const prevClose = series[0];
-      q[sym] = { price: inst.base, chg: ((inst.base - prevClose) / prevClose) * 100, series };
+      q[sym] = { price: inst.base, chg: ((inst.base - prevClose) / prevClose) * 100, series, state: null, gen: 0 };
     });
     return q;
   });
 
   React.useEffect(() => { localStorage.setItem(HOME_WATCH_KEY, JSON.stringify(watch)); }, [watch]);
 
-  // Ensure new symbols get a series
+  // Ensure new symbols (e.g. just added via the dialog) get a series
   React.useEffect(() => {
     setQuotes(prev => {
       const next = { ...prev };
       watch.forEach((sym, i) => {
         if (!next[sym]) {
+          if (window.HelixAPI?.live) { next[sym] = { price: null, chg: 0, series: null, state: null, gen: 0 }; return; }
           const inst = INSTRUMENTS[sym];
           const series = makeSeries(inst.base, sym.charCodeAt(0) + i);
-          next[sym] = { price: inst.base, chg: ((inst.base - series[0]) / series[0]) * 100, series };
+          next[sym] = { price: inst.base, chg: ((inst.base - series[0]) / series[0]) * 100, series, state: null, gen: 0 };
         }
       });
       return next;
@@ -136,12 +165,12 @@ const PageHome = ({ setActiveAsset, setPage }) => {
         const next = { ...prev };
         for (const sym of watch) {
           const cur = next[sym];
-          if (!cur) continue;
+          if (!cur || cur.price == null) continue;
           const drift = (Math.random() - 0.5) * 0.0016;
           const price = cur.price * (1 + drift);
-          const series = [...cur.series.slice(1), price];
+          const series = cur.series ? [...cur.series.slice(1), price] : makeSeries(price, 1);
           const prevClose = series[0];
-          next[sym] = { price, chg: ((price - prevClose) / prevClose) * 100, series };
+          next[sym] = { price, chg: ((price - prevClose) / prevClose) * 100, series, state: null, gen: (cur.gen || 0) + 1 };
         }
         return next;
       });
@@ -156,9 +185,18 @@ const PageHome = ({ setActiveAsset, setPage }) => {
           const next = { ...prev };
           for (const r of results) {
             if (r && r.q && r.q.price) {
-              const cur = next[r.sym] || { series: makeSeries(r.q.price, 1) };
-              const series = [...cur.series.slice(1), r.q.price];
-              next[r.sym] = { price: r.q.price, chg: r.q.change_pct ?? cur.chg ?? 0, series };
+              const cur = next[r.sym];
+              const closed = r.q.market_state === 'CLOSED';
+              if (closed && cur?.series) {
+                // Market closed and we already have its chart: freeze it.
+                // Same closing price would just repaint a flat shift — no
+                // series slide, no gen bump, no redraw. Only note the state.
+                next[r.sym] = { ...cur, state: 'CLOSED' };
+                continue;
+              }
+              const series = cur?.series ? [...cur.series.slice(1), r.q.price] : makeSeries(r.q.price, 1);
+              next[r.sym] = { price: r.q.price, chg: r.q.change_pct ?? cur?.chg ?? 0, series,
+                              state: r.q.market_state || null, gen: (cur?.gen || 0) + 1 };
             }
           }
           return next;
@@ -166,10 +204,15 @@ const PageHome = ({ setActiveAsset, setPage }) => {
       } catch {}
     };
 
+    // Fire the first fetch immediately — don't make the user wait out the
+    // 2s interval tick before the board shows anything.
+    if (window.HelixAPI?.live) { setLive(true); pollLive(); }
+    else { setLive(false); tickMock(); }
+
     const interval = setInterval(() => {
       if (window.HelixAPI?.live) { setLive(true); pollLive(); }
       else { setLive(false); tickMock(); }
-    }, 2000);
+    }, 5 * 60 * 1000);   // 5-minute cadence; 2s polling (240+ req/min) tripped Yahoo's rate limit
 
     return () => { cancelled = true; clearInterval(interval); };
   }, [watch]);
@@ -246,7 +289,7 @@ const PageHome = ({ setActiveAsset, setPage }) => {
               </div>
             </div>
             <div style={{ position: 'relative', minHeight: 220 }}>
-              <AreaChart data={focusQ.series} width={760} height={220} padding={{ t: 16, r: 50, b: 16, l: 0 }} />
+              <AreaChart data={focusQ.series} width={760} height={220} padding={{ t: 16, r: 50, b: 16, l: 0 }} drawKey={focusQ.gen} />
             </div>
           </div>
         </div>
@@ -256,7 +299,7 @@ const PageHome = ({ setActiveAsset, setPage }) => {
       <div className="card">
         <div className="card-header">
           <h3 className="card-title">My Instruments · {watch.length}</h3>
-          <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>Click to focus · updates every 2s</span>
+          <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>Click to focus · updates every 5m</span>
         </div>
         <div className="card-body">
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12 }}>
@@ -276,7 +319,15 @@ const PageHome = ({ setActiveAsset, setPage }) => {
                   }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <div>
-                      <div className="ticker" style={{ fontSize: 13 }}>{sym}</div>
+                      <div className="row" style={{ gap: 6 }}>
+                        <div className="ticker" style={{ fontSize: 13 }}>{sym}</div>
+                        {q.state === 'CLOSED' && (
+                          <span title="Market closed — chart frozen at the last close, resumes when trading reopens"
+                            style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', padding: '1px 5px', borderRadius: 999, background: 'var(--bg-sunken)', color: 'var(--text-subtle)', border: '1px solid var(--border)' }}>
+                            CLOSED
+                          </span>
+                        )}
+                      </div>
                       <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 130 }}>{inst.name}</div>
                     </div>
                     <button onClick={(e) => { e.stopPropagation(); removeInstrument(sym); }}
@@ -296,6 +347,7 @@ const PageHome = ({ setActiveAsset, setPage }) => {
                       <svg width="100%" height="48" viewBox="0 0 190 48" preserveAspectRatio="none" style={{ display: 'block', overflow: 'visible' }}>
                         {(() => {
                           const d = q.series;
+                          if (!d) return null;   // first live fetch hasn't landed yet — nothing to draw
                           const min = Math.min(...d), max = Math.max(...d), range = (max - min) || 1;
                           const step = 190 / (d.length - 1);
                           const pts = d.map((v, idx) => [idx * step, 48 - ((v - min) / range) * 46 - 1]);
@@ -304,7 +356,8 @@ const PageHome = ({ setActiveAsset, setPage }) => {
                           const col = up ? 'var(--pos)' : 'var(--neg)';
                           return <>
                             <path d={area} fill={col} opacity="0.12" />
-                            <path d={line} fill="none" stroke={col} strokeWidth="1.5" vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
+                            <path key={q.gen} d={line} pathLength="100" className="helix-line-draw"
+                              fill="none" stroke={col} strokeWidth="1.5" vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
                           </>;
                         })()}
                       </svg>

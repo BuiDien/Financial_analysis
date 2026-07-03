@@ -1,6 +1,7 @@
 """Market data — yfinance wrapper with optional Redis cache."""
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import yfinance as yf
@@ -19,29 +20,115 @@ if settings.redis_url:
         _redis = None
 
 
+# Fallback when Redis isn't configured (the common case in dev): a plain
+# in-process dict cache. Without ANY cache, every poller (Watch board every
+# 2s, the header ticker tape, multiple browser tabs) hits Yahoo fresh for
+# the same ticker — that's what tripped Yahoo's rate limit under normal use.
+_local_cache: dict[str, tuple[float, Any]] = {}
+
+
 def _cache_get(key: str):
-    if not _redis:
+    if _redis:
+        try:
+            v = _redis.get(key)
+            return json.loads(v) if v else None
+        except Exception:
+            return None
+    hit = _local_cache.get(key)
+    if not hit:
         return None
-    try:
-        v = _redis.get(key)
-        return json.loads(v) if v else None
-    except Exception:
+    expires_at, value = hit
+    if time.time() >= expires_at:
+        del _local_cache[key]
         return None
+    return value
 
 
 def _cache_set(key: str, value: Any, ttl: int = 60):
-    if not _redis:
+    if _redis:
+        try:
+            _redis.setex(key, ttl, json.dumps(value, default=str))
+        except Exception:
+            pass
         return
+    _local_cache[key] = (time.time() + ttl, value)
+
+
+def get_market_state(ticker: str) -> str | None:
+    """Yahoo marketState: PRE | REGULAR | POST | CLOSED (None if unavailable).
+
+    Comes from Ticker.info (a heavier quoteSummary call than fast_info), so it
+    gets its own 10-minute cache — state flips a few times a day, not per tick.
+    """
+    key = f"mstate:{ticker}"
+    cached = _cache_get(key)
+    if cached:
+        return cached.get("state")
     try:
-        _redis.setex(key, ttl, json.dumps(value, default=str))
+        state = yf.Ticker(ticker).info.get("marketState")
     except Exception:
-        pass
+        state = None
+    _cache_set(key, {"state": state}, ttl=600)
+    return state
+
+
+# "VN:<symbol>" tickers (VNINDEX, VN30, VNM, ...) come from vnstock/VCI —
+# Yahoo doesn't carry HOSE/HNX listings. Prices are in nghìn đồng as VCI
+# returns them; daily closes, so change is vs the prior session.
+VN_PREFIX = "VN:"
+
+
+def _vn_market_state() -> str:
+    """HOSE sessions: Mon-Fri 09:00-11:30 and 13:00-14:45 ICT."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    now = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh"))
+    if now.weekday() >= 5:
+        return "CLOSED"
+    minutes = now.hour * 60 + now.minute
+    if 9 * 60 <= minutes <= 11 * 60 + 30 or 13 * 60 <= minutes <= 14 * 60 + 45:
+        return "REGULAR"
+    return "CLOSED"
+
+
+def _get_quote_vn(symbol: str) -> dict:
+    from datetime import date, timedelta
+    from vnstock.explorer.vci import Quote as VnQuote
+
+    end = date.today()
+    start = end - timedelta(days=15)
+    df = VnQuote(symbol).history(start=start.isoformat(), end=end.isoformat(), interval="1D")
+    closes = [float(c) for c in df["close"].tolist()]
+    if not closes:
+        raise ValueError(f"no VCI data for {symbol}")
+    price = closes[-1]
+    prev = closes[-2] if len(closes) > 1 else None
+    out = {
+        "ticker": f"{VN_PREFIX}{symbol}",
+        "price": price,
+        "open": float(df["open"].iloc[-1]),
+        "previous_close": prev,
+        "day_high": float(df["high"].iloc[-1]),
+        "day_low": float(df["low"].iloc[-1]),
+        "year_high": None, "year_low": None, "market_cap": None,
+        "currency": "VND",
+        "market_state": _vn_market_state(),
+        "ts": int(time.time()),
+    }
+    if prev:
+        out["change"] = price - prev
+        out["change_pct"] = (out["change"] / prev) * 100
+    return out
 
 
 def get_quote(ticker: str) -> dict:
     cached = _cache_get(f"quote:{ticker}")
     if cached:
         return cached
+    if ticker.startswith(VN_PREFIX):
+        out = _get_quote_vn(ticker[len(VN_PREFIX):])
+        _cache_set(f"quote:{ticker}", out, ttl=120)
+        return out
     info = yf.Ticker(ticker).fast_info
     out = {
         "ticker": ticker,
@@ -54,12 +141,16 @@ def get_quote(ticker: str) -> dict:
         "year_low": float(info.year_low) if info.year_low else None,
         "market_cap": float(info.market_cap) if info.market_cap else None,
         "currency": info.currency,
+        "market_state": get_market_state(ticker),
         "ts": int(time.time()),
     }
     if out["price"] and out["previous_close"]:
         out["change"] = out["price"] - out["previous_close"]
         out["change_pct"] = (out["change"] / out["previous_close"]) * 100
-    _cache_set(f"quote:{ticker}", out, ttl=30)
+    # 120s: guarantees each 5-minute frontend poll gets fresh data, while
+    # overlapping pollers (ticker tape, watch board, multiple tabs) within
+    # the window share one Yahoo call instead of stacking requests.
+    _cache_set(f"quote:{ticker}", out, ttl=120)
     return out
 
 
@@ -85,13 +176,20 @@ def get_history(ticker: str, period: str = "1mo", interval: str = "1d") -> list[
 
 def get_indices() -> dict:
     tickers = {"sp500": "^GSPC", "nasdaq": "^IXIC", "dow": "^DJI",
-               "russell": "^RUT", "vix": "^VIX", "ten_year": "^TNX"}
+               "russell": "^RUT", "vix": "^VIX", "ten_year": "^TNX",
+               "gold": "GC=F", "oil": "CL=F"}
+    # each get_quote is a blocking Yahoo round-trip (~0.3-0.8s); fetching the
+    # 8 tickers one at a time serializes to several seconds. Run them
+    # concurrently on a thread pool instead — pure I/O wait, no GIL contention.
     out = {}
-    for name, t in tickers.items():
-        try:
-            out[name] = get_quote(t)
-        except Exception:
-            out[name] = None
+    with ThreadPoolExecutor(max_workers=len(tickers)) as pool:
+        futures = {pool.submit(get_quote, t): name for name, t in tickers.items()}
+        for future in as_completed(futures):
+            name = futures[future]
+            try:
+                out[name] = future.result()
+            except Exception:
+                out[name] = None
     return out
 
 
