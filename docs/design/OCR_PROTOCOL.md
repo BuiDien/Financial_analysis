@@ -30,13 +30,18 @@ than exposing a server on the laptop. The `page-sync.jsx` control panel is the U
 ## Connection & pairing
 - The Core listens at **`ws://<mac-host>:8000/ws/ocr`** (served by `backend/app/routes/sync.py`).
   Addressed by hostname (e.g. `mac.local`), not a hardcoded IP.
-- The worker connects out and **pairs** with a short code shown in the Sync page (e.g. `ABC-DEF`):
+- The worker connects out with just its name — **no code needed up front** — and pairs in a second
+  step once the Core hands back a `pairId` and shows the code on the Sync page (e.g. `ABC-DEF`):
   ```
   python -m worker --connect ws://<mac-host>:8000/ws/ocr --code ABC-DEF
   ```
+  (`--code` is supplied on the command line for convenience, but is sent to the server in the second
+  frame, not the first — see Handshake below.)
 - **Auth = the pairing code.** It is single-use per session and rotatable (the UI can regenerate it).
-  A wrong/absent code → the Core rejects and closes the socket. This replaces the earlier
-  `X-OCR-Secret` header — the pairing handshake is the auth, scoped to one worker session.
+  A wrong code → the Core denies with `attemptsLeft` and lets the worker retry the `pair` frame (up to
+  a server-side cap) rather than reconnecting from scratch. Exhausting attempts closes the socket.
+  This replaces the earlier `X-OCR-Secret` header — the pairing handshake is the auth, scoped to one
+  worker session.
 - Multiple workers may pair; the Core dispatches each job to an idle worker.
 
 ---
@@ -45,10 +50,12 @@ than exposing a server on the laptop. The `page-sync.jsx` control panel is the U
 Text frames are JSON `{type, ...}`. The PDF itself is sent as **chunked binary frames**, never
 base64-in-JSON (base64 bloats a multi-MB scan ~33%).
 
-### Handshake
+### Handshake (two-step — decided 2026-07-02, supersedes the earlier one-step draft)
 ```
-worker → server : {"type":"hello","code":"ABC-DEF","worker":"Dien's Laptop","gpu":"RTX 4070"}
-server → worker : {"type":"paired","session":"s-9f2"}          # or {"type":"reject","reason":"bad code"}
+worker → server : {"type":"hello","name":"Dien's Laptop"}
+server → worker : {"type":"pair_required","pairId":"a1b2c3d4"}   # code now shown on the Sync page
+worker → server : {"type":"pair","pairId":"a1b2c3d4","code":"ABC-DEF"}
+server → worker : {"type":"welcome","workerId":"w-9f2"}          # or {"type":"deny","reason":"...","attemptsLeft":N}
 ```
 
 ### Dispatch a job (server → worker), then stream the PDF as binary
@@ -68,15 +75,12 @@ worker → server : {"type":"progress","jobId":"job_7","status":"extracting","pr
 
 ### Result (worker → server)
 ```
-worker → server : {"type":"result","jobId":"job_7","pages":8,
-  "statements":[
-    {"kind":"CDKT","period":"Q4 2024","unit":"triệu đồng"},
-    {"kind":"KQKD","period":"Q4 2024","unit":"triệu đồng"},
-    {"kind":"LCTT","period":"Q4 2024","unit":"triệu đồng"}
-  ],
+worker → server : {"type":"result","jobId":"job_7","schemaVersion":1,
   "rows":[
     {"code":"270","section":"balance","metric":"TỔNG CỘNG TÀI SẢN",
-     "curr":"52800000","prev":"51000000","page":3,"confidence":73}
+     "curr":"52800000","prev":"51000000","page":3,"confidence":73,
+     "bbox":{"x":0.08,"y":0.42,"width":0.84,"height":0.035},
+     "rawText":"270 TỔNG CỘNG TÀI SẢN 52.800.000 51.000.000"}
   ]}
 ```
 On failure:
@@ -86,11 +90,15 @@ worker → server : {"type":"error","jobId":"job_7","error":"no tables found"}
 
 ### Result `rows` — canonical shape
 Same row shape as `API_CONTRACT.md` §2 and the OCR workflow spec, so the Core passes them straight into
-placement: `{code (Mã số), section (income|balance|cashflow), metric, curr, prev, page, confidence}`.
+placement and human review: `{code (Mã số), section (income|balance|cashflow), metric, curr, prev,
+page, confidence, bbox, rawText?}`. The envelope's `schemaVersion` is required for OCR Inbox jobs.
 - `code` = **Mã số** (TT200) — required; the Core places rows into statements by it. (The UI's tracker
   `id` like `rev`/`gp` is a presentation concept; the **wire uses `code`**.)
 - `curr`/`prev`: strings, raw digits, may be `-`-prefixed. No thousands separators.
 - `confidence`: 0–100, per value.
+- `bbox`: required normalized displayed-page coordinates `{x,y,width,height}`; every value is within
+  0–1 and the rectangle must remain inside the page. This lets the Core highlight the source at any zoom.
+- `rawText`: optional original OCR text (maximum 4,000 characters) retained as review evidence.
 - **The worker does NOT set line-item `status`** — that is assigned by the Core's reconciliation step. The
   worker only reads.
 

@@ -32,17 +32,23 @@ The HTTP side lets the UI drive the coordinator:
   GET  /api/sync/result/{job_id}        → fetch returned rows (poll) and apply
 """
 import asyncio
+import logging
 import os
 import secrets
 import socket
 import time
+from datetime import datetime, timezone
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Depends
+from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
-from ..db import get_db
+from ..db import SessionLocal, get_db
 from ..models.filing import Filing
+from ..models.ocr import OCRAttempt, OCRInboxItem
+from ..services.ocr_review import create_review_from_result
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # Binary chunk size for streaming a PDF to a worker. 512 KiB keeps frames
 # comfortably small for any WS stack while a multi-MB scan still ships in a
@@ -74,13 +80,14 @@ class Coordinator:
         self.pair_code = _gen_code()
         self.workers: dict[str, dict] = {}      # worker_id -> {name, ip, status, done, ws}
         self.jobs: dict[str, dict] = {}          # job_id -> {filingId, filename, ticker, status, rows, worker}
-        self._queue: asyncio.Queue = asyncio.Queue()
+        self._dispatch_lock = asyncio.Lock()
 
     def public_workers(self):
         return [{k: v for k, v in w.items() if k != "ws"} for w in self.workers.values()]
 
     def public_jobs(self):
-        return list(self.jobs.values())
+        return [{k: v for k, v in job.items() if k != "db_bind"}
+                for job in self.jobs.values()]
 
 
 coordinator = Coordinator()
@@ -89,10 +96,111 @@ coordinator = Coordinator()
 MAX_PAIR_ATTEMPTS = 5
 
 
+async def _stream_job(worker: dict, job_id: str, path: str, header: dict):
+    try:
+        fp = open(path, "rb")
+    except OSError as exc:
+        raise RuntimeError("PDF file missing on disk") from exc
+    with fp:
+        size = os.fstat(fp.fileno()).st_size
+        worker["status"] = "busy"
+        ws = worker["ws"]
+        await ws.send_json({"type": "job", "jobId": job_id, "bytes": size, **header})
+        while chunk := fp.read(CHUNK_SIZE):
+            await ws.send_bytes(chunk)
+        await ws.send_json({"type": "job_end", "jobId": job_id})
+
+
+def _fail_attempt(db: Session, attempt: OCRAttempt, item: OCRInboxItem, error: str):
+    attempt.status = "failed"
+    attempt.error = error[:4000]
+    attempt.finished_at = datetime.now(timezone.utc)
+    item.error = attempt.error
+    if not attempt.automatic:
+        retry = OCRAttempt(
+            inbox_item=item, parent_attempt=attempt, status="queued", automatic=1,
+        )
+        db.add(retry)
+        item.status = "queued"
+    else:
+        item.status = "failed"
+
+
+def recover_interrupted_attempts(*, bind=None):
+    """Make durable OCR work safe after a coordinator process restart."""
+    db = Session(bind=bind) if bind is not None else SessionLocal()
+    with db:
+        if not inspect(db.get_bind()).has_table("ocr_attempts"):
+            return
+        interrupted = (db.query(OCRAttempt)
+                       .filter(OCRAttempt.status.in_({"sent", "processing"})).all())
+        for attempt in interrupted:
+            _fail_attempt(db, attempt, attempt.inbox_item, "coordinator restarted during OCR")
+        if interrupted:
+            db.commit()
+
+
+async def dispatch_next_queued(*, preferred_worker_id: str | None = None, bind=None):
+    """Assign the oldest persistent inbox attempt to an idle worker."""
+    async with coordinator._dispatch_lock:
+        worker = coordinator.workers.get(preferred_worker_id) if preferred_worker_id else None
+        if not worker or worker.get("status") != "idle":
+            worker = next((w for w in coordinator.workers.values() if w["status"] == "idle"), None)
+        if not worker:
+            return None
+        db = Session(bind=bind) if bind is not None else SessionLocal()
+        try:
+            # During isolated legacy coordinator tests the application's default
+            # database may not be initialized; there cannot be durable work in it.
+            if not inspect(db.get_bind()).has_table("ocr_attempts"):
+                return None
+            attempt = (db.query(OCRAttempt)
+                       .filter(OCRAttempt.status == "queued")
+                       .order_by(OCRAttempt.id.asc()).first())
+            if not attempt:
+                return None
+            item = attempt.inbox_item
+            job_id = "job_" + secrets.token_hex(5)
+            attempt.job_id = job_id
+            attempt.worker_id = worker["id"]
+            attempt.worker_name = worker["name"]
+            attempt.status = "sent"
+            attempt.started_at = datetime.now(timezone.utc)
+            item.status = "processing"
+            item.error = None
+            coordinator.jobs[job_id] = {
+                "id": job_id, "inboxItemId": item.id, "attemptId": attempt.id,
+                "filename": item.filename, "ticker": item.ticker or "",
+                "worker": worker["name"], "workerId": worker["id"],
+                "status": "sent", "progress": 0, "rows": None,
+                "sentAt": time.time(), "kind": "inbox", "db_bind": db.get_bind(),
+            }
+            db.commit()
+            try:
+                await _stream_job(worker, job_id, item.storage_path, {
+                    "inboxItemId": item.id, "filename": item.filename,
+                })
+            except Exception as exc:
+                db.rollback()
+                attempt = db.query(OCRAttempt).filter_by(id=attempt.id).one()
+                item = attempt.inbox_item
+                _fail_attempt(db, attempt, item, str(exc))
+                db.commit()
+                coordinator.jobs[job_id]["status"] = "failed"
+                coordinator.jobs[job_id]["error"] = str(exc)
+                worker["status"] = "idle"
+                return None
+            return job_id
+        finally:
+            db.close()
+
+
 @router.websocket("/ws/ocr")
 async def ocr_worker(ws: WebSocket):
     await ws.accept()
     worker_id = None
+    peer = ws.client.host if ws.client else "?"
+    logger.info("OCR worker socket accepted from %s", peer)
     try:
         # Two-step pairing: the worker connects with just a name (no code
         # needed up front), the coordinator hands back a pairId and shows
@@ -101,7 +209,17 @@ async def ocr_worker(ws: WebSocket):
         # the worker even dials in.
         hello = await ws.receive_json()
         if hello.get("type") != "hello":
+            logger.warning("OCR worker %s sent invalid first frame", peer)
             await ws.send_json({"type": "deny", "reason": "expected hello"})
+            await ws.close()
+            return
+        if "code" in hello:
+            logger.warning("OCR worker %s uses the obsolete one-step handshake", peer)
+            await ws.send_json({
+                "type": "deny",
+                "reason": "outdated worker; update scripts/ocr_worker.py for the two-step handshake",
+                "attemptsLeft": 0,
+            })
             await ws.close()
             return
 
@@ -118,6 +236,7 @@ async def ocr_worker(ws: WebSocket):
             ):
                 break
             remaining = MAX_PAIR_ATTEMPTS - attempt - 1
+            logger.warning("OCR worker %s supplied a bad pairing code (%s attempts left)", peer, remaining)
             await ws.send_json({"type": "deny", "reason": "bad pairing code", "attemptsLeft": remaining})
             if remaining <= 0:
                 await ws.close()
@@ -133,6 +252,8 @@ async def ocr_worker(ws: WebSocket):
             "ws": ws,
         }
         await ws.send_json({"type": "welcome", "workerId": worker_id})
+        logger.info("OCR worker %s paired as %s (%s)", peer, worker_name, worker_id)
+        await dispatch_next_queued(preferred_worker_id=worker_id)
 
         while True:
             msg = await ws.receive_json()
@@ -142,28 +263,86 @@ async def ocr_worker(ws: WebSocket):
                 if job:
                     job["progress"] = msg.get("pct", 0)
                     job["status"] = "parsing"
+                    if job.get("kind") == "inbox":
+                        with Session(bind=job["db_bind"]) as db:
+                            attempt = db.query(OCRAttempt).filter_by(id=job["attemptId"]).first()
+                            if attempt:
+                                attempt.progress = max(0, min(100, int(job["progress"])))
+                                attempt.status = "processing"
+                                db.commit()
             elif mtype == "result":
                 job = coordinator.jobs.get(msg.get("jobId"))
                 if job:
-                    job["rows"] = msg.get("rows", [])
-                    job["status"] = "done"
-                    job["progress"] = 100
+                    if job.get("kind") == "inbox":
+                        with Session(bind=job["db_bind"]) as db:
+                            attempt = db.query(OCRAttempt).filter_by(id=job["attemptId"]).first()
+                            try:
+                                if not attempt:
+                                    raise ValueError("OCR attempt no longer exists")
+                                create_review_from_result(db, attempt, attempt.inbox_item, msg)
+                                db.commit()
+                                job["rows"] = msg.get("rows", [])
+                                job["status"] = "done"
+                                job["progress"] = 100
+                            except Exception as exc:
+                                db.rollback()
+                                attempt = db.query(OCRAttempt).filter_by(id=job["attemptId"]).first()
+                                if attempt:
+                                    _fail_attempt(db, attempt, attempt.inbox_item, str(exc))
+                                    db.commit()
+                                job["status"] = "failed"
+                                job["error"] = str(exc)
+                                await ws.send_json({
+                                    "type": "result_rejected", "jobId": job["id"],
+                                    "error": str(exc),
+                                })
+                    else:
+                        job["rows"] = msg.get("rows", [])
+                        job["status"] = "done"
+                        job["progress"] = 100
                 w = coordinator.workers.get(worker_id)
                 if w:
                     w["status"] = "idle"
-                    w["done"] += 1
+                    if job and job.get("status") == "done":
+                        w["done"] += 1
+                if job:
+                    await dispatch_next_queued(preferred_worker_id=worker_id,
+                                               bind=job.get("db_bind"))
             elif mtype == "error":
                 job = coordinator.jobs.get(msg.get("jobId"))
                 if job:
                     job["status"] = "failed"
                     job["error"] = msg.get("error", "worker error")
+                    if job.get("kind") == "inbox":
+                        with Session(bind=job["db_bind"]) as db:
+                            attempt = db.query(OCRAttempt).filter_by(id=job["attemptId"]).first()
+                            if attempt:
+                                _fail_attempt(db, attempt, attempt.inbox_item, job["error"])
+                                db.commit()
                 w = coordinator.workers.get(worker_id)
                 if w:
                     w["status"] = "idle"
-    except WebSocketDisconnect:
-        pass
+                if job:
+                    await dispatch_next_queued(preferred_worker_id=worker_id,
+                                               bind=job.get("db_bind"))
+    except WebSocketDisconnect as e:
+        logger.info("OCR worker %s disconnected (code=%s)", peer, e.code)
+    except Exception:
+        logger.exception("OCR worker %s protocol failure", peer)
     finally:
         if worker_id:
+            active_jobs = [job for job in coordinator.jobs.values()
+                           if job.get("workerId") == worker_id
+                           and job.get("kind") == "inbox"
+                           and job.get("status") in {"sent", "parsing"}]
+            for job in active_jobs:
+                with Session(bind=job["db_bind"]) as db:
+                    attempt = db.query(OCRAttempt).filter_by(id=job["attemptId"]).first()
+                    if attempt:
+                        _fail_attempt(db, attempt, attempt.inbox_item, "worker disconnected")
+                        db.commit()
+                job["status"] = "failed"
+                job["error"] = "worker disconnected"
             coordinator.workers.pop(worker_id, None)
 
 
@@ -196,29 +375,19 @@ async def dispatch(filing_id: int, db: Session = Depends(get_db)):
         raise HTTPException(409, "No idle worker connected")
 
     job_id = "job_" + secrets.token_hex(5)
+    coordinator.jobs[job_id] = {
+        "id": job_id, "filingId": f.id, "filename": f.filename, "ticker": f.ticker,
+        "worker": worker["name"], "workerId": worker["id"], "status": "sent",
+        "progress": 0, "rows": None, "sentAt": time.time(), "kind": "filing",
+    }
     try:
-        fp = open(f.storage_path, "rb")
-    except OSError:
-        raise HTTPException(500, "Filing file missing on disk")
-
-    with fp:
-        size = os.fstat(fp.fileno()).st_size
-        coordinator.jobs[job_id] = {
-            "id": job_id, "filingId": f.id, "filename": f.filename, "ticker": f.ticker,
-            "worker": worker["name"], "status": "sent", "progress": 0, "rows": None,
-            "sentAt": time.time(),
-        }
-        # Busy before the first await — a concurrent dispatch must not pick
-        # this worker and interleave a second job's binary chunks.
-        worker["status"] = "busy"
-        ws = worker["ws"]
-        await ws.send_json({
-            "type": "job", "jobId": job_id, "filingId": f.id,
-            "filename": f.filename, "bytes": size,
+        await _stream_job(worker, job_id, f.storage_path, {
+            "filingId": f.id, "filename": f.filename,
         })
-        while chunk := fp.read(CHUNK_SIZE):
-            await ws.send_bytes(chunk)
-        await ws.send_json({"type": "job_end", "jobId": job_id})
+    except RuntimeError as exc:
+        coordinator.jobs.pop(job_id, None)
+        worker["status"] = "idle"
+        raise HTTPException(500, str(exc)) from exc
     return {"jobId": job_id}
 
 

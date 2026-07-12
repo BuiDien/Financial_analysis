@@ -1,7 +1,9 @@
 """Market data — yfinance wrapper with optional Redis cache."""
 import json
+import math
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from typing import Any
 
 import yfinance as yf
@@ -154,22 +156,107 @@ def get_quote(ticker: str) -> dict:
     return out
 
 
+# yfinance-style period → how many calendar days to request from VCI.
+# Padded so the span always covers weekends/holidays (e.g. "1d" of intraday
+# bars must survive a Monday-morning request).
+_VN_PERIOD_DAYS = {"1d": 4, "5d": 10, "1mo": 35, "3mo": 100, "6mo": 190,
+                   "1y": 370, "2y": 740, "5y": 1830}
+# yfinance-style interval → VCI token.
+_VN_INTERVAL = {"1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m",
+                "1h": "1H", "1d": "1D", "1wk": "1W", "1mo": "1M"}
+
+
+def _history_bar(
+    row,
+    date_value,
+    fields: dict[str, str],
+    volume_field: str = "volume",
+) -> dict | None:
+    """Build a JSON-safe OHLCV bar, dropping incomplete price candles."""
+    prices = {}
+    for output_name, source_name in fields.items():
+        try:
+            value = float(row[source_name])
+        except (KeyError, TypeError, ValueError):
+            return None
+        if not math.isfinite(value):
+            return None
+        prices[output_name] = value
+
+    try:
+        volume_value = float(row[volume_field])
+        volume = int(volume_value) if math.isfinite(volume_value) else 0
+    except (KeyError, TypeError, ValueError, OverflowError):
+        volume = 0
+
+    return {"date": str(date_value), **prices, "volume": volume}
+
+
+def _sanitize_history(rows) -> list[dict]:
+    """Normalize provider or cached history into JSON-safe OHLCV rows."""
+    out = []
+    if not isinstance(rows, list):
+        return out
+    for row in rows:
+        if not isinstance(row, dict) or row.get("date") is None:
+            continue
+        bar = _history_bar(
+            row,
+            row["date"],
+            {"open": "open", "high": "high", "low": "low", "close": "close"},
+        )
+        if bar is not None:
+            out.append(bar)
+    return out
+
+
+def _get_history_vn(symbol: str, period: str, interval: str) -> list[dict]:
+    from datetime import date, timedelta
+    from vnstock.explorer.vci import Quote as VnQuote
+
+    end = date.today()
+    start = end - timedelta(days=_VN_PERIOD_DAYS.get(period, 35))
+    df = VnQuote(symbol).history(start=start.isoformat(), end=end.isoformat(),
+                                 interval=_VN_INTERVAL.get(interval, "1D"))
+    # VCI can ignore the start bound for intraday intervals and return weeks
+    # of bars — enforce the requested window ourselves ("YYYY-MM-DD HH:MM:SS"
+    # strings compare correctly against the ISO date).
+    df = df[df["time"].astype(str) >= start.isoformat()]
+    out = []
+    for _, row in df.iterrows():
+        bar = _history_bar(
+            row,
+            row["time"],
+            {"open": "open", "high": "high", "low": "low", "close": "close"},
+        )
+        if bar is not None:
+            out.append(bar)
+    return out
+
+
 def get_history(ticker: str, period: str = "1mo", interval: str = "1d") -> list[dict]:
     key = f"hist:{ticker}:{period}:{interval}"
     cached = _cache_get(key)
-    if cached:
-        return cached
+    if cached is not None:
+        out = _sanitize_history(cached)
+        if out != cached:
+            _cache_set(key, out, ttl=300)
+        return out
+    if ticker.startswith(VN_PREFIX):
+        out = _get_history_vn(ticker[len(VN_PREFIX):], period, interval)
+        _cache_set(key, out, ttl=300)
+        return out
     df = yf.Ticker(ticker).history(period=period, interval=interval).reset_index()
     out = []
     for _, row in df.iterrows():
-        out.append({
-            "date": str(row.iloc[0]),
-            "open": float(row["Open"]),
-            "high": float(row["High"]),
-            "low": float(row["Low"]),
-            "close": float(row["Close"]),
-            "volume": int(row["Volume"]) if row["Volume"] else 0,
-        })
+        bar = _history_bar(
+            row,
+            row.iloc[0],
+            {"open": "Open", "high": "High", "low": "Low", "close": "Close"},
+            volume_field="Volume",
+        )
+        if bar is not None:
+            out.append(bar)
     _cache_set(key, out, ttl=300)
     return out
 
@@ -207,17 +294,37 @@ def screen(*, sector=None, min_market_cap=None, max_pe=None,
     return rows
 
 
-def get_news(ticker: str | None = None, category: str = "all", limit: int = 30) -> list[dict]:
+def get_news(ticker: str | None = None, limit: int = 30) -> list[dict]:
+    """US financial news via yfinance. Newest yfinance nests fields under
+    `content`; there is no per-item ticker list anymore (`tickers` is
+    always []) — that field was removed from the payload upstream.
+    """
     try:
         items = yf.Ticker(ticker or "SPY").news[:limit]
-        return [
-            {
-                "title": n.get("title"),
-                "publisher": n.get("publisher"),
-                "url": n.get("link"),
-                "published": n.get("providerPublishTime"),
-                "tickers": n.get("relatedTickers", []),
-            } for n in items
-        ]
     except Exception:
         return []
+
+    out = []
+    for n in items:
+        try:
+            c = n.get("content", {}) or {}
+            pub_date = c.get("pubDate")
+            published = 0
+            if pub_date:
+                try:
+                    published = int(datetime.fromisoformat(pub_date).timestamp())
+                except ValueError:
+                    published = 0
+            canonical = c.get("canonicalUrl") or {}
+            click_through = c.get("clickThroughUrl") or {}
+            url = canonical.get("url") or click_through.get("url")
+            out.append({
+                "title": c.get("title", ""),
+                "publisher": (c.get("provider") or {}).get("displayName", "Yahoo Finance"),
+                "url": url,
+                "published": published,
+                "tickers": [],
+            })
+        except Exception:
+            continue
+    return out

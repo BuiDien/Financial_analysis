@@ -7,7 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.db import Base
-from app.models import scan, user, portfolio, filing  # noqa: F401 — register tables
+from app.models import scan, user, portfolio, filing, ocr  # noqa: F401 — register tables
 
 
 @pytest.fixture

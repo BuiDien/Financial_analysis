@@ -8,6 +8,7 @@ const NAV = [
   { id: 'screener', label: 'Screener', icon: 'screener' },
   { id: 'statements', label: 'Financial Statements', icon: 'portfolio' },
   { id: 'sync', label: 'Sync', icon: 'sync' },
+  { id: 'ocr-inbox', label: 'OCR Inbox', icon: 'search' },
   { id: 'news', label: 'News & Insights', icon: 'news' },
 ];
 

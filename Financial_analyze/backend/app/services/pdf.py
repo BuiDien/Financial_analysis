@@ -25,7 +25,19 @@ STATEMENT_PATTERNS = [
     ("buyback", "cashflow", "Buybacks",            r"repurchases?\s+of\s+common\s+stock"),
 ]
 
-_NUM = r"\(?\$?\s*([\d,]+(?:\.\d+)?)\)?"
+_NUM = r"(\(?\$?\s*[\d,]+(?:\.\d+)?\)?)"
+
+
+def _parse_number(token: str) -> float:
+    stripped = token.strip()
+    negative = stripped.startswith("(") and stripped.endswith(")")
+    number = float(re.sub(r"[^\d.]", "", stripped))
+    return -number if negative else number
+
+
+def _plain_number(token: str) -> str:
+    value = _parse_number(token)
+    return f"{value:g}"
 
 
 def extract_text(path: str, max_pages: int | None = None) -> str:
@@ -53,6 +65,12 @@ def quick_meta(path: str) -> dict:
     }
 
 
+def page_count(path: str) -> int:
+    """Validate a PDF and return its page count without extracting its contents."""
+    with pdfplumber.open(path) as document:
+        return len(document.pages)
+
+
 def parse_statements(path: str) -> list[dict]:
     """Scan every page for known statement line items. Returns OCR-dialog rows."""
     rows = []
@@ -66,11 +84,10 @@ def parse_statements(path: str) -> list[dict]:
                 m = re.search(rf"({pattern})[^\n]*?{_NUM}\s+{_NUM}", text, re.IGNORECASE)
                 if m:
                     curr, prev = m.group(2), m.group(3)
-                    neg = "(" in m.group(0)
                     rows.append({
                         "id": tid, "section": section, "metric": metric,
-                        "curr": ("-" if neg else "") + curr.replace(",", ""),
-                        "prev": prev.replace(",", ""),
+                        "curr": _plain_number(curr),
+                        "prev": _plain_number(prev),
                         "page": page_no,
                         # Confidence heuristic: machine text = high; tune with OCR engines
                         "confidence": 95 if len(curr) > 2 else 80,
@@ -84,10 +101,15 @@ def _first_amount(text: str, label_pattern: str) -> str | None:
     if not m:
         return None
     try:
-        v = float(m.group(1).replace(",", ""))
-        if v >= 1e9: return f"{v/1e9:.1f}B"
-        if v >= 1e6: return f"{v/1e6:.1f}M"
-        if v >= 1e3: return f"{v/1e3:.1f}K"
+        v = _parse_number(m.group(1))
+        magnitude = abs(v)
+        sign = "-" if v < 0 else ""
+        if magnitude >= 1e9:
+            return f"{sign}{magnitude/1e9:.1f}B"
+        if magnitude >= 1e6:
+            return f"{sign}{magnitude/1e6:.1f}M"
+        if magnitude >= 1e3:
+            return f"{sign}{magnitude/1e3:.1f}K"
         return f"{v:.0f}"
     except ValueError:
         return None

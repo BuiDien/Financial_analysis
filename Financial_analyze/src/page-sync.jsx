@@ -10,9 +10,9 @@
 //   ( ws://<base>/ws/ocr ) with the pairing code.
 // OFFLINE mode (no backend): a built-in simulation runs so the flow is demoable.
 //
-// NOTE (OCR_PROTOCOL alignment, follow-ups): the live wire currently uses the
-// backend's pdf_b64 + row `id`; the target protocol is binary chunks + Mã số
-// `code`. Tracked in OCR_PROTOCOL.md; not blocking this integration.
+// NOTE (OCR_PROTOCOL alignment, follow-up): PDF transfer uses binary chunks.
+// Result rows still use tracker `id`; moving to TT200 Mã số `code` belongs to
+// the canonical document/OCR phases in PLAN.md.
 
 const SYNC_JOBS_KEY = 'helix_sync_jobs_v1';
 
@@ -42,118 +42,145 @@ const loadFilingsLib = () => {
   catch { return []; }
 };
 
-const PageSync = ({ setPage }) => {
-  const isLive = () => !!window.HelixAPI?.live;
-
-  const [listening, setListening] = React.useState(false);
-  const [pairCode, setPairCode] = React.useState(genPairCode);
-  const [host] = React.useState(() => localIP());
-  const port = 8000;
-
-  const [workers, setWorkers] = React.useState([]);      // connected laptops
-  const [jobs, setJobs] = React.useState(() => {
-    try { return JSON.parse(localStorage.getItem(SYNC_JOBS_KEY) || '[]'); } catch { return []; }
-  });
-  const [log, setLog] = React.useState([]);
-  const [filings] = React.useState(loadFilingsLib);
-  const [verifyJob, setVerifyJob] = React.useState(null);
-  const timersRef = React.useRef([]);
-
-  React.useEffect(() => {
-    localStorage.setItem(SYNC_JOBS_KEY, JSON.stringify(jobs));
-  }, [jobs]);
-
-  React.useEffect(() => () => timersRef.current.forEach(clearTimeout), []);
-
-  const addLog = (kind, text) => {
-    setLog(l => [{ id: Date.now() + Math.random(), kind, text, ts: new Date() }, ...l].slice(0, 60));
+// Module-level store — NOT React state. app.jsx swaps in a different top-level
+// component for every tab (`{home: PageHome, ..., sync: PageSync}[page]`), so
+// switching away from Sync fully unmounts PageSync and any useState/useRef in
+// it is gone. "Listening" needs to survive that (the backend WS coordinator
+// doesn't care about the UI at all — it's always live), so connection state,
+// the live-poll interval, and offline-demo timers live here instead, and the
+// component just subscribes via React.useSyncExternalStore.
+const SyncStore = (() => {
+  let state = {
+    listening: false,
+    pairCode: genPairCode(),
+    liveHost: null,          // real LAN IP, reported by the backend once polling starts
+    host: localIP(),         // fake IP for the offline demo, generated once
+    workers: [],
+    jobs: (() => {
+      try { return JSON.parse(localStorage.getItem(SYNC_JOBS_KEY) || '[]'); } catch { return []; }
+    })(),
+    log: [],
+  };
+  const listeners = new Set();
+  const emit = () => listeners.forEach(fn => fn());
+  const set = (patch) => {
+    state = { ...state, ...patch };
+    if ('jobs' in patch) {
+      try { localStorage.setItem(SYNC_JOBS_KEY, JSON.stringify(state.jobs)); } catch {}
+    }
+    emit();
   };
 
-  const wsUrl = isLive() ? window.HelixAPI.syncWsUrl() : `ws://${host}:${port}/ws/ocr`;
+  const isLive = () => !!window.HelixAPI?.live;
+  // Re-render subscribers the moment live/offline status flips, not just on
+  // the next unrelated state change (HelixAPI.detect() can resolve well
+  // after this store was created).
+  if (window.HelixAPI) window.HelixAPI.onStatusChange(() => emit());
 
-  // ── LIVE: poll the backend coordinator for workers + jobs while listening ──
-  React.useEffect(() => {
-    if (!listening || !isLive()) return undefined;
-    let cancelled = false;
-    const tick = async () => {
-      try {
-        const s = await window.HelixAPI.syncStatus();
-        if (cancelled) return;
-        if (s.pair_code) setPairCode(s.pair_code);
-        setWorkers((s.workers || []).map(w => ({
-          id: w.id, name: w.name, ip: w.ip, status: w.status, done: w.done || 0,
-        })));
-        setJobs(prev => {
-          const appliedMap = {};
-          prev.forEach(j => { if (j.applied) appliedMap[j.id] = true; });
-          return (s.jobs || []).map(j => ({
-            id: j.id, filingId: j.filingId, filename: j.filename, ticker: j.ticker,
-            worker: j.worker, status: j.status, progress: j.progress || 0,
-            rows: j.rows || null, applied: appliedMap[j.id] || false,
-          }));
-        });
-      } catch (e) { /* keep last state; backend may be momentarily unreachable */ }
-    };
-    tick();
-    const iv = setInterval(tick, 1500);
-    return () => { cancelled = true; clearInterval(iv); };
-  }, [listening]);
+  const addLog = (kind, text) => {
+    set({ log: [{ id: Date.now() + Math.random(), kind, text, ts: new Date() }, ...state.log].slice(0, 60) });
+  };
+
+  const getWsUrl = () => {
+    // Live mode initially shows the configured API base (often "localhost")
+    // — not reachable from a worker laptop. Once a poll tick reports the
+    // backend's real LAN IP, swap the hostname in for it.
+    if (isLive()) {
+      return state.liveHost
+        ? window.HelixAPI.syncWsUrl().replace(/:\/\/[^/:]+/, `://${state.liveHost}`)
+        : window.HelixAPI.syncWsUrl();
+    }
+    return `ws://${state.host}:8000/ws/ocr`;
+  };
+
+  let pollHandle = null;
+  let offlineTimers = [];
+
+  const pollTick = async () => {
+    try {
+      const s = await window.HelixAPI.syncStatus();
+      const patch = { workers: (s.workers || []).map(w => ({
+        id: w.id, name: w.name, ip: w.ip, status: w.status, done: w.done || 0,
+      })) };
+      if (s.pair_code) patch.pairCode = s.pair_code;
+      if (s.host) patch.liveHost = s.host;
+      const appliedMap = {};
+      state.jobs.forEach(j => { if (j.applied) appliedMap[j.id] = true; });
+      patch.jobs = (s.jobs || []).map(j => ({
+        id: j.id, filingId: j.filingId, filename: j.filename, ticker: j.ticker,
+        worker: j.worker, status: j.status, progress: j.progress || 0,
+        rows: j.rows || null, applied: appliedMap[j.id] || false,
+      }));
+      set(patch);
+    } catch (e) { /* keep last state; backend may be momentarily unreachable */ }
+  };
 
   // ── Start / stop listening ─────────────────────────────────
   const toggleListen = () => {
-    if (listening) {
-      setListening(false);
-      setWorkers([]);
+    if (state.listening) {
+      set({ listening: false, workers: [] });
       addLog('sys', 'Stopped listening. Workers disconnected.');
-      timersRef.current.forEach(clearTimeout);
-      timersRef.current = [];
+      if (pollHandle) { clearInterval(pollHandle); pollHandle = null; }
+      offlineTimers.forEach(clearTimeout);
+      offlineTimers = [];
       return;
     }
-    setListening(true);
-    addLog('sys', `Listening on ${wsUrl}`);
-    addLog('sys', `Pairing code ${pairCode} — share with the worker laptop`);
+    set({ listening: true });
+    addLog('sys', `Listening on ${getWsUrl()}`);
+    addLog('sys', `Pairing code ${state.pairCode} — share with the worker laptop`);
 
     if (isLive()) {
       addLog('sys', 'Live: coordinator running on the backend. Waiting for a worker to pair…');
-      return;  // the poll effect takes over
+      pollTick();
+      pollHandle = setInterval(pollTick, 1500);
+      return;
     }
 
     // Simulate a worker connecting shortly after (offline demo)
     const t = setTimeout(() => {
       const w = { id: 'w1', name: "Dien's MacBook Pro", ip: localIP(), status: 'idle', done: 0, connectedAt: new Date() };
-      setWorkers([w]);
+      set({ workers: [w] });
       addLog('worker', `${w.name} connected from ${w.ip}`);
     }, 2200);
-    timersRef.current.push(t);
+    offlineTimers.push(t);
   };
 
   const regenCode = async () => {
     if (isLive()) {
       try {
         const r = await window.HelixAPI.syncRegenCode();
-        if (r && r.pair_code) setPairCode(r.pair_code);
+        if (r && r.pair_code) set({ pairCode: r.pair_code });
         addLog('sys', 'Pairing code regenerated.');
         return;
       } catch (e) { addLog('error', `Could not regenerate code: ${e.message || e}`); return; }
     }
-    setPairCode(genPairCode());
+    set({ pairCode: genPairCode() });
     addLog('sys', 'Pairing code regenerated.');
   };
 
   // ── Dispatch a filing to a worker for OCR ──────────────────
   const dispatch = async (filing) => {
     if (isLive()) {
+      // Filings uploaded before the backend was reachable (or in an older
+      // offline session) carry a client-only id like "f_<timestamp>" — the
+      // backend's dispatch route expects a real int Filing id and 422s on
+      // anything else. Catch it here with a clear message instead of a raw
+      // network error.
+      if (!/^\d+$/.test(String(filing.id))) {
+        addLog('error', `"${filing.name}" was never uploaded to the backend — re-add it from the Filings tab while live.`);
+        return;
+      }
       try {
         const r = await window.HelixAPI.syncDispatch(filing.id);
         addLog('out', `Dispatched "${filing.name}" → worker (job ${r.jobId || '?'})`);
       } catch (e) {
         addLog('error', `Dispatch failed: ${e.message || e}`);
       }
-      return;  // the poll effect reflects job progress + result
+      return;  // the poll tick reflects job progress + result
     }
 
     // Offline simulation
-    const worker = workers.find(w => w.status === 'idle') || workers[0];
+    const worker = state.workers.find(w => w.status === 'idle') || state.workers[0];
     if (!worker) { addLog('error', 'No worker connected. Start listening and pair a laptop first.'); return; }
     const job = {
       id: 'job_' + Date.now().toString(36),
@@ -166,36 +193,28 @@ const PageSync = ({ setPage }) => {
       rows: null,
       sentAt: new Date(),
     };
-    setJobs(j => [job, ...j]);
+    set({ jobs: [job, ...state.jobs], workers: state.workers.map(w => w.id === worker.id ? { ...w, status: 'busy' } : w) });
     addLog('out', `Sent "${filing.name}" → ${worker.name}`);
-    setWorkers(ws => ws.map(w => w.id === worker.id ? { ...w, status: 'busy' } : w));
 
     const t1 = setTimeout(() => {
-      setJobs(j => j.map(x => x.id === job.id ? { ...x, status: 'parsing' } : x));
+      set({ jobs: state.jobs.map(x => x.id === job.id ? { ...x, status: 'parsing' } : x) });
       addLog('worker', `${worker.name} parsing ${filing.ticker}…`);
       let p = 0;
       const iv = setInterval(() => {
         p += 12 + Math.random() * 10;
         if (p >= 100) { p = 100; clearInterval(iv); }
-        setJobs(j => j.map(x => x.id === job.id ? { ...x, progress: Math.min(100, Math.round(p)) } : x));
+        set({ jobs: state.jobs.map(x => x.id === job.id ? { ...x, progress: Math.min(100, Math.round(p)) } : x) });
       }, 260);
+      offlineTimers.push(iv);
     }, 900);
     const t2 = setTimeout(() => {
-      setJobs(j => j.map(x => x.id === job.id ? { ...x, status: 'done', progress: 100, rows: WORKER_RESULT_ROWS, doneAt: new Date() } : x));
-      setWorkers(ws => ws.map(w => w.id === worker.id ? { ...w, status: 'idle', done: w.done + 1 } : w));
+      set({
+        jobs: state.jobs.map(x => x.id === job.id ? { ...x, status: 'done', progress: 100, rows: WORKER_RESULT_ROWS, doneAt: new Date() } : x),
+        workers: state.workers.map(w => w.id === worker.id ? { ...w, status: 'idle', done: w.done + 1 } : w),
+      });
       addLog('in', `${worker.name} returned ${WORKER_RESULT_ROWS.length} metrics for ${filing.ticker}`);
     }, 4200);
-    timersRef.current.push(t1, t2);
-  };
-
-  // Step 2 of 2 — confirm: apply data into the tracker AND register the
-  // company so it shows up in the Financial Statements list.
-  const confirmResult = (job) => {
-    applyResult(job);
-    const added = registerCompanyFromJob(job);
-    if (added) addLog('sys', `${job.ticker} added to the Financial Statements company list`);
-    window.toast && window.toast(`${job.ticker} verified & added to companies`, { type: 'success' });
-    setVerifyJob(null);
+    offlineTimers.push(t1, t2);
   };
 
   // Apply returned data into that filing's tracker
@@ -215,13 +234,45 @@ const PageSync = ({ setPage }) => {
     if (isLive() && typeof job.filingId === 'number') {
       window.HelixAPI.saveTracker(job.filingId, tracker).catch(() => {});
     }
-    setJobs(j => j.map(x => x.id === job.id ? { ...x, applied: true } : x));
+    set({ jobs: state.jobs.map(x => x.id === job.id ? { ...x, applied: true } : x) });
     addLog('sys', `Applied ${job.rows.length} metrics into ${job.ticker} tracker`);
   };
 
-  const clearDone = () => setJobs(j => j.filter(x => x.status !== 'done'));
+  // Step 2 of 2 — confirm: apply data into the tracker AND register the
+  // company so it shows up in the Financial Statements list.
+  const confirmResult = (job) => {
+    applyResult(job);
+    const added = registerCompanyFromJob(job);
+    if (added) addLog('sys', `${job.ticker} added to the Financial Statements company list`);
+    return added;
+  };
 
-  const activeJobs = jobs.filter(j => j.status !== 'done');
+  const clearDone = () => set({ jobs: state.jobs.filter(x => x.status !== 'done') });
+
+  return {
+    subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
+    getSnapshot: () => state,
+    isLive, getWsUrl, addLog, toggleListen, regenCode, dispatch, applyResult, confirmResult, clearDone,
+  };
+})();
+
+const PageSync = ({ setPage }) => {
+  const { listening, pairCode, workers, jobs, log } = React.useSyncExternalStore(SyncStore.subscribe, SyncStore.getSnapshot);
+  const [filings] = React.useState(loadFilingsLib);
+  const [verifyJob, setVerifyJob] = React.useState(null);
+
+  const wsUrl = SyncStore.getWsUrl();
+  const toggleListen = SyncStore.toggleListen;
+  const regenCode = SyncStore.regenCode;
+  const dispatch = SyncStore.dispatch;
+  const clearDone = SyncStore.clearDone;
+
+  const confirmResult = (job) => {
+    SyncStore.confirmResult(job);
+    window.toast && window.toast(`${job.ticker} verified & added to companies`, { type: 'success' });
+    setVerifyJob(null);
+  };
+
   const doneJobs = jobs.filter(j => j.status === 'done');
 
   return (
@@ -254,7 +305,7 @@ const PageSync = ({ setPage }) => {
             <div className="num" style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ padding: '3px 8px', background: 'var(--bg-sunken)', borderRadius: 4 }}>{wsUrl}</span>
               <button className="icon-btn" style={{ width: 26, height: 26 }} title="Copy address"
-                onClick={() => { navigator.clipboard?.writeText(wsUrl); addLog('sys', 'Address copied to clipboard'); }}>
+                onClick={() => { navigator.clipboard?.writeText(wsUrl); SyncStore.addLog('sys', 'Address copied to clipboard'); }}>
                 <Icon name="news" size={12} />
               </button>
             </div>

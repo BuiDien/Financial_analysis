@@ -8,8 +8,13 @@
 __pycache__/
 *.py[cod]
 .venv/
+.venv-*/
 venv/
 *.egg-info/
+
+# External services set up locally (cloned source + venv + generated secrets —
+# never commit; scripts/setup_searxng.sh recreates this from scratch)
+Financial_analyze/searxng/
 
 # Local data
 *.db

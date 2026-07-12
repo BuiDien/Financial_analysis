@@ -156,6 +156,44 @@ const PageHome = ({ setActiveAsset, setPage }) => {
     return () => clearInterval(t);
   }, []);
 
+  // Seed each chart with the last hour of real 5-minute bars (12 points) so
+  // the board isn't empty while the 5-minute poll builds a series one point
+  // at a time. Live mode only; runs on mount and when a symbol is added.
+  // For closed markets this is the final hour of the last session, shown
+  // frozen. If a quote poll already delivered a series, it wins — history
+  // only fills the chart, never overwrites live data.
+  React.useEffect(() => {
+    if (!window.HelixAPI?.live) return;
+    let cancelled = false;
+    const need = watch.filter(sym => !quotes[sym]?.series);
+    if (!need.length) return;
+    Promise.all(need.map(sym =>
+      window.HelixAPI.history(LIVE_TICKER[sym] || sym, '1d', '5m')
+        .then(rows => ({ sym, rows })).catch(() => null)
+    )).then(results => {
+      if (cancelled) return;
+      setQuotes(prev => {
+        const next = { ...prev };
+        for (const r of results) {
+          if (!r || !r.rows?.length) continue;
+          const cur = next[r.sym];
+          if (cur?.series) continue;   // poll got there first — keep the live series
+          const closes = r.rows.slice(-12).map(b => b.close);
+          const last = closes[closes.length - 1];
+          next[r.sym] = {
+            price: cur?.price ?? last,
+            chg: cur?.price != null ? cur.chg : ((last - closes[0]) / closes[0]) * 100,
+            series: closes,
+            state: cur?.state ?? null,
+            gen: (cur?.gen || 0) + 1,
+          };
+        }
+        return next;
+      });
+    });
+    return () => { cancelled = true; };
+  }, [watch]);
+
   // Live polling (backend) OR simulated ticks (mock)
   React.useEffect(() => {
     let cancelled = false;
@@ -194,7 +232,10 @@ const PageHome = ({ setActiveAsset, setPage }) => {
                 next[r.sym] = { ...cur, state: 'CLOSED' };
                 continue;
               }
-              const series = cur?.series ? [...cur.series.slice(1), r.q.price] : makeSeries(r.q.price, 1);
+              // Append the real price, sliding a 12-point (1-hour) window. No
+              // fabricated series in live mode: before the history seed lands
+              // (or if it failed) the chart simply builds from real polls.
+              const series = [...(cur?.series || []).slice(-11), r.q.price];
               next[r.sym] = { price: r.q.price, chg: r.q.change_pct ?? cur?.chg ?? 0, series,
                               state: r.q.market_state || null, gen: (cur?.gen || 0) + 1 };
             }
@@ -289,7 +330,7 @@ const PageHome = ({ setActiveAsset, setPage }) => {
               </div>
             </div>
             <div style={{ position: 'relative', minHeight: 220 }}>
-              <AreaChart data={focusQ.series} width={760} height={220} padding={{ t: 16, r: 50, b: 16, l: 0 }} drawKey={focusQ.gen} />
+              <AreaChart data={focusQ.series?.length >= 2 ? focusQ.series : null} width={760} height={220} padding={{ t: 16, r: 50, b: 16, l: 0 }} drawKey={focusQ.gen} />
             </div>
           </div>
         </div>
@@ -347,7 +388,9 @@ const PageHome = ({ setActiveAsset, setPage }) => {
                       <svg width="100%" height="48" viewBox="0 0 190 48" preserveAspectRatio="none" style={{ display: 'block', overflow: 'visible' }}>
                         {(() => {
                           const d = q.series;
-                          if (!d) return null;   // first live fetch hasn't landed yet — nothing to draw
+                          // Need 2+ points for a line (a lone poll point before
+                          // the history seed lands would divide by zero below).
+                          if (!d || d.length < 2) return null;
                           const min = Math.min(...d), max = Math.max(...d), range = (max - min) || 1;
                           const step = 190 / (d.length - 1);
                           const pts = d.map((v, idx) => [idx * step, 48 - ((v - min) / range) * 46 - 1]);

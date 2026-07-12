@@ -2,7 +2,10 @@
 
 A self-hosted platform that turns scanned Vietnamese financial statements and live market data into **verified, structured financial insight** — running entirely on local hardware, with a built-in layer that catches reading errors before they reach any analysis.
 
-> **Status:** design & planning complete; implementation starting. This repository currently holds the full system design, specifications, and TDD implementation plans (see [`docs/`](docs/)).
+> **Status (2026-07-10):** working prototype. Market data, the deterministic VN scanner,
+> filings, distributed PDF transfer, and curated news are implemented. Real OCR structuring,
+> reconciliation, authentication, and Hermes Agent integration are not yet complete. See
+> [`docs/PLAN.md`](docs/PLAN.md) for the verified status matrix and build order.
 
 ---
 
@@ -45,6 +48,8 @@ Mac (M2 Max, 64GB)                                   GPU laptop (RTX 4070, 8GB)
 ```
 
 - **Laptop reads pixels → rows (untrusted).** **Mac structures + verifies (trust lives here).** The two-machine boundary *is* the trust boundary.
+- **OCR Inbox** accepts unlabeled PDFs before they become filings, persists worker attempts, and requires
+  source-backed row review before labeled data can be published.
 - **Three tiers** — presentation, business logic, data — with dependencies flowing strictly downward.
 - **The brain** is [Hermes Agent](https://github.com/NousResearch/hermes-agent) running Qwen3 35B locally, given financial tools via an **MCP server** and an **Obsidian vault** as its memory + report store.
 - **Fully local** — sensitive financial data never leaves the user's network (only market-data fetching and optional news search reach the internet).
@@ -80,15 +85,13 @@ Everything lives in [`docs/`](docs/) — start with [`docs/README.md`](docs/READ
 ## Build sequence
 
 ```
-Stage 0  environment & repo
-Stage 1  presentation on mock data        ✅
-Stage 2  Core skeleton boots              ← foundation
-Stage 3  document pipeline + OCR (stub)
-Stage 4  reconciliation engine            (plan ready)
-Stage 5  market scanner — broad scan      (plan ready)
-Stage 6  Hermes brain (MCP tools + skills)
-Stage 7  connect tiers (mock → live)
-Stage 8  news/search, deep-dive, real OCR worker, …
+Phase 0  stabilize and secure prototype       in progress
+Phase 1  canonical document/statement schema next
+Phase 2  real OCR + TT200 structuring
+Phase 3  reconciliation + human review
+Phase 4  Hermes Agent + grounded analysis
+Phase 5  connect the VN investor workflow
+Phase 6  news/research operations
 ```
 
 ## Design principles

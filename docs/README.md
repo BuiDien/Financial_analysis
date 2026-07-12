@@ -21,6 +21,8 @@ All planning & design docs for the project. Start with **PLAN.md** (the master b
 - [`2026-06-23-reconciliation-engine-design.md`](specs/2026-06-23-reconciliation-engine-design.md)
 - [`2026-06-23-vn-market-scanner-design.md`](specs/2026-06-23-vn-market-scanner-design.md)
 - [`2026-06-24-ocr-document-workflow-design.md`](specs/2026-06-24-ocr-document-workflow-design.md)
+- [`2026-07-12-ocr-human-verification-design.md`](specs/2026-07-12-ocr-human-verification-design.md)
+- [`2026-07-12-ocr-inbox-direct-upload-design.md`](specs/2026-07-12-ocr-inbox-direct-upload-design.md)
 - [`multi-company-watchlist.md`](specs/multi-company-watchlist.md)
 - [`reader-recon-panel.md`](specs/reader-recon-panel.md) — deferred (recon UI)
 
@@ -28,13 +30,15 @@ All planning & design docs for the project. Start with **PLAN.md** (the master b
 - [`2026-06-23-reconciliation-engine.md`](plans/2026-06-23-reconciliation-engine.md) — 7 tasks
 - [`2026-06-23-vn-market-scanner-tier1.md`](plans/2026-06-23-vn-market-scanner-tier1.md) — 8 tasks
 - [`2026-06-24-ocr-document-workflow.md`](plans/2026-06-24-ocr-document-workflow.md) — 6 tasks (Stage 3)
+- [`2026-07-12-ocr-inbox-human-verification.md`](plans/2026-07-12-ocr-inbox-human-verification.md) — implemented direct-upload and review slice
 
 ### `archive/` — superseded
 - [`PLAN_DETAILED.md`](archive/PLAN_DETAILED.md) — old detailed plan (superseded by PLAN.md)
 
 ## Build order (from PLAN.md)
-Stage 0 env → Stage 2 Core boots → Stage 3 doc pipeline + stub OCR → Stage 4 reconciliation
-→ Stage 5 scanner tier1 → Stage 6 Hermes brain → Stage 7 connect → Stage 8 later.
 
-Three implementation plans are ready (OCR workflow = Stage 3, reconciliation = Stage 4, scanner tier1 = Stage 5),
-all blocked on **Stage 2 (Core boots) + the shared `tests/conftest.py` db fixture** existing first.
+Stabilize/security -> canonical schema -> real OCR/TT200 -> reconciliation -> Hermes Agent ->
+connected VN workflow -> research operations.
+
+The scanner Tier 1 plan is implemented. The OCR and reconciliation plans remain useful, but must be
+rebased onto the canonical Phase-1 schema before execution.

@@ -1,17 +1,36 @@
 """FastAPI app entry point."""
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
 from .db import init_db
-from .routes import market, fundamentals, portfolio, filings, ai, news, sync, scan
+from .routes import market, fundamentals, portfolio, filings, ai, news, sync, scan, ocr_inbox
 
 settings = get_settings()
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    init_db()
+    sync.recover_interrupted_attempts()
+    if settings.enable_scheduler:
+        from .services import scheduler
+
+        scheduler.start()
+    try:
+        yield
+    finally:
+        if settings.enable_scheduler:
+            scheduler.shutdown()
+
 
 app = FastAPI(
     title="Helix Backend",
     description="Financial markets analysis API",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -21,15 +40,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-def on_startup():
-    init_db()
-    if settings.enable_scheduler:
-        from .services.scheduler import start as start_scheduler
-        start_scheduler()
-
 
 @app.get("/")
 def root():
@@ -50,3 +60,4 @@ app.include_router(ai.router, prefix="/api", tags=["ai"])
 app.include_router(news.router, prefix="/api", tags=["news"])
 app.include_router(sync.router, tags=["sync"])  # defines its own /ws and /api paths
 app.include_router(scan.router, prefix="/api", tags=["scanner"])
+app.include_router(ocr_inbox.router, prefix="/api", tags=["ocr-inbox"])

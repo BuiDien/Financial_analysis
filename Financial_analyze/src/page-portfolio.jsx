@@ -2,8 +2,42 @@
 
 const PagePortfolio = ({ data, setActiveAsset, setPage }) => {
   const [extra, setExtra] = React.useState([]);   // locally-added positions
+  const [livePortfolio, setLivePortfolio] = React.useState(null);
   const [showAdd, setShowAdd] = React.useState(false);
-  const base = data.portfolio;
+  const base = livePortfolio || data.portfolio;
+
+  const mapApiPortfolio = (pf) => ({
+    ...data.portfolio,
+    totalValue: pf.total_value,
+    totalGain: pf.total_gain,
+    totalGainPct: pf.total_gain_pct,
+    holdings: (pf.holdings || []).map(h => ({
+      id: h.id,
+      sym: h.ticker,
+      shares: h.shares,
+      avgCost: h.cost_basis / (h.shares || 1),
+      price: h.price,
+      value: h.value,
+      gain: h.gain,
+      gainPct: h.gain_pct,
+      weight: pf.total_value ? (h.value / pf.total_value) * 100 : 0,
+    })),
+  });
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      if (!window.HelixAPI) return;
+      if (!window.HelixAPI.checked) await window.HelixAPI.detect();
+      if (!window.HelixAPI.live) return;
+      try {
+        const pf = await window.HelixAPI.portfolio();
+        if (!cancelled) setLivePortfolio(mapApiPortfolio(pf));
+      } catch {}
+    };
+    load();
+    return () => { cancelled = true; };
+  }, []);
   // Merge base holdings with any added this session, recomputing totals
   const p = React.useMemo(() => {
     const holdings = [...base.holdings, ...extra];
@@ -19,10 +53,26 @@ const PagePortfolio = ({ data, setActiveAsset, setPage }) => {
     };
   }, [base, extra]);
 
-  const addPosition = (pos) => {
+  const addPosition = async (pos) => {
     const value = pos.shares * pos.price;
     const cost = pos.shares * pos.avgCost;
     const gain = value - cost;
+    if (window.HelixAPI?.live) {
+      try {
+        await window.HelixAPI.addHolding({
+          ticker: pos.sym,
+          shares: pos.shares,
+          cost_basis: cost,
+        });
+        const pf = await window.HelixAPI.portfolio();
+        setLivePortfolio(mapApiPortfolio(pf));
+        setShowAdd(false);
+        window.toast?.(`Added ${pos.shares} ${pos.sym}`, { type: 'success' });
+      } catch (e) {
+        window.toast?.(`Could not add position: ${e.message || e}`, { type: 'error' });
+      }
+      return;
+    }
     setExtra(prev => [...prev, {
       sym: pos.sym, shares: pos.shares, avgCost: pos.avgCost, price: pos.price,
       value, gain, gainPct: cost ? (gain / cost) * 100 : 0, weight: 0,
@@ -36,7 +86,6 @@ const PagePortfolio = ({ data, setActiveAsset, setPage }) => {
     const lines = [];
     lines.push('PORTFOLIO STATEMENT');
     lines.push(`Generated: ${today}`);
-    lines.push(`Account holder: Jamie Morris`);
     lines.push('');
     lines.push(`Total value:      $${p.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}`);
     lines.push(`Total gain:       $${p.totalGain.toLocaleString('en-US', { minimumFractionDigits: 2 })} (${p.totalGainPct >= 0 ? '+' : ''}${p.totalGainPct.toFixed(2)}%)`);
@@ -103,7 +152,7 @@ const PagePortfolio = ({ data, setActiveAsset, setPage }) => {
       <div className="page-header">
         <div>
           <h1 className="page-title">Your portfolio.</h1>
-          <p className="page-sub">11 holdings · Last rebalanced 3 weeks ago</p>
+          <p className="page-sub">{p.holdings.length} holdings</p>
         </div>
         <div className="row">
           <button className="btn" onClick={downloadStatement}><Icon name="download" size={12} /> Statement</button>

@@ -13,7 +13,59 @@ if [ ! -x "$BACKEND/.venv/bin/uvicorn" ]; then
   exit 1
 fi
 
+if ! command -v lsof >/dev/null 2>&1; then
+  echo "ERROR: lsof is required to clean up project ports before startup." >&2
+  exit 1
+fi
+
+stop_port_listeners() {
+  local port="$1"
+  local label="$2"
+  local pids=()
+  local pid
+
+  while IFS= read -r pid; do
+    [ -n "$pid" ] && pids+=("$pid")
+  done < <(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)
+
+  if [ "${#pids[@]}" -eq 0 ]; then
+    return 0
+  fi
+
+  echo "-- Stopping stale $label listener(s) on :$port (${pids[*]}) --"
+  kill -TERM "${pids[@]}" 2>/dev/null || true
+
+  for _ in {1..20}; do
+    if ! lsof -tiTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.1
+  done
+
+  pids=()
+  while IFS= read -r pid; do
+    [ -n "$pid" ] && pids+=("$pid")
+  done < <(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)
+
+  if [ "${#pids[@]}" -gt 0 ]; then
+    echo "-- Force stopping stale $label listener(s): ${pids[*]} --"
+    kill -KILL "${pids[@]}" 2>/dev/null || true
+  fi
+
+  sleep 0.1
+  if lsof -tiTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "ERROR: could not free $label port $port." >&2
+    exit 1
+  fi
+}
+
+# A second coordinator has a different in-memory pairing code. Clear only this
+# project's listener ports so the UI and OCR worker always share one instance.
+stop_port_listeners "$BACKEND_PORT" "backend"
+stop_port_listeners "$FRONTEND_PORT" "frontend"
+
 PIDS=()
+STARTED_SEARXNG=0
 cleanup() {
   echo
   echo "-- Shutting down --"
@@ -23,22 +75,34 @@ cleanup() {
     kill -TERM -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
   done
   sleep 0.3
-  # belt-and-suspenders — catch anything the group kill missed.
-  pkill -f "uvicorn app.main:app" 2>/dev/null || true
-  pkill -f "http.server $FRONTEND_PORT" 2>/dev/null || true
+  if [ "$STARTED_SEARXNG" = "1" ]; then
+    pkill -f "searx.webapp" 2>/dev/null || true
+  fi
 }
 trap cleanup EXIT INT TERM
 
-# ── Ollama (Hermes brain), if installed — best-effort, non-blocking ──────
-if command -v ollama >/dev/null 2>&1; then
-  if ! curl -s "http://localhost:11434/api/version" >/dev/null 2>&1; then
-    echo "-- Starting Ollama --"
-    ollama serve >/tmp/ollama.log 2>&1 &
-    PIDS+=("$!")
-    sleep 1
-  else
-    echo "-- Ollama already running --"
-  fi
+# NOTE: no Ollama/Hermes startup here on purpose. The brain is Hermes Agent
+# (NousResearch's agentic CLI - HERMES_BRAIN.md), not Ollama; Ollama only
+# serves the Qwen3 model that Hermes Agent calls. Neither Hermes Agent nor
+# the MCP server nor the website-chat wiring exist yet (PLAN.md Stage 6,
+# unbuilt) - so there's no consumer for Ollama today. Add a startup block
+# here once Stage 6 lands.
+
+# ── SearXNG (self-hosted search, backs /api/news/search) ──────────────
+# Skip if something's already listening on 8888 — the user may have started
+# it by hand with ./scripts/run_searxng.sh. The backend's /api/news/search
+# degrades gracefully (503 + clear message) if SearXNG isn't reachable, so
+# this is a convenience, not a hard dependency for the rest of the app.
+SEARXNG_PORT="${SEARXNG_PORT:-8888}"
+if curl -s -o /dev/null -m 1 "http://127.0.0.1:$SEARXNG_PORT"; then
+  echo "-- SearXNG already running on :$SEARXNG_PORT --"
+elif [ -x "$ROOT/searxng/.venv/bin/python" ]; then
+  echo "-- Starting SearXNG on :$SEARXNG_PORT --"
+  "$ROOT/scripts/run_searxng.sh" >/tmp/helix_searxng.log 2>&1 &
+  PIDS+=("$!")
+  STARTED_SEARXNG=1
+else
+  echo "-- SearXNG not set up (run ./scripts/setup_searxng.sh) — news search will be unavailable --"
 fi
 
 # ── Backend (FastAPI/uvicorn) ─────────────────────────────────────────
@@ -55,7 +119,23 @@ echo "-- Serving frontend on :$FRONTEND_PORT --"
 (cd "$ROOT" && python3 -m http.server "$FRONTEND_PORT" >/tmp/helix_frontend.log 2>&1) &
 PIDS+=("$!")
 
-sleep 1
+# Wait for the backend to actually answer before opening the browser — a
+# flat `sleep 1` used to race uvicorn's cold-start (pandas/yfinance/anthropic
+# imports can exceed 1s), so the page's one-shot HelixAPI.detect() would lose
+# the race and get stuck showing mock/offline data for the whole session.
+echo -n "-- Waiting for backend to be ready "
+for i in $(seq 1 50); do
+  if curl -s -o /dev/null "http://localhost:$BACKEND_PORT/health"; then
+    echo " ready"
+    break
+  fi
+  echo -n "."
+  sleep 0.3
+  if [ "$i" -eq 50 ]; then
+    echo " timed out after 15s — check the backend didn't crash on startup"
+  fi
+done
+
 URL="http://localhost:$FRONTEND_PORT/Financial%20Analyze.html"
 echo
 echo "== Running =="

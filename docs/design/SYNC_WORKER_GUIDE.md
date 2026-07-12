@@ -108,20 +108,23 @@ When done, send one `result` frame with the extracted rows:
 {
   "type": "result",
   "jobId": "job_9f2a1",
+  "schemaVersion": 1,
   "rows": [
-    { "id": "rev", "section": "income",   "metric": "Doanh thu thuần", "curr": "60479000", "prev": "59956000", "page": 5, "confidence": 98 },
-    { "id": "ta",  "section": "balance",  "metric": "TỔNG CỘNG TÀI SẢN", "curr": "52000000", "prev": "51000000", "page": 3, "confidence": 96 }
+    { "code": "10", "section": "income", "metric": "Doanh thu thuần", "curr": "60479000", "prev": "59956000", "page": 5, "confidence": 98, "bbox": {"x": 0.08, "y": 0.31, "width": 0.84, "height": 0.035} },
+    { "code": "270", "section": "balance", "metric": "TỔNG CỘNG TÀI SẢN", "curr": "52000000", "prev": "51000000", "page": 3, "confidence": 96, "bbox": {"x": 0.08, "y": 0.42, "width": 0.84, "height": 0.035} }
   ]
 }
 ```
 
 Row fields:
-- `id` — a stable key for the metric (tracker id today; **target: Mã số `code`** per `OCR_PROTOCOL.md`).
+- `code` — the TT200 Mã số; `id` remains accepted only for legacy filing jobs.
 - `section` — `income | balance | cashflow`.
 - `metric` — the line label (Vietnamese).
 - `curr` / `prev` — string amounts, raw digits, may be `-`-prefixed. No thousands separators.
 - `page` — source page number.
 - `confidence` — 0–100 per value.
+- `bbox` — normalized displayed-page `{x,y,width,height}` coordinates, required for source highlighting.
+- `rawText` — optional raw OCR text retained as review evidence.
 
 After the result, the coordinator marks the worker **idle** again and bumps its parsed count. The worker
 stays connected and waits for the next `job`. Keep the socket open and keep reading frames in a loop.
@@ -179,10 +182,12 @@ def run_ocr(pdf_bytes: bytes) -> list[dict]:
     """Replace with PP-DocLayout + PaddleOCR-VL. Returns result rows."""
     # ...real OCR here...  (pdf_bytes is the raw PDF)
     return [
-        {"id": "rev", "section": "income",  "metric": "Doanh thu thuần",
-         "curr": "60479000", "prev": "59956000", "page": 5, "confidence": 98},
-        {"id": "ta",  "section": "balance", "metric": "TỔNG CỘNG TÀI SẢN",
-         "curr": "52000000", "prev": "51000000", "page": 3, "confidence": 96},
+        {"code": "10", "section": "income",  "metric": "Doanh thu thuần",
+         "curr": "60479000", "prev": "59956000", "page": 5, "confidence": 98,
+         "bbox": {"x": .08, "y": .31, "width": .84, "height": .035}},
+        {"code": "270", "section": "balance", "metric": "TỔNG CỘNG TÀI SẢN",
+         "curr": "52000000", "prev": "51000000", "page": 3, "confidence": 96,
+         "bbox": {"x": .08, "y": .42, "width": .84, "height": .035}},
     ]
 
 async def main(url: str, code: str, name: str):
@@ -222,7 +227,8 @@ async def main(url: str, code: str, name: str):
                     job = None
                     continue
                 await ws.send(json.dumps({"type": "progress", "jobId": job_id, "pct": 90}))
-                await ws.send(json.dumps({"type": "result", "jobId": job_id, "rows": rows}))
+                await ws.send(json.dumps({"type": "result", "jobId": job_id,
+                                          "schemaVersion": 1, "rows": rows}))
                 print(f"job {job_id}: returned {len(rows)} rows")
                 job = None
 

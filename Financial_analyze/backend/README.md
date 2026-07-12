@@ -1,105 +1,54 @@
-# Helix Backend
+# Financial Analyze Backend
 
-Python/FastAPI backend that powers the Helix financial analysis frontend.
+FastAPI backend for the local financial analysis prototype. The authoritative project status and
+build sequence are in [`../../docs/PLAN.md`](../../docs/PLAN.md).
 
-## Quick start
+## Run
+
+From `Financial_analyze/backend`:
 
 ```bash
-cd backend
-python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-
-# Set environment
+python3.11 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 cp .env.example .env
-# edit .env and add your ANTHROPIC_API_KEY
-
-# Initialize database
-python -m app.db init
-
-# Run dev server
-uvicorn app.main:app --reload --port 8000
+.venv/bin/python -m app.db init
+.venv/bin/uvicorn app.main:app --reload --port 8000
 ```
 
-Open `http://localhost:8000/docs` for the auto-generated Swagger UI.
+Swagger is available at `http://localhost:8000/docs`. Run checks with:
 
-## Project layout
-
-```
-backend/
-  app/
-    main.py              # FastAPI app + CORS + route registration
-    config.py            # Settings via pydantic-settings
-    db.py                # SQLAlchemy engine + Base + init command
-    deps.py              # Reusable FastAPI dependencies
-    models/
-      __init__.py
-      user.py
-      portfolio.py
-      filing.py
-    schemas/             # Pydantic request/response models
-      __init__.py
-      market.py
-      portfolio.py
-      filing.py
-    routes/
-      __init__.py
-      market.py          # /api/quote, /api/history, /api/screener
-      fundamentals.py    # /api/statements, /api/ratios
-      portfolio.py       # /api/portfolio
-      filings.py         # /api/filings — upload, list, analyze
-      ai.py              # /api/ai/chat — proxies Claude with context
-      news.py            # /api/news
-    services/
-      market.py          # yfinance wrapper + Redis cache
-      fundamentals.py    # statements, ratios
-      pdf.py             # pdfplumber + camelot extract
-      ai.py              # Anthropic client + prompt templates
-      rag.py             # embed + retrieve filing chunks (Chroma)
-  uploads/               # uploaded PDFs (gitignored)
-  tests/
-  requirements.txt
-  .env.example
-  Dockerfile
-  docker-compose.yml
+```bash
+.venv/bin/python -m pytest
+.venv/bin/python -m ruff check app tests
 ```
 
-## How the frontend connects
+The complete app can be started from `Financial_analyze/` with `./scripts/run.sh`.
 
-In your React pages, replace mock data with fetches:
+## Implemented Areas
 
-```js
-const res = await fetch('http://localhost:8000/api/quote/NVDA');
-const data = await res.json();
-```
+- Market quotes/history: yfinance plus vnstock/VCI for `VN:<symbol>` tickers.
+- Deterministic VN scanner: persisted runs and ranked, explicitly unverified results.
+- Filing prototype: validated PDF upload, download, tracker persistence, and OCR dispatch.
+- Distributed OCR coordinator: paired WebSocket worker and binary PDF chunks.
+- OCR Inbox: unlabeled PDF upload, durable worker attempts/retries, persistent source-backed row review,
+  audit history, deferred labels, and guarded filing publication.
+- News: CafeF/global feeds, SearXNG search, public-URL article extraction, daily digest parsing.
+- Portfolio prototype: one local portfolio and holdings CRUD.
 
-The backend has CORS open in dev. For production, set `ALLOWED_ORIGINS` in `.env`.
+## Safety Defaults
 
-## Build order (suggested)
+- `ENABLE_CLOUD_AI=false`: raw data is not sent to Anthropic by default.
+- `ALLOW_UNVERIFIED_FILING_AI=false`: filing analysis/Q&A stays blocked until reconciliation exists.
+- `ENABLE_SCHEDULER=false`: a full guest-tier VN scan takes hours and must currently be triggered explicitly.
+- Article extraction rejects localhost, private, link-local, and other non-public targets.
 
-1. Get `/api/quote/{ticker}` working — wire it into the dashboard
-2. Add `/api/statements/{ticker}` — wire into Financial Statements page
-3. Implement `/api/filings/upload` + storage — wire into Filings tab
-4. Add `/api/filings/{id}/analyze` with Claude
-5. Build `/api/ai/chat` for the AI sidebar (context-aware)
-6. Add WebSocket `/ws/quotes` for live prices
-7. Add Celery worker for background re-analysis & portfolio metrics
+The API does not yet have authentication. Keep it on a trusted machine/network; do not expose port
+8000 publicly. Authentication and migration tooling are Phase-0 release blockers.
 
-## Endpoints
+## Important Boundaries
 
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/api/quote/{ticker}` | Latest quote |
-| GET | `/api/history/{ticker}` | OHLC history |
-| GET | `/api/statements/{ticker}` | Income/balance/cashflow |
-| GET | `/api/ratios/{ticker}` | Computed ratios |
-| GET | `/api/screener` | Filter equities |
-| GET | `/api/portfolio` | User portfolio |
-| POST | `/api/portfolio/holdings` | Add/update holding |
-| GET | `/api/filings` | List filings |
-| POST | `/api/filings/upload` | Upload PDF |
-| POST | `/api/filings/{id}/analyze` | AI analysis |
-| POST | `/api/filings/{id}/ask` | RAG question |
-| POST | `/api/ai/chat` | AI sidebar chat |
-| GET | `/api/news` | News feed |
-| WS | `/ws/quotes` | Live price stream |
+- `Filing` and `/api/statements/{ticker}` are prototype models/routes, not the target verified
+  document model.
+- The laptop worker transport is implemented, but `run_ocr()` still returns a placeholder row.
+- Scanner and market-provider data are `verified=false`; they are candidate-generation inputs.
+- Real statement analysis must wait for the canonical schema, TT200 placement, and reconciliation gate.

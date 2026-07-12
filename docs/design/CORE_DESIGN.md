@@ -44,8 +44,8 @@ UI fetch  → GET /api/statements/{id}        (rows for review table)
 main.py            FastAPI app: lifespan, StaticFiles mount, routers
 config.py          settings (ocr_worker_url, ocr_shared_secret, ...)    [done]
 db.py              engine/session/init_db                               [done]
-models/core.py     8 tables                                             [done]
-seed.py            instruments seed                                     [done — only if market kept]
+models/core.py     target document/statement tables                      [TODO — Phase 1]
+seed.py            instruments seed                                     [TODO — Phase 1]
 routes/
   market.py        quotes/history/indices/instruments  (secondary)     [done]
   documents.py     POST /documents, GET /documents[/id], POST /{id}/ocr [TODO]

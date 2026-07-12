@@ -33,7 +33,7 @@ All 8 tasks built and verified against real VN market data (live VCI calls, not 
 - Tier 2 (deep-dive) is out of scope here, as planned — `POST /api/scan/{symbol}/deep-dive` from the design spec is unbuilt.
 - Registering a paid/free vnstock API key to lift the 20 req/min guest cap.
 
-**Goal:** Build the broad-scan tier of the VN Market Scanner — screen the whole VN market on deterministic fundamental/valuation/technical signals, score + rank + classify long/short/avoid, and expose results via REST for the Screener page.
+**Goal:** Build the broad-scan tier of the VN Market Scanner - screen the whole VN market on deterministic fundamental/valuation/technical signals, score + rank + classify long-term/short-term/avoid, and expose results via REST for the Screener page.
 
 **Architecture:** A `backend/app/scanner/` package with single-responsibility modules: `universe.py` (fetch broad vnstock data, tagged unverified), `signals.py` (pure deterministic sub-scores per dimension), `score.py` (pure deterministic total + lean + rank), `runner.py` (orchestrate a run, persist). New `scan_runs`/`scan_results` SQLite models. Routes `POST /api/scan`, `GET /api/scan/latest`. The scoring path is pure functions over plain dicts — no ORM, no LLM — so it is exactly unit-testable.
 
@@ -46,8 +46,8 @@ All 8 tasks built and verified against real VN market data (live VCI calls, not 
 - Broad-scan data is third-party: every `scan_results` row has `verified = False`.
 - Sub-scores are normalized to **0–100**. Total score is a weighted average, also 0–100.
 - **Weights (exact):** fundamentals 0.40, valuation 0.30, technical 0.30, catalysts 0.0 (zero-weighted until the news layer exists).
-- **Lean rule (exact):** `long_score = fundamentals*0.5 + valuation*0.5`; `short_score = technical*1.0`; if `total < 40` → `"avoid"`; elif `long_score >= short_score` → `"long"`; else → `"short"`.
-- Lean ∈ `long | short | avoid`. Scan mode ∈ `scheduled | manual`.
+- **Lean rule (exact):** `long_score = fundamentals*0.5 + valuation*0.5`; `short_term_score = technical*1.0`; if `total < 40` -> `"avoid"`; elif `long_score >= short_term_score` -> `"long_term"`; else -> `"short_term"`.
+- Lean is a holding horizon, not a short-sale instruction: `long_term | short_term | avoid`. Scan mode is `scheduled | manual`.
 - Existing models live in `app/models/core.py`; existing scheduler in `app/services/scheduler.py`; tests use the `db` fixture in `tests/conftest.py` (created in the reconciliation plan — recreate if absent).
 - EXCLUDE tier 2 (deep-dive). Catalysts dimension is scaffolded but zero-weighted.
 - Repo is not yet a git repo. Run `git init` once before starting for the commit steps to work.
@@ -340,13 +340,12 @@ def test_weighted_total():
 
 def test_lean_long_when_fundamentals_valuation_dominate():
     out = sc.score_stock({"fundamentals": 80, "valuation": 80, "technical": 30, "catalysts": 0})
-    assert out["lean"] == "long"
+    assert out["lean"] == "long_term"
 
 
-def test_lean_short_when_technical_dominates():
+def test_lean_short_term_when_technical_dominates():
     out = sc.score_stock({"fundamentals": 50, "valuation": 45, "technical": 95, "catalysts": 0})
-    # total = 50*.4+45*.3+95*.3 = 20+13.5+28.5 = 62 (>=40); short_score 95 > long_score 47.5
-    assert out["lean"] == "short"
+    assert out["lean"] == "short_term"
 
 
 def test_lean_avoid_when_total_below_40():
@@ -374,7 +373,7 @@ Expected: FAIL — `ModuleNotFoundError: app.scanner.score`.
 
 ```python
 # app/scanner/score.py
-"""Deterministic scoring: weighted total, long/short/avoid lean, ranking.
+"""Deterministic scoring: weighted total, holding-horizon lean, ranking.
 
 Pure functions. No ORM, no LLM.
 """
@@ -386,13 +385,13 @@ AVOID_THRESHOLD = 40.0
 def score_stock(signals: dict) -> dict:
     total = sum(signals.get(k, 0.0) * w for k, w in WEIGHTS.items())
     long_score = signals.get("fundamentals", 0.0) * 0.5 + signals.get("valuation", 0.0) * 0.5
-    short_score = signals.get("technical", 0.0) * 1.0
+    short_term_score = signals.get("technical", 0.0)
     if total < AVOID_THRESHOLD:
         lean = "avoid"
-    elif long_score >= short_score:
-        lean = "long"
+    elif long_score >= short_term_score:
+        lean = "long_term"
     else:
-        lean = "short"
+        lean = "short_term"
     return {"total_score": round(total, 2), "lean": lean}
 
 
@@ -441,10 +440,10 @@ def test_scan_models_roundtrip(db):
     db.add(run); db.flush()
     db.add(ScanResult(run_id=run.id, symbol="VNM",
                       scores={"fundamentals": 80, "valuation": 60, "technical": 40, "catalysts": 0},
-                      total_score=62.0, lean="long", rank=1, verified=False))
+                      total_score=62.0, lean="long_term", rank=1, verified=False))
     db.commit()
     row = db.query(ScanResult).one()
-    assert row.symbol == "VNM" and row.lean == "long" and row.verified is False
+    assert row.symbol == "VNM" and row.lean == "long_term" and row.verified is False
     assert row.scores["fundamentals"] == 80
 ```
 
@@ -496,7 +495,7 @@ class ScanResult(Base):
     symbol = Column(String, index=True, nullable=False)
     scores = Column(JSON, default=dict)              # per-dimension sub-scores
     total_score = Column(Float, default=0.0)
-    lean = Column(String, default="avoid")           # long | short | avoid
+    lean = Column(String, default="avoid")           # long_term | short_term | avoid
     rank = Column(Integer, default=0)
     verified = Column(Boolean, default=False)        # broad scan = always False
 
@@ -786,7 +785,7 @@ def client():
     s = Session()
     run = ScanRun(mode="manual", universe_size=2); s.add(run); s.flush()
     s.add(ScanResult(run_id=run.id, symbol="VNM", scores={"fundamentals": 80, "valuation": 60, "technical": 40, "catalysts": 0},
-                     total_score=62.0, lean="long", rank=1, verified=False))
+                     total_score=62.0, lean="long_term", rank=1, verified=False))
     s.add(ScanResult(run_id=run.id, symbol="XYZ", scores={"fundamentals": 20, "valuation": 20, "technical": 20, "catalysts": 0},
                      total_score=20.0, lean="avoid", rank=2, verified=False))
     s.commit(); s.close()
@@ -800,7 +799,7 @@ def test_get_latest_returns_ranked_results(client):
     body = resp.json()
     assert body["results"][0]["symbol"] == "VNM"
     assert body["results"][0]["rank"] == 1
-    assert body["results"][0]["lean"] == "long"
+    assert body["results"][0]["lean"] == "long_term"
     assert body["results"][0]["verified"] is False
 ```
 
@@ -947,7 +946,7 @@ git commit -m "feat(scanner): daily scheduled scan job"
 **Spec coverage (tier 1 scope):**
 - Broad scan via vnstock, tagged unverified → Task 0 spike + Task 4 `universe.py` (`verified=False`). ✓
 - 4 deterministic dimensions (catalysts zero-weighted) → Task 1 `signals.py` (catalysts returns 0.0). ✓
-- Deterministic weighted total + long/short/avoid lean + rank → Task 2 `score.py`. ✓
+- Deterministic weighted total + long-term/short-term/avoid lean + rank -> Task 2 `score.py`. ✓
 - Scoring path has NO LLM → Tasks 1-2 are pure functions; no LLM import anywhere. ✓
 - `scan_runs` + `scan_results` models, `verified=False` → Task 3. ✓
 - Orchestration scheduled + on-demand → Task 5 `run_scan` + Task 6 POST + Task 7 scheduled job. ✓

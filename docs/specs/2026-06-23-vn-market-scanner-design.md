@@ -44,7 +44,7 @@ reconcile + Hermes analysis + news). Trust is *earned down the funnel.*
 SCAN (broad, shallow, unverified)                        DEEP-DIVE (narrow, deep, verified)
 whole VN market via vnstock                              user picks a candidate
   → signals (4 dims, deterministic)                        → OCR + reconcile (if statements present) = verified
-  → score + rank + long/short lean (deterministic)         → Hermes: thesis + horizon range + triggers (narrate)
+  → score + rank + holding-horizon lean (deterministic)    → Hermes: thesis + horizon range + triggers (narrate)
   → Screener page (badged 'unverified')                    → dossier → vault note (linked to company hub)
 ```
 
@@ -57,7 +57,7 @@ whole VN market via vnstock                              user picks a candidate
   - *technical*: price trend, RSI, volume momentum.
   - *catalysts*: count/recency/sentiment of recent news (RSS/SearXNG — Stage 5 news layer).
   Each returns a normalized sub-score + the raw inputs (for transparency). No LLM.
-- `score.py` — **deterministic** weighted total score per stock + a **long/short lean**:
+- `score.py` — **deterministic** weighted total score per stock + a **holding-horizon lean**:
   fundamentals + valuation weighted → long-term lean; technical + catalysts weighted → short-term lean;
   weak across all → avoid. Reproducible ranking. Weights are explicit constants (tunable).
 - `runner.py` — orchestrates a scan run (scheduled via existing APScheduler + on-demand endpoint),
@@ -71,7 +71,7 @@ whole VN market via vnstock                              user picks a candidate
 scan run (scheduled or POST /api/scan)
   → universe.py: VN tickers + broad metrics (vnstock, verified=false)
   → signals.py: 4 deterministic sub-scores per stock
-  → score.py: total score + rank + lean (long|short|avoid)
+  → score.py: total score + rank + lean (long_term|short_term|avoid)
   → persist scan_runs + scan_results
   → GET /api/scan/latest → Screener page (ranked, 'unverified' badge)
 user picks symbol → POST /api/scan/{symbol}/deep-dive
@@ -91,7 +91,7 @@ Never a fake precise duration. Each candidate dossier states:
 ## Data model additions (SQLite, `models/core.py`)
 - `scan_runs(id, started_at, mode["scheduled"|"manual"], universe_size)`
 - `scan_results(id, run_id→scan_runs, symbol, scores(JSON per-dimension), total_score(float),
-   lean["long"|"short"|"avoid"], rank(int), verified(bool=false))`
+   lean["long_term"|"short_term"|"avoid"], rank(int), verified(bool=false))`
 - Reuses `instruments`; deep-dive reuses `documents`/`statements`/`line_items`.
 
 ## Interfaces (REST — extends `API_CONTRACT.md`)

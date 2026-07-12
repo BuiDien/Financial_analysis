@@ -10,13 +10,12 @@ def test_weighted_total():
 
 def test_lean_long_when_fundamentals_valuation_dominate():
     out = sc.score_stock({"fundamentals": 80, "valuation": 80, "technical": 30, "catalysts": 0})
-    assert out["lean"] == "long"
+    assert out["lean"] == "long_term"
 
 
-def test_lean_short_when_technical_dominates():
+def test_lean_short_term_when_bullish_technicals_dominate():
     out = sc.score_stock({"fundamentals": 50, "valuation": 45, "technical": 95, "catalysts": 0})
-    # total = 50*.4+45*.3+95*.3 = 20+13.5+28.5 = 62 (>=40); short_score 95 > long_score 47.5
-    assert out["lean"] == "short"
+    assert out["lean"] == "short_term"
 
 
 def test_lean_avoid_when_total_below_40():

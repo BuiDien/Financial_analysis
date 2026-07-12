@@ -1,11 +1,11 @@
 # Plan — Update OCR worker to binary-chunked PDF transfer
 
-**Status:** todo (laptop-side work)
+**Status:** complete (2026-07-09; covered by `tests/test_ocr_worker_protocol.py`)
 **Context:** The coordinator (`backend/app/routes/sync.py`) now streams PDFs as binary WebSocket
 frames — `{"type":"job", …, "bytes":N}` → binary chunks → `{"type":"job_end"}` — instead of
 `pdf_b64` in the job frame (implemented + tested 2026-07-03, `tests/test_sync_dispatch.py`).
-The worker script `Financial_analyze/scripts/ocr_worker.py` still decodes `msg["pdf_b64"]`, so it
-**breaks against the current backend** until this plan runs. Wire reference:
+The worker script `Financial_analyze/scripts/ocr_worker.py` now verifies and reassembles those chunks.
+Wire reference:
 `docs/design/SYNC_WORKER_GUIDE.md` (updated, incl. a runnable reference worker).
 
 ## Protocol the worker must speak
@@ -22,7 +22,7 @@ The worker script `Financial_analyze/scripts/ocr_worker.py` still decodes `msg["
    exactly as before. The coordinator now handles `error` (marks the job failed, frees the worker) —
    send it on any OCR exception instead of dying silently.
 
-## Changes to `Financial_analyze/scripts/ocr_worker.py`
+## Implemented Changes to `Financial_analyze/scripts/ocr_worker.py`
 
 1. **Drop base64** — remove the `import base64` and `base64.b64decode(msg["pdf_b64"])` line.
 2. **Rework the receive loop** (`run_worker`, the `async for raw in ws:` block):

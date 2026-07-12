@@ -4,8 +4,20 @@ const PageNews = ({ data }) => {
   const [tab, setTab] = React.useState('all');
   const [subject, setSubject] = React.useState('');
   const [briefing, setBriefing] = React.useState(null);
+  const [results, setResults] = React.useState([]);
+  const [searchError, setSearchError] = React.useState(null);
   const [researching, setResearching] = React.useState(false);
   const [story, setStory] = React.useState(null);
+  const [digest, setDigest] = React.useState(null);
+  const [digestExpanded, setDigestExpanded] = React.useState(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    window.HelixAPI.newsDailySummary()
+      .then(d => { if (!cancelled) setDigest(d); })
+      .catch(() => { if (!cancelled) setDigest({ stale: true, day_summary: null, articles: [] }); });
+    return () => { cancelled = true; };
+  }, []);
 
   const SUGGESTED = ['AI semiconductors', 'Fed rate path', 'NVDA earnings', 'Oil & energy', 'China tech'];
 
@@ -15,9 +27,22 @@ const PageNews = ({ data }) => {
     setSubject(topic);
     setResearching(true);
     setBriefing(null);
+    setResults([]);
+    setSearchError(null);
+
+    let hits;
     try {
-      const headlines = data.news.map(n => `- ${n.title} (${n.src})`).join('\n');
-      const prompt = `You are a financial news analyst agent. Focus ONLY on this subject: "${topic}".\n\nFrom the day's headlines below, synthesize a focused briefing on "${topic}". Use this exact format:\n\n**Why it matters:** [one sharp sentence]\n\n**Key developments:**\n- [point with specifics]\n- [point]\n- [point]\n\n**What to watch:** [1-2 forward-looking items]\n\n**Affected tickers:** [comma-separated symbols]\n\nBe concise and numerical. Use **bold** for figures, *italic* for tickers. No disclaimers, no emoji.\n\nTODAY'S HEADLINES:\n${headlines}`;
+      hits = await window.HelixAPI.newsSearch(topic, 5);
+      setResults(hits);
+    } catch (e) {
+      setSearchError('Search unavailable — start ./scripts/run_searxng.sh');
+      setResearching(false);
+      return;
+    }
+
+    try {
+      const context = hits.map(h => `- ${h.title}: ${h.content}`).join('\n');
+      const prompt = `You are a financial news analyst agent. Focus ONLY on this subject: "${topic}".\n\nFrom the search results below, synthesize a focused briefing on "${topic}". Use this exact format:\n\n**Why it matters:** [one sharp sentence]\n\n**Key developments:**\n- [point with specifics]\n- [point]\n- [point]\n\n**What to watch:** [1-2 forward-looking items]\n\n**Affected tickers:** [comma-separated symbols]\n\nBe concise and numerical. Use **bold** for figures, *italic* for tickers. No disclaimers, no emoji.\n\nSEARCH RESULTS:\n${context}`;
       const reply = await window.HelixAPI.complete(prompt, { page: 'news', context: { subject: topic } });
       setBriefing(reply);
     } catch (e) {
@@ -28,9 +53,9 @@ const PageNews = ({ data }) => {
 
   const filterFor = {
     all: () => true,
-    macro: n => n.tags.some(t => ['MACRO','FED','RATES','BONDS','OIL','EU'].includes(t)),
-    equities: n => n.tags.some(t => ['NVDA','TSLA','AAPL','MSFT','EARNINGS','AI','AUTOS','CAPEX'].includes(t)),
-    crypto: n => n.tags.includes('CRYPTO') || n.tags.includes('BTC'),
+    vn_market: n => n.category === 'market',
+    vn_companies: n => n.category === 'companies',
+    us: n => n.category === 'us',
   };
 
   const filtered = data.news.filter(filterFor[tab]);
@@ -69,7 +94,24 @@ const PageNews = ({ data }) => {
             ))}
           </div>
 
-          {(researching || briefing) && (
+          {searchError && (
+            <div style={{ marginTop: 14, padding: 14, background: 'var(--bg-sunken)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 13, color: 'var(--text-muted)' }}>
+              {searchError}
+            </div>
+          )}
+
+          {!searchError && results.length > 0 && (
+            <div style={{ marginTop: 14, padding: 14, background: 'var(--bg-sunken)', border: '1px solid var(--border)', borderRadius: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-subtle)', marginBottom: 8 }}>Sources</div>
+              {results.map((r, i) => (
+                <div key={i} style={{ padding: '6px 0', borderBottom: i < results.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                  <a href={r.url} target="_blank" rel="noreferrer" style={{ fontSize: 13, color: 'var(--accent)', textDecoration: 'none' }}>{r.title}</a>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {!searchError && (researching || briefing) && (
             <div style={{ marginTop: 14, padding: 16, background: 'var(--accent-bg)', border: '1px solid var(--accent-soft)', borderRadius: 8 }}>
               <div className="row" style={{ gap: 8, marginBottom: 8, justifyContent: 'space-between' }}>
                 <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
@@ -77,11 +119,11 @@ const PageNews = ({ data }) => {
                   Analyst briefing · {subject}
                 </span>
                 {briefing && (
-                  <button onClick={() => { setBriefing(null); setSubject(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)' }}><Icon name="close" size={12} /></button>
+                  <button onClick={() => { setBriefing(null); setSubject(''); setResults([]); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)' }}><Icon name="close" size={12} /></button>
                 )}
               </div>
               {researching ? (
-                <div style={{ fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic' }}>Scanning today’s headlines for “{subject}”…</div>
+                <div style={{ fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic' }}>Searching the web for “{subject}”…</div>
               ) : (
                 <div style={{ fontSize: 13, lineHeight: 1.6, color: 'var(--text)' }}>
                   <NewsFormatted text={briefing} />
@@ -92,12 +134,55 @@ const PageNews = ({ data }) => {
         </div>
       </div>
 
+      {digest && !digest.stale && digest.day_summary && (
+        <div className="card" style={{ marginBottom: 20 }}>
+          <div className="card-header">
+            <h3 className="card-title">Daily Digest</h3>
+            <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{digest.date} · {digest.articles.length} articles</span>
+          </div>
+          <div className="card-body" style={{ padding: 16 }}>
+            <div style={{ fontSize: 14, lineHeight: 1.6, color: 'var(--text)' }}>
+              <NewsFormatted text={digest.day_summary} />
+            </div>
+            {digest.articles.length > 0 && (
+              <>
+                <button
+                  onClick={() => setDigestExpanded(v => !v)}
+                  style={{ marginTop: 12, fontSize: 12, color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontFamily: 'inherit' }}
+                >
+                  {digestExpanded ? 'Hide' : 'Show'} all {digest.articles.length} articles {digestExpanded ? '↑' : '↓'}
+                </button>
+                {digestExpanded && (
+                  <div style={{ marginTop: 10 }}>
+                    {digest.articles.map((a, i) => (
+                      <div key={i} style={{ padding: '8px 0', borderBottom: i < digest.articles.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                        <a href={a.url} target="_blank" rel="noreferrer" style={{ fontSize: 13, color: 'var(--text)', textDecoration: 'none', fontWeight: 500 }}>{a.title}</a>
+                        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>{a.summary}</div>
+                        <div style={{ fontSize: 10, color: 'var(--text-subtle)', marginTop: 2, fontFamily: 'var(--font-mono)' }}>{a.source}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {digest && digest.stale && (
+        <div className="card" style={{ marginBottom: 20 }}>
+          <div className="card-body" style={{ padding: 16, textAlign: 'center', fontSize: 13, color: 'var(--text-muted)' }}>
+            No digest yet — check back after today's run.
+          </div>
+        </div>
+      )}
+
       <div className="tabs">
         {[
           { id: 'all', label: 'Top stories' },
-          { id: 'macro', label: 'Macro' },
-          { id: 'equities', label: 'Equities' },
-          { id: 'crypto', label: 'Crypto' },
+          { id: 'vn_market', label: 'VN Market' },
+          { id: 'vn_companies', label: 'VN Companies' },
+          { id: 'us', label: 'US' },
         ].map(t => (
           <button key={t.id} className="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)}>{t.label}</button>
         ))}
@@ -111,15 +196,12 @@ const PageNews = ({ data }) => {
             {filtered[0] && (
               <div onClick={() => setStory(filtered[0])} style={{ padding: '20px 0', borderBottom: '1px solid var(--border)', cursor: 'pointer' }}>
                 <div className="row" style={{ gap: 8, marginBottom: 8 }}>
-                  <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', background: 'var(--accent)', color: 'white', letterSpacing: '0.05em' }}>BREAKING</span>
+                  <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', background: 'var(--accent)', color: 'white', letterSpacing: '0.05em' }}>TOP STORY</span>
                   <span style={{ fontSize: 11, color: 'var(--text-subtle)' }} className="num">{filtered[0].time} · {filtered[0].src}</span>
                 </div>
                 <h2 className="serif" style={{ fontSize: 24, fontWeight: 600, lineHeight: 1.25, margin: '0 0 12px' }}>
                   {filtered[0].title}
                 </h2>
-                <p style={{ color: 'var(--text-muted)', fontSize: 13, lineHeight: 1.6, margin: 0 }}>
-                  Federal Reserve officials emphasized a measured pace for monetary easing, citing sticky services inflation and a still-resilient labor market. Markets are now pricing in two cuts for 2026, down from three earlier this month.
-                </p>
                 <div className="news-tags" style={{ marginTop: 10 }}>
                   {filtered[0].tags.map(t => <span key={t} style={{ fontSize: 10, padding: '2px 6px', background: 'var(--bg-sunken)', color: 'var(--text-muted)', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{t}</span>)}
                 </div>
@@ -221,21 +303,22 @@ window.PageNews = PageNews;
 const StoryModal = ({ story, allNews = [], onClose }) => {
   const [read, setRead] = React.useState('');
   const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState(null);
 
   const expand = async () => {
     if (loading) return;
     setLoading(true);
+    setError(null);
     try {
-      const prompt = `You are a financial journalist. Expand this headline into a concise news read (~3 short paragraphs). Headline: "${story.title}" (source: ${story.src}). Tags: ${story.tags.join(', ')}. Use **bold** for key figures and *italic* for tickers. End with a one-line "Market impact:" note. No disclaimers, no emoji.`;
-      const reply = await window.HelixAPI.complete(prompt, { page: 'news', context: { headline: story.title } });
-      setRead(reply);
-    } catch {
-      setRead('Could not load the full story right now.');
+      const article = await window.HelixAPI.newsArticle(story.url);
+      setRead(article.text);
+    } catch (e) {
+      setError(String(e && e.message || e));
     }
     setLoading(false);
   };
 
-  React.useEffect(() => { setRead(''); }, [story]);
+  React.useEffect(() => { setRead(''); setError(null); }, [story]);
 
   const related = allNews.filter(n => n !== story && n.tags.some(t => story.tags.includes(t))).slice(0, 3);
   const sentColor = story.sentiment === 'positive' ? 'var(--pos)' : story.sentiment === 'negative' ? 'var(--neg)' : 'var(--text-muted)';
@@ -259,13 +342,25 @@ const StoryModal = ({ story, allNews = [], onClose }) => {
             {story.tags.map(t => <span key={t} style={{ fontSize: 10, padding: '2px 6px', background: 'var(--bg-sunken)', color: 'var(--text-muted)', fontWeight: 600, fontFamily: 'var(--font-mono)', marginRight: 4 }}>{t}</span>)}
           </div>
 
-          {!read && !loading && (
+          {!story.url && (
+            <div style={{ padding: 20, background: 'var(--bg-sunken)', borderRadius: 8, textAlign: 'center', fontSize: 13, color: 'var(--text-muted)' }}>
+              No source link available (mock data).
+            </div>
+          )}
+
+          {story.url && !read && !loading && !error && (
             <div style={{ padding: 20, background: 'var(--bg-sunken)', borderRadius: 8, textAlign: 'center' }}>
-              <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 12 }}>Get the AI-expanded read of this headline.</div>
+              <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 12 }}>Read the full article.</div>
               <button className="btn btn-accent" onClick={expand}><Icon name="sparkle" size={12} /> Read full story</button>
             </div>
           )}
-          {loading && <div style={{ fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic' }}>Writing the story…</div>}
+          {loading && <div style={{ fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic' }}>Fetching article…</div>}
+          {error && (
+            <div style={{ padding: 16, background: 'var(--bg-sunken)', borderRadius: 8 }}>
+              <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 10 }}>Could not load the article: {error}</div>
+              <a href={story.url} target="_blank" rel="noreferrer" style={{ fontSize: 13, color: 'var(--accent)' }}>Open original ↗</a>
+            </div>
+          )}
           {read && <div style={{ fontSize: 14, lineHeight: 1.7, color: 'var(--text)' }}><NewsFormatted text={read} /></div>}
 
           {related.length > 0 && (
@@ -289,7 +384,8 @@ if (!document.getElementById('story-style')) {
   document.head.appendChild(s);
 }
 
-// Lightweight markdown formatter for the briefing (**bold**, *italic*, - lists)
+// Lightweight markdown formatter (**bold**, *italic*, - lists) — used for
+// both the AI-synthesized briefing and real article text from Trafilatura.
 const NewsFormatted = ({ text }) => {
   const lines = String(text).split('\n');
   const out = [];

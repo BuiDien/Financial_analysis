@@ -113,3 +113,14 @@ def test_worker_error_fails_job_and_frees_worker(client):
         # worker idle again → a second dispatch succeeds
         assert client.post("/api/sync/dispatch/1").status_code == 200
         receive_job(ws)
+
+
+def test_obsolete_one_step_worker_gets_upgrade_message(client):
+    with client.websocket_connect("/ws/ocr") as ws:
+        ws.send_json({"type": "hello", "name": "Old Worker", "code": coordinator.pair_code})
+
+        denied = ws.receive_json()
+
+        assert denied["type"] == "deny"
+        assert denied["attemptsLeft"] == 0
+        assert "outdated worker" in denied["reason"]

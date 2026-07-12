@@ -1,153 +1,168 @@
-# Master Build Plan — Distributed Financial Analysis System
+# Master Plan - Financial Analysis System
 
-**Single source of truth & build sequence.** Adapts the **Helix** prototype (`Financial analyze/`)
-into the system in `system_description.md`. This file = WHAT to build, in WHAT order. Detailed designs
-and task-level steps live in the companion docs below.
+**Updated:** 2026-07-12
+**Product direction:** VN-first financial analysis, with global macro news as context.
+**Trust rule:** market feeds are researched/unverified; OCR figures are drafts; only reconciled
+statement values may be used for investment analysis.
 
-## Companion docs (all under `docs/`)
-- `design/API_CONTRACT.md` — Presentation ↔ Core (frozen v1)
-- `design/OCR_PROTOCOL.md` — Core ↔ external OCR system
-- `design/CORE_DESIGN.md` — Core internals
-- `design/HERMES_BRAIN.md` — the agentic brain (Hermes Agent + Qwen3 35B)
-- `design/SKILL_INTEGRATION.md` — borrowing financial skills/methodology
-- `design/DISCUSSION_BACKLOG.md` — parked topics + external-repo decisions
-- `specs/` — feature design specs (reconciliation, vn-market-scanner, ocr-document-workflow,
-  multi-company-watchlist, reader-recon-panel)
-- `plans/` — TDD implementation plans (reconciliation-engine, vn-market-scanner-tier1,
-  ocr-document-workflow)
-- `README.md` — index of this folder
+This document is the source of truth for current status and build order. Detailed implementation
+steps remain in `docs/plans/`; design contracts remain in `docs/design/` and `docs/specs/`.
 
-## Architecture
-```
-Mac (M2 Max, 64GB)                                          GPU laptop (RTX 4070, 8GB)
-┌ PRESENTATION ── website + sidebar chat → HelixAPI         ┌ OCR system ──────────────┐
-│ CORE (FastAPI) ── serve UI · ingest docs · SQLite · vault │ PP-DocLayout +           │
-│   · MCP tool server · scanner                             │ PaddleOCR-VL             │
-│   ├─ Ollama localhost ─► Hermes Agent = Qwen3 35B [brain] └──────────▲───────────────┘
-│   └─ OCR port ───────────────────────────────────────────────────────┘ [stub now]
-│ DATA: SQLite (8+ tables) + Obsidian vault + uploads/      │
-└────────────────────────────────────────────────────────────┘
-```
+## Current State
 
-## Principles
-- **Frontend-first, contract-driven** — build UI on mock; both tiers build to `API_CONTRACT.md`; connect = flip `HelixAPI` live.
-- **Trust nothing unverified, never fabricate numbers** — OCR is a draft (reconcile before trust); scanner broad data is `verified=false`; scores are deterministic Python; LLM narrates, never calculates.
-- **OCR is an external system over a port** — stub now, GPU later, zero core change.
-- **Fully local** — data + vault stay on the user's machines.
+| Area | Status | Reality |
+|---|---|---|
+| React workspace | Prototype working | Mostly browser-loaded JSX; several screens still use clearly labelled demo fixtures |
+| FastAPI core | Working | Health, market, portfolio, filings, news, scanner, and sync routes exist |
+| VN market data | Working | vnstock/VCI quotes, history, universe fetch, and deterministic signals |
+| Scanner tier 1 | Working, operational limits | Tested and persisted; full guest-tier scan takes hours and must run explicitly |
+| News/search | Working | CafeF, quality-filtered global feeds, SearXNG/Exa, and curated YouTube metadata |
+| Daily digest | Collector working | Curated note is written; Hermes summarization/cron is not complete |
+| Sync coordinator | Protocol working | Binary PDF transfer works; worker returns a placeholder row until real OCR parsing exists |
+| OCR Inbox and human review | Working prototype | Unlabeled PDF upload, durable dispatch/retry, source-row review, audit, deferred labels, and guarded publication are implemented |
+| Canonical document schema | Not built | Current `Filing` model is a prototype and conflicts with the target API contract |
+| TT200 OCR structuring | Not built | No trusted line-item placement yet |
+| Reconciliation | Not built | Existing plan/spec are ready, but no runtime gate exists yet |
+| Hermes Agent | Not integrated | Frontend can call a raw local model, but MCP tools, skills, memory, and agent API are absent |
+| Authentication | Not built | Backend must remain on a trusted machine/network until this is fixed |
 
-## Locked decisions (quick reference)
-- Mock company **VNM**, đơn vị **triệu đồng**, **TT200** Mã số. UI built in the **Claude design artifact**.
-- Runtime = **Python 3.11** (venv exists, wheels fine — settles the 3.14/3.12 question).
-- Core serves UI (FastAPI `StaticFiles`); OCR async + poll; OCR stub behind `ocr_client`.
-- Brain = **Hermes Agent** + **Qwen3 35B** on the Mac; tools via **MCP server** in Core; skills in `~/.hermes/skills/`; chat via Hermes Agent API server. **deer-flow rejected.**
-- Obsidian vault on Mac; **proactive** analysis on parse; **per-company first**.
-- Watchlist = **flat list**, **manual-add-first**, **keep all history**, auto-refreshed company hub.
-- Scanner = **tiered trust** funnel; deterministic scoring; thesis + horizon-range + triggers; scheduled + on-demand; user picks deep-dive; market data (vnstock) is **core**.
-- Reconciliation = iterative solver, back-solve single low-conf suspect, flag ambiguous, human-in-the-loop notify.
+## Decisions
 
----
+- The product is **VN-first**: HOSE, HNX, and UPCOM companies and Vietnamese statements.
+- Global news is included only for macro, commodities, geopolitics, and supply-chain context.
+- The scanner is deterministic. An LLM never calculates scores or changes tier-1 rankings.
+- Scanner data remains `verified=false`; it identifies candidates, not investment conclusions.
+- `Filing` and ticker-based yfinance statements are prototype paths. The target model is
+  `Document -> Statement -> LineItem -> ReconFlag/Correction`.
+- Cloud AI is disabled by default. Analysis of unreconciled filings is disabled by default.
+- Hermes Agent, not a raw Ollama completion, owns the future analysis loop, skills, MCP tools,
+  citations, and vault memory.
+- Agent-Reach/YouTube transcripts belong to selective deep dives, not the broad daily collector.
 
-# BUILD SEQUENCE
+## Phase 0 - Stabilize the Prototype
 
-Ordered by dependency. Each stage ends with something runnable + tested. ✅ = done, ◧ = drafted/parked, ☐ = todo.
+Goal: make the current repository reproducible and honest before expanding it.
 
-## Stage 0 — Repo & environment  ✅ (one cleanup task left)
-- [x] Git repo initialized (7+ commits on `main`).
-- [x] Backend venv on **Python 3.11**; deps installed; smoke tests exist (`tests/test_smoke.py`).
-- [ ] 0.1 **Commit the in-flight sync work** (`routes/sync.py`, `sync_app.py`, `worker_example.py`,
-  `page-sync.jsx`, `api-client.jsx`) — it's the Stage 3.2b coordinator, currently uncommitted.
-- [ ] 0.2 **Trim `requirements.txt` to the architecture** — drop unused celery/redis/psycopg2/alembic/
-  python-jose/passlib (fully-local, single-user, SQLite); add `vnstock`; keep yfinance only until
-  `services/market.py` is swapped (Stage 2.3).
-**Accept:** clean `git status`; `pip install -r requirements.txt` into a fresh venv succeeds; `pytest` green.
+- [x] Pin `vnstock`, APScheduler, news, and YouTube runtime dependencies.
+- [x] Clarify scanner output as `long_term`/`short_term` holding horizon, not short-selling.
+- [x] Fix parenthesized negative-value PDF parsing.
+- [x] Align the laptop worker with binary PDF chunk transfer.
+- [x] Block article-reader access to local/private network targets.
+- [x] Stream and validate PDF uploads; sanitize filenames and financial inputs.
+- [x] Stop generated statement values for arbitrary tickers; label remaining UI fixtures as demo data.
+- [x] Make live filing load/delete/open/analyze paths use the backend consistently.
+- [x] Add digest text budgets, safer YouTube keyword matching, and processed-note overwrite protection.
+- [x] Disable cloud AI, unverified filing AI, and the long-running scheduler by default.
+- [ ] Add an API/session token and protect HTTP + WebSocket control surfaces.
+- [ ] Restrict CORS and document the explicit LAN exposure mode for the OCR worker.
+- [ ] Add migration tooling; `create_all()` is not a schema upgrade strategy.
+- [ ] Add a frontend build/test harness so JSX does not depend on runtime CDN compilation.
 
-## Stage 1 — Presentation on mock  ✅ (test-ready)
-Website runs on mock data; OCR tool VN-reskinned. Remaining VN reskin = artifact work, non-blocking.
-Current mock = acceptable test baseline. See `design-source-of-truth` workflow (edits in the artifact).
+**Exit:** fresh setup succeeds; backend tests/lint pass; no sensitive route is anonymously exposed;
+demo and unverified data are unmistakable.
 
-## Stage 2 — Core schema inside the booting prototype  ☐  ← FOUNDATION
-**Reality check (2026-07-01):** the "parked drafts" (`models/core.py` 8 tables, `seed.py`,
-`scheduler.py`) **do not exist** — never committed. What DOES exist is the Helix prototype backend
-(`app/main.py` boots, `/health` 200, models `filing/portfolio/user`, yfinance `services/market.py`,
-working `routes/sync.py`). So Stage 2 = **grow the planned VN core inside the booting prototype**,
-not resurrect drafts. Detail: `CORE_DESIGN.md`.
-- [ ] 2.1 Write `models/core.py` (8-table VN schema: instruments, documents, statements, line_items, …
-  per `CORE_DESIGN.md`) + `seed.py`; `python -m app.db init` creates the tables; seed populates instruments.
-  Prototype tables (filings/portfolios/users) stay untouched until their routes are retired.
-- [ ] 2.2 `GET /api/instruments` returns 200 with seeded rows (app already boots — new endpoint only).
-- [ ] 2.3 **Validation spike A — vnstock** (shared with scanner): confirm market-wide data + tickers;
-  swap `services/market.py` yfinance→vnstock (or add alongside, retire later). Write findings.
-- [ ] 2.4 `tests/conftest.py` `db` fixture (in-memory SQLite) — the shared test harness for later plans.
-- [ ] 2.5 Decide fate of prototype routes (`portfolio`, `filings`, `news`, `ai`): park or delete —
-  don't let two schemas drift silently.
-**Accept:** Core boots, health + instruments endpoints work, vnstock confirmed, pytest harness ready.
+## Phase 1 - Establish the Trust Core
 
-## Stage 3 — Document pipeline (stub OCR)  ◧→☐  ← PLAN READY
-Upload → store → mock OCR → statements/line_items. Makes real data flow.
-**Implementation plan written:** `docs/plans/2026-06-24-ocr-document-workflow.md` (TT200 placement +
-ingest orchestration, TDD). Spec: `docs/specs/2026-06-24-ocr-document-workflow-design.md`.
-Detail: `CORE_DESIGN.md`, `OCR_PROTOCOL.md`.
-- [ ] 3.1 `POST /api/documents` (multipart: file + period + fiscal_year) → save file + `documents` row (queued).
-- [ ] 3.2 `services/ocr_client.py` (`submit`/`poll` — stub vs live worker; interface unchanged regardless of transport) + `services/ocr_stub.py` (canned VNM rows incl. planted 270 error).
-- [◧] 3.2b `routes/sync.py` — WebSocket coordinator: **already built** (pairing-code handshake, job
-  dispatch, chunked-binary PDF, `page-sync` UI, `worker_example.py` reference worker, `sync_app.py`
-  slim launcher). Remaining: commit it (Stage 0.1), then **rewire from prototype `Filing` to the
-  Stage-2 `Document` model** and back `ocr_client` with it when a worker is paired; stub otherwise.
-- [ ] 3.3 Orchestration (`services/ingest.py` + `services/tt200.py` per the impl plan): upload → submit → poll → place TT200 rows → write `statements` + `line_items` (unverified) → status machine + retry-once.
-- [ ] 3.4 `GET /api/documents[/{id}]`, `GET /api/statements/{id}`.
-- [ ] 3.5 Mount `StaticFiles` — Core serves the website.
-**Accept:** upload a PDF → poll to done → `GET /api/statements/{id}` returns VNM rows; site served by Core.
+Goal: create one canonical data model before reconciliation or more UI wiring.
 
-## Stage 4 — Reconciliation engine  ☐  ← PLAN READY
-Verify/repair/flag statement data. **Implementation plan written:** `docs/plans/2026-06-23-reconciliation-engine.md` (7 TDD tasks). Spec: `docs/specs/2026-06-23-reconciliation-engine-design.md`.
-- [ ] Execute that plan (rules → solver → models reason col → ORM bridge → correction route).
-- [ ] Wire into Stage 3.3 (run recon after extraction, before verified).
-**Accept:** planted VNM fixture → 270 auto-repaired, 440 verified, ambiguous group flagged + notified; manual correction re-reconciles.
+- [ ] Implement versioned SQLAlchemy/Alembic models for instruments, documents, statements,
+  line items, recon flags, corrections, and alerts.
+- [ ] Decide and document migration of the prototype `Filing` table. Do not maintain two statement models.
+- [ ] Version the API contract: document IDs identify stored statements; ticker endpoints identify
+  third-party market fundamentals and use a distinct route namespace.
+- [ ] Add the shared in-memory database fixtures and CRUD/ownership tests.
+- [ ] Seed VN instruments from the verified vnstock listing spike.
 
-## Stage 5 — VN Market Scanner, tier 1 (broad scan)  ☐  ← PLAN READY
-Market-wide deterministic screening → ranked candidates. **Implementation plan written:** `docs/plans/2026-06-23-vn-market-scanner-tier1.md` (8 TDD tasks, incl. vnstock spike). Spec: `docs/specs/2026-06-23-vn-market-scanner-design.md`.
-- [ ] Execute that plan (universe → signals → score → runner → models → routes → scheduled job).
-**Accept:** `POST /api/scan` ranks a universe deterministically; `GET /api/scan/latest` feeds the Screener page; all results `verified=false`.
+**Exit:** upload metadata can be persisted in the target schema; migrations upgrade an existing DB;
+prototype and canonical endpoints cannot be confused.
 
-## Stage 6 — Hermes brain (configure, don't build a loop)  ☐
-Hermes Agent supplies loop/skills/MCP/memory/API. We add the MCP tool server + VN skills + wiring. Detail: `HERMES_BRAIN.md`, `SKILL_INTEGRATION.md`.
-- [ ] 6.1 Install Hermes Agent; model = Qwen3 35B via Ollama; API server on.
-- [ ] 6.2 MCP server `backend/app/mcp/` — tools: calc (`compute_ratios`, `compare_periods`, `growth_cagr`, `cross_statement_check`), data (`get_statement`, `get_line_items`, `get_prices`, `list_documents`), obsidian (`save_statement_note`, `save_report`, `query_vault`, `read_note`, `list_company_notes`, `rebuild_company_hub`).
-- [ ] 6.3 Register MCP server in `~/.hermes/config.yaml`; confirm tools discovered.
-- [ ] 6.4 VN skills → `~/.hermes/skills/financial/` (`doc-bao-cao-3-phan`, `phan-tich-chi-so`, `phat-hien-bat-thuong`) — borrowed methodology, report schema (kết luận/điểm số/điểm vào-ra/rủi ro/catalysts/checklist).
-- [ ] 6.5 Obsidian `_Templates/` + company-hub generation.
-- [ ] 6.6 Proactive hook: OCR parse done (+ recon clean) → ping Hermes API → vault note + report.
-- [ ] 6.7 Website chat → Hermes Agent API server (`hermesComplete()`).
-**Accept:** parse VNM → statement note + analysis report in vault; sidebar question → grounded answer via MCP tools; no LLM arithmetic.
+## Phase 2 - OCR and TT200 Structuring
 
-## Stage 7 — Connect tiers (mock → live)  ☐
-- [ ] Point `HelixAPI` at the Core; flip each page mock→live, verify unchanged render.
-- [ ] End-to-end: upload → OCR stub → recon → analysis in vault → scanner ranks → answer in chat.
-**Accept:** full loop runs against the real Core on stub OCR + live Hermes.
+Goal: PDF to unverified, auditable statement rows.
 
-## Stage 8 — Later (unscheduled)
-- **News/search layer** — MCP tools `get_latest_news` (RSS), `search_news` (SearXNG, Docker or native venv), `read_article` (Trafilatura); Camoufox reserved. Then enable the scanner's catalyst dimension. Detail in this file's history + `DISCUSSION_BACKLOG.md`.
-- **Scanner tier 2 (deep-dive)** — user picks a candidate → OCR+reconcile+Hermes → thesis dossier (needs Stages 4+6).
-- **Real GPU OCR worker** — PP-DocLayout + PaddleOCR-VL; set `ocr_worker_url`. Spike: OCR quality on real statements.
-- **Reconciliation review panel** (UI) — `specs/reader-recon-panel.md`.
-- **Cross-company analysis**, **MCP wrapper reuse**, **Slack bot + alerts**, **auth** (single-user minimal).
-- **deer-flow** — rejected as brain; possible future standalone deep-research engine only (`DISCUSSION_BACKLOG.md`).
+- [ ] Implement real page rendering and PaddleOCR-VL invocation on the GPU worker.
+- [x] Define and validate the worker result schema; reject oversized/malformed result frames.
+- [ ] Implement TT200 statement classification and `Ma so` placement.
+- [x] Persist confidence, page provenance, raw text, current value, and previous value for every review row.
+- [ ] Add retries, timeouts, disconnect recovery, and durable job state outside process memory.
 
----
+Use `docs/plans/2026-06-24-ocr-document-workflow.md`, updated to the Phase-1 schema before execution.
 
-## Critical path
-```
-Stage 0 ✅ → Stage 2 (core schema) ─┬─ Stage 3 (docs+OCR stub; 3.2b half-done) → Stage 4 (recon) ─┐
-                                    └─ Stage 5 (scanner tier1)                                     ├─ Stage 7 (connect)
-                                       Stage 6 (Hermes brain) ────────────────────────────────────┘
-Stage 1 (presentation/mock) runs in parallel (artifact work).  Stage 8 = after deps.
-```
-- **Stages 3, 4 and 5 plans are already written** but all need **Stage 2 (core schema + conftest.py db fixture)** first. Stage 4 also needs Stage 3 for end-to-end (its unit tests run on seeded fixtures alone).
-- **Next action = Stage 0.1 (commit sync work) then Stage 2.** Everything is queued behind the 8-table schema.
+**Exit:** a real Vietnamese scanned statement becomes structured `unverified` line items with page
+provenance; no placeholder OCR rows remain.
 
-## Open items (settle at build time)
-- vnstock market-wide data feasibility (Stage 2.3 / scanner Task 0 spike) — gates fundamentals/valuation dimensions.
-- Exact `compute_ratios` ratio list (VN: thanh khoản, đòn bẩy, sinh lời, hiệu quả).
-- ~~Python 3.14 wheel coverage~~ — settled: venv is Python 3.11.
-- ~~Report period source~~ — settled: user enters period + fiscal_year at upload (locked in the ocr-document-workflow spec).
-- Sync protocol docstrings drift: `routes/sync.py` header vs `worker_example.py` pairing flow — reconcile when committing (Stage 0.1).
+## Phase 3 - Reconciliation and Human Review
+
+Goal: enforce the project's central trust promise.
+
+- [x] Build the OCR Inbox's source-backed row review gate (approve, correct, reject, add missing,
+  immutable raw result, and audit history).
+
+- [ ] Execute `docs/plans/2026-06-23-reconciliation-engine.md` against the canonical schema.
+- [ ] Verify totals, back-solve only unambiguous low-confidence errors, and flag ambiguity.
+- [ ] Persist correction history and rerun affected rules after every manual edit.
+- [ ] Build the reader reconciliation panel from `docs/specs/reader-recon-panel.md`.
+- [ ] Add an enforced `verified` gate used by every analysis/export endpoint.
+
+**Exit:** the planted error is repaired, ambiguous cases require review, and no analysis path accepts
+unverified statement values.
+
+## Phase 4 - Hermes Agent and Grounded Analysis
+
+Goal: local agent analysis over verified data and cited research.
+
+- [ ] Run the Hermes Agent API with the chosen local model; do not call Ollama directly from the UI.
+- [ ] Implement/register financial MCP tools for statements, ratios, comparisons, prices, and vault I/O.
+- [ ] Register news/search tools and VN analysis skills.
+- [ ] Require provenance labels: `verified statement`, `unverified market feed`, or `researched URL`.
+- [ ] Write statement notes and reports to Obsidian, then expose grounded chat through Hermes.
+- [ ] Remove the Anthropic prototype path after local Hermes acceptance tests pass.
+
+**Exit:** a reconciled VNM statement produces a cited vault report; chat answers use MCP data and no
+LLM-authored arithmetic.
+
+## Phase 5 - Connect the Product Workflow
+
+Goal: one coherent VN investor workflow instead of independent prototype screens.
+
+- [ ] Align Home, watchlists, portfolio, screener, statements, filings, and alerts around VN instruments.
+- [ ] Replace all remaining hard-coded market/detail/dashboard facts with live or explicitly unavailable data.
+- [ ] Move portfolio performance and alert indicators to persisted historical data.
+- [ ] Add background scan jobs with progress, cancellation, fixed market-time scheduling, and one worker.
+- [ ] Connect: scan candidate -> upload statement -> OCR -> reconcile -> Hermes deep dive -> review triggers.
+- [ ] Add responsive and keyboard-accessible workflows plus browser tests.
+
+**Exit:** the complete candidate-to-decision loop works without demo numbers or hidden local-only state.
+
+## Phase 6 - News and Research Operations
+
+Goal: improve decision signal without turning the daily digest into a content dump.
+
+- [ ] Store publication timestamps and enforce a defined daily recency window where sources provide dates.
+- [ ] Record per-source fetch failures, accepted/rejected counts, duplicates, and character budgets.
+- [ ] Complete Hermes cron registration without maintaining an uncontrolled duplicate script.
+- [ ] Add selected YouTube transcripts through Agent-Reach only when a deep-dive topic needs them.
+- [ ] Add source-quality evaluation from user feedback; keep social feeds out of the core daily digest.
+
+**Exit:** daily notes are bounded, current, observable, and summarized automatically with cited sources.
+
+## Release Gates
+
+Do not call the system production-ready until all are true:
+
+- Authentication protects filings, portfolio, AI, scanner actions, and sync pairing.
+- Database migrations and backup/restore are tested.
+- OCR outputs retain source-page provenance.
+- Reconciliation gates all statement analysis.
+- No visible screen or export presents synthetic values as real.
+- Full backend tests, lint, frontend tests, and critical browser workflows pass in CI.
+- A fresh machine can install and run from documented commands only.
+
+## Detailed References
+
+- `docs/design/API_CONTRACT.md` - revise/version during Phase 1.
+- `docs/design/OCR_PROTOCOL.md` and `SYNC_WORKER_GUIDE.md` - worker transport contract.
+- `docs/specs/2026-06-23-reconciliation-engine-design.md` - reconciliation behavior.
+- `docs/plans/2026-06-23-vn-market-scanner-tier1.md` - implemented scanner history.
+- `docs/superpowers/specs/2026-07-07-daily-news-digest-design.md` - update during Phase 6.
+- `docs/design/HERMES_BRAIN.md` - target agent architecture.

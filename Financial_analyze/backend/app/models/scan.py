@@ -23,7 +23,7 @@ class ScanResult(Base):
     symbol = Column(String, index=True, nullable=False)
     scores = Column(JSON, default=dict)              # per-dimension sub-scores
     total_score = Column(Float, default=0.0)
-    lean = Column(String, default="avoid")           # long | short | avoid
+    lean = Column(String, default="avoid")           # long_term | short_term | avoid
     rank = Column(Integer, default=0)
     verified = Column(Boolean, default=False)        # broad scan = always False
 

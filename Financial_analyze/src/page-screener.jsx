@@ -56,8 +56,10 @@ const buildUniverse = (n = 800) => {
 // SAME "Run on 10,000 stocks" button + results table as the mock screener,
 // swapping to VN-shaped columns (lean/scores) when the backend is live.
 const LEAN_STYLE = {
-  long:  { label: 'LONG',  color: 'var(--green, #16a34a)' },
-  short: { label: 'SHORT', color: 'var(--red, #dc2626)' },
+  long_term:  { label: 'LONG TERM',  color: 'var(--green, #16a34a)' },
+  short_term: { label: 'SHORT TERM', color: 'var(--accent)' },
+  long:  { label: 'LONG TERM',  color: 'var(--green, #16a34a)' },
+  short: { label: 'SHORT TERM', color: 'var(--accent)' },
   avoid: { label: 'AVOID', color: 'var(--text-subtle)' },
 };
 

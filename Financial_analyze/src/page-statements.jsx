@@ -370,96 +370,24 @@ const RatioCard = ({ item }) => {
   );
 };
 
-// Deterministic synthetic dataset for any ticker without a hand-built one,
-// so every watchlist stock is selectable in the statements view.
-const synthCompany = (ticker, name, w) => {
-  let seed = 0; for (const c of ticker) seed += c.charCodeAt(0);
-  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
-  const years = ['FY21', 'FY22', 'FY23', 'FY24', 'FY25'];
-  // Base revenue loosely from market cap if available
-  const capNum = w && typeof w.mcap === 'string'
-    ? parseFloat(w.mcap) * (w.mcap.includes('T') ? 1000 : 1)
-    : 200 + rnd() * 800;
-  let rev0 = Math.max(2000, capNum * (0.15 + rnd() * 0.25) * 1000);
-  const growth = 0.05 + rnd() * 0.22;
-  const series = (mult, drift = growth) => years.map((_, i) => Math.round(rev0 * mult * Math.pow(1 + drift, i)));
-  const revenue = series(1);
-  const gm = 0.35 + rnd() * 0.4, om = gm * (0.45 + rnd() * 0.3), nm = om * (0.6 + rnd() * 0.25);
-  const gp = revenue.map(r => Math.round(r * gm));
-  const opinc = revenue.map(r => Math.round(r * om));
-  const ni = revenue.map(r => Math.round(r * nm));
-  const eps = ni.map(v => +(v / (1500 + rnd() * 2000)).toFixed(2));
-  const ta = revenue.map(r => Math.round(r * (1.2 + rnd() * 0.8)));
-  const te = ta.map(v => Math.round(v * (0.35 + rnd() * 0.3)));
-  const cfo = ni.map(v => Math.round(v * (1.05 + rnd() * 0.25)));
-  const capex = revenue.map(r => -Math.round(r * (0.03 + rnd() * 0.05)));
-  const fcf = cfo.map((v, i) => v + capex[i]);
-  const mkRow = (label, key, values, extra = {}) => ({ label, key, values, ...extra });
-  const pe = +(12 + rnd() * 40).toFixed(1);
-  return {
-    ticker, name: name || ticker, exchange: 'NASDAQ', sector: 'Equity', fyEnd: 'Dec',
-    lastReported: { label: 'FY25', date: '2026' }, years, synthetic: true,
-    income: [
-      mkRow('Revenue', 'revenue', revenue, { bold: true }),
-      mkRow('Gross Profit', 'gp', gp, { bold: true }),
-      mkRow('Operating Income', 'opinc', opinc, { bold: true }),
-      mkRow('Net Income', 'ni', ni, { bold: true, accent: true }),
-      mkRow('EPS (diluted)', 'eps', eps, { format: 'currency' }),
-    ],
-    balance: [
-      mkRow('Total Current Assets', 'tca', ta.map(v => Math.round(v * 0.5)), { bold: true }),
-      mkRow('Total Assets', 'ta', ta, { bold: true, accent: true }),
-      mkRow('Long-Term Debt', 'ltd', te.map(v => Math.round(v * (0.1 + rnd() * 0.4)))),
-      mkRow('Total Equity', 'te', te, { bold: true }),
-    ],
-    cashflow: [
-      mkRow('Operating Cash Flow', 'cfo', cfo, { bold: true, accent: true }),
-      mkRow('Capex', 'capex', capex),
-      mkRow('Free Cash Flow', 'fcf', fcf, { bold: true }),
-    ],
-    ratios: [
-      { group: 'Profitability', items: [
-        { label: 'Gross Margin', val: +(gm * 100).toFixed(1), pct: true, peer: 45, signal: gm > 0.45 ? 'pos' : 'neg' },
-        { label: 'Operating Margin', val: +(om * 100).toFixed(1), pct: true, peer: 20, signal: om > 0.2 ? 'pos' : 'neg' },
-        { label: 'Net Margin', val: +(nm * 100).toFixed(1), pct: true, peer: 14, signal: nm > 0.14 ? 'pos' : 'neg' },
-      ]},
-      { group: 'Valuation', items: [
-        { label: 'P/E (TTM)', val: pe, suffix: '×', peer: 24, signal: pe < 24 ? 'pos' : 'neg' },
-      ]},
-    ],
-    scorecard: [
-      { label: 'Profitability', score: +(5 + nm * 20).toFixed(1), note: 'Synthetic estimate' },
-      { label: 'Growth', score: +(4 + growth * 25).toFixed(1), note: `${(growth * 100).toFixed(0)}% rev CAGR` },
-      { label: 'Valuation', score: +(Math.max(2, 10 - pe / 6)).toFixed(1), note: `P/E ${pe}×` },
-    ],
-  };
-};
-
 const PageStatements = ({ data }) => {
   const [tab, setTab] = React.useState('summary');
   const [view, setView] = React.useState('annual'); // annual | quarterly
   const [ticker, setTicker] = React.useState(() => {
     const hint = window.__statementsTicker;
     window.__statementsTicker = null;
-    return hint || 'NVDA';
+    return hint && COMPANIES[hint] ? hint : 'NVDA';
   });
 
-  // Full company list: real datasets (COMPANIES) + every watchlist ticker.
-  // Watchlist names without a hand-built dataset get a deterministic synthetic one.
-  const companyList = React.useMemo(() => {
-    const list = Object.values(COMPANIES).map(c => ({ ticker: c.ticker, name: c.name }));
-    const seen = new Set(list.map(c => c.ticker));
-    (data?.watchlist || []).forEach(w => {
-      if (!seen.has(w.sym)) { list.push({ ticker: w.sym, name: w.name }); seen.add(w.sym); }
-    });
-    return list;
-  }, [data]);
+  // These embedded records are UI fixtures only. Unknown tickers must never
+  // receive generated financial values; live statement data will replace this
+  // list after the verified document schema and reconciliation gate land.
+  const companyList = React.useMemo(
+    () => Object.values(COMPANIES).map(c => ({ ticker: c.ticker, name: c.name })),
+    [],
+  );
 
-  const fs = React.useMemo(() => {
-    if (COMPANIES[ticker]) return COMPANIES[ticker];
-    const w = (data?.watchlist || []).find(x => x.sym === ticker);
-    return synthCompany(ticker, w ? w.name : ticker, w);
-  }, [ticker, data]);
+  const fs = COMPANIES[ticker];
   const ratios = fs.ratios;
   const lastIdx = fs.years.length - 1;
   const activeFs = React.useMemo(() => view === 'quarterly' ? toQuarterly(fs) : fs, [view, fs]);
@@ -487,9 +415,9 @@ const PageStatements = ({ data }) => {
     const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = `${ticker}_financials.csv`; a.click();
+    a.href = url; a.download = `${ticker}_demo_financials.csv`; a.click();
     URL.revokeObjectURL(url);
-    window.toast && window.toast(`Exported ${ticker} financials`, { type: 'success' });
+    window.toast && window.toast(`Exported ${ticker} demo dataset`, { type: 'info' });
   };
 
   const tabs = [
@@ -516,7 +444,7 @@ const PageStatements = ({ data }) => {
       <div className="page-header">
         <div>
           <h1 className="page-title">Financial statements.</h1>
-          <p className="page-sub">Income, balance, cash flow & ratios — multi-year, peer-benchmarked</p>
+          <p className="page-sub">UI demonstration data only · not live or reconciled</p>
         </div>
         <div className="row">
           <select className="search" value={ticker} onChange={e => setTicker(e.target.value)} style={{ width: 180, cursor: 'pointer' }}>

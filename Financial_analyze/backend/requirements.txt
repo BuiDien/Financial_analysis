@@ -14,9 +14,11 @@ psycopg2-binary==2.9.10           # postgres driver
 # Caching / queue
 redis==5.1.1
 celery==5.4.0
+apscheduler==3.11.3
 
 # Market data
 yfinance==1.5.1
+vnstock==4.0.4
 pandas==2.2.3
 numpy==2.1.2
 
@@ -24,6 +26,11 @@ numpy==2.1.2
 pdfplumber==0.11.4
 pypdf==5.1.0
 # camelot-py[cv]==0.11.0          # uncomment if you need table extraction (heavy deps)
+
+# News (CafeF RSS + SearXNG search + article extraction)
+feedparser==6.0.12
+trafilatura==2.1.0
+yt-dlp==2026.7.4
 
 # AI
 anthropic==0.39.0

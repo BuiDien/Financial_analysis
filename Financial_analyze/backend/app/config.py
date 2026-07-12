@@ -8,6 +8,8 @@ class Settings(BaseSettings):
 
     # AI
     anthropic_api_key: str = ""
+    enable_cloud_ai: bool = False
+    allow_unverified_filing_ai: bool = False
 
     # DB
     database_url: str = "sqlite:///./helix.db"
@@ -22,7 +24,9 @@ class Settings(BaseSettings):
     alpaca_secret_key: str = ""
 
     # Scheduler (daily VN market scan)
-    enable_scheduler: bool = True
+    # Full VN scans take hours on the guest API tier. Run explicitly until the
+    # scanner moves to a single-instance background worker with a fixed schedule.
+    enable_scheduler: bool = False
 
     # CORS
     allowed_origins: str = "*"

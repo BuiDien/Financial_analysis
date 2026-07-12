@@ -59,9 +59,9 @@ def rsi(closes: list[float], n: int = 14) -> float | None:
         losses.append(max(-delta, 0.0))
     avg_gain = sum(gains[:n]) / n
     avg_loss = sum(losses[:n]) / n
-    for g, l in zip(gains[n:], losses[n:]):
-        avg_gain = (avg_gain * (n - 1) + g) / n
-        avg_loss = (avg_loss * (n - 1) + l) / n
+    for gain, loss in zip(gains[n:], losses[n:]):
+        avg_gain = (avg_gain * (n - 1) + gain) / n
+        avg_loss = (avg_loss * (n - 1) + loss) / n
     if avg_loss == 0:
         return 100.0
     rs = avg_gain / avg_loss

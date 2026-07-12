@@ -47,7 +47,11 @@ const HelixAPI = {
 
   async _get(path) {
     const res = await fetch(`${this.base}${path}`);
-    if (!res.ok) throw new Error(`${res.status} ${path}`);
+    if (!res.ok) {
+      let detail = `${res.status} ${path}`;
+      try { detail = (await res.json()).detail || detail; } catch {}
+      throw new Error(detail);
+    }
     return res.json();
   },
 
@@ -57,13 +61,17 @@ const HelixAPI = {
       headers: { 'Content-Type': 'application/json' },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
-    if (!res.ok) throw new Error(`${res.status} ${path}`);
+    if (!res.ok) {
+      let detail = `${res.status} ${path}`;
+      try { detail = (await res.json()).detail || detail; } catch {}
+      throw new Error(detail);
+    }
     return res.json();
   },
 
   // ── Market ────────────────────────────────────────────────
   quote(ticker)                    { return this._get(`/api/quote/${ticker}`); },
-  history(ticker, period = '1mo')  { return this._get(`/api/history/${ticker}?period=${period}`); },
+  history(ticker, period = '1mo', interval = '1d') { return this._get(`/api/history/${ticker}?period=${period}&interval=${interval}`); },
   indices()                        { return this._get('/api/indices'); },
   screener(params = {})            { return this._get('/api/screener?' + new URLSearchParams(params)); },
 
@@ -85,7 +93,11 @@ const HelixAPI = {
     fd.append('filing_type', meta.type);
     fd.append('period', meta.period);
     const res = await fetch(`${this.base}/api/filings/upload`, { method: 'POST', body: fd });
-    if (!res.ok) throw new Error('Upload failed');
+    if (!res.ok) {
+      let detail = 'Upload failed';
+      try { detail = (await res.json()).detail || detail; } catch {}
+      throw new Error(detail);
+    }
     return res.json();
   },
   analyzeFiling(id)                { return this._send('POST', `/api/filings/${id}/analyze`); },
@@ -96,6 +108,12 @@ const HelixAPI = {
   filingFileUrl(id)                { return `${this.base}/api/filings/${id}/file`; },
   deleteFiling(id)                 { return this._send('DELETE', `/api/filings/${id}`); },
 
+  // ── News ──────────────────────────────────────────────────
+  news(limit = 30)                 { return this._get(`/api/news?limit=${limit}`); },
+  newsSearch(q, count = 5)         { return this._get(`/api/news/search?q=${encodeURIComponent(q)}&count=${count}`); },
+  newsArticle(url)                 { return this._get(`/api/news/article?url=${encodeURIComponent(url)}`); },
+  newsDailySummary()               { return this._get('/api/news/summary'); },
+
   // ── Sync (distributed OCR coordinator) ─────────────────────────────
   // Drives backend/app/routes/sync.py: the Mac is the coordinator, worker
   // laptops connect to ws://<base>/ws/ocr with the pairing code.
@@ -104,6 +122,43 @@ const HelixAPI = {
   syncDispatch(filingId)           { return this._send('POST', `/api/sync/dispatch/${filingId}`); },
   syncResult(jobId)                { return this._get(`/api/sync/result/${jobId}`); },
   syncWsUrl()                      { return this.base.replace(/^http/, 'ws') + '/ws/ocr'; },
+
+  // ── OCR Inbox + human verification ──────────────────────────────
+  async ocrInboxUpload(files, allowDuplicate = false) {
+    const fd = new FormData();
+    Array.from(files).forEach(file => fd.append('files', file));
+    fd.append('allow_duplicate', allowDuplicate ? 'true' : 'false');
+    const res = await fetch(`${this.base}/api/ocr-inbox`, { method: 'POST', body: fd });
+    if (!res.ok) {
+      let detail = 'OCR Inbox upload failed';
+      try {
+        const body = await res.json();
+        detail = typeof body.detail === 'string' ? body.detail : (body.detail?.message || detail);
+        const err = new Error(detail);
+        err.status = res.status;
+        err.detail = body.detail;
+        throw err;
+      } catch (e) { if (e.status) throw e; }
+      throw new Error(detail);
+    }
+    return res.json();
+  },
+  ocrInbox(status)                 { return this._get('/api/ocr-inbox' + (status ? `?status=${encodeURIComponent(status)}` : '')); },
+  ocrInboxItem(id)                 { return this._get(`/api/ocr-inbox/${id}`); },
+  ocrInboxFileUrl(id)              { return `${this.base}/api/ocr-inbox/${id}/file`; },
+  ocrInboxPageUrl(id, page)        { return `${this.base}/api/ocr-inbox/${id}/pages/${page}`; },
+  ocrInboxRun(id)                  { return this._send('POST', `/api/ocr-inbox/${id}/run`); },
+  ocrInboxRetry(id)                { return this._send('POST', `/api/ocr-inbox/${id}/retry`); },
+  ocrInboxCancel(id)               { return this._send('POST', `/api/ocr-inbox/${id}/cancel`); },
+  ocrInboxDelete(id)               { return this._send('DELETE', `/api/ocr-inbox/${id}`); },
+  ocrInboxLabels(id, labels)       { return this._send('PATCH', `/api/ocr-inbox/${id}/labels`, labels); },
+  ocrInboxPublish(id)              { return this._send('POST', `/api/ocr-inbox/${id}/publish`); },
+  ocrReview(id)                    { return this._get(`/api/ocr-inbox/reviews/${id}`); },
+  ocrReviewAction(reviewId, rowId, action, revision, data, reason) {
+    return this._send('POST', `/api/ocr-inbox/reviews/${reviewId}/rows/${rowId}/${action}`, { revision, data, reason });
+  },
+  ocrReviewAdd(reviewId, revision, data) { return this._send('POST', `/api/ocr-inbox/reviews/${reviewId}/rows`, { revision, data }); },
+  ocrReviewVerify(reviewId, revision) { return this._send('POST', `/api/ocr-inbox/reviews/${reviewId}/verify`, { revision }); },
 
   // ── VN Market Scanner (broad scan tier) ───────────────────
   // Drives backend/app/routes/scan.py. Results are third-party (vnstock)

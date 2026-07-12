@@ -31,7 +31,7 @@ def client():
     s.flush()
     s.add(ScanResult(run_id=run.id, symbol="VNM",
                      scores={"fundamentals": 80, "valuation": 60, "technical": 40, "catalysts": 0},
-                     total_score=62.0, lean="long", rank=1, verified=False))
+                     total_score=62.0, lean="long", rank=1, verified=False))  # legacy stored value
     s.add(ScanResult(run_id=run.id, symbol="XYZ",
                      scores={"fundamentals": 20, "valuation": 20, "technical": 20, "catalysts": 0},
                      total_score=20.0, lean="avoid", rank=2, verified=False))
@@ -47,7 +47,7 @@ def test_get_latest_returns_ranked_results(client):
     body = resp.json()
     assert body["results"][0]["symbol"] == "VNM"
     assert body["results"][0]["rank"] == 1
-    assert body["results"][0]["lean"] == "long"
+    assert body["results"][0]["lean"] == "long_term"
     assert body["results"][0]["verified"] is False
 
 

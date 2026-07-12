@@ -11,6 +11,7 @@ Endpoint mapping to the frontend:
   Open PDF                 → GET    /api/filings/{id}/file
 """
 import os
+import re
 import uuid
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
@@ -21,10 +22,13 @@ from pydantic import BaseModel
 from ..config import get_settings
 from ..db import get_db
 from ..models.filing import Filing
+from ..models.ocr import OCRInboxItem
 from ..services import pdf, ai
 
 router = APIRouter()
 settings = get_settings()
+UPLOAD_CHUNK_SIZE = 1024 * 1024
+TICKER_RE = re.compile(r"^[A-Z0-9.^_-]{1,20}$")
 
 
 def _serialize(f: Filing) -> dict:
@@ -52,29 +56,57 @@ async def upload_filing(
     period: str = Form(...),
     db: Session = Depends(get_db),
 ):
-    content = await file.read()
-    if len(content) > settings.max_upload_mb * 1024 * 1024:
-        raise HTTPException(413, f"File exceeds {settings.max_upload_mb} MB limit")
-    if not file.filename.lower().endswith(".pdf"):
+    ticker = ticker.strip().upper()
+    filing_type = filing_type.strip()
+    period = period.strip()
+    filename = Path((file.filename or "").replace("\\", "/")).name
+    if not TICKER_RE.fullmatch(ticker):
+        raise HTTPException(422, "Ticker contains unsupported characters")
+    if not filing_type or len(filing_type) > 80 or not period or len(period) > 80:
+        raise HTTPException(422, "Filing type and period are required and must be at most 80 characters")
+    if not filename.lower().endswith(".pdf"):
         raise HTTPException(400, "PDF required")
 
     Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
-    storage_path = os.path.join(settings.upload_dir, f"{uuid.uuid4().hex}_{file.filename}")
-    with open(storage_path, "wb") as fp:
-        fp.write(content)
+    storage_path = os.path.join(settings.upload_dir, f"{uuid.uuid4().hex}_{filename}")
+    max_bytes = settings.max_upload_mb * 1024 * 1024
+    size_bytes = 0
+    try:
+        with open(storage_path, "wb") as fp:
+            while chunk := await file.read(UPLOAD_CHUNK_SIZE):
+                size_bytes += len(chunk)
+                if size_bytes > max_bytes:
+                    raise HTTPException(413, f"File exceeds {settings.max_upload_mb} MB limit")
+                fp.write(chunk)
+    except Exception:
+        Path(storage_path).unlink(missing_ok=True)
+        raise
+
+    with open(storage_path, "rb") as fp:
+        if b"%PDF-" not in fp.read(1024):
+            Path(storage_path).unlink(missing_ok=True)
+            raise HTTPException(400, "File content is not a PDF")
 
     try:
         meta = pdf.quick_meta(storage_path)
-    except Exception:
-        meta = {"pages": 0, "extracted": {}}
+    except Exception as e:
+        Path(storage_path).unlink(missing_ok=True)
+        raise HTTPException(422, "PDF is unreadable or corrupted") from e
 
     f = Filing(
-        ticker=ticker.upper(), filing_type=filing_type, period=period,
-        filename=file.filename, storage_path=storage_path,
-        size_bytes=len(content), pages=meta.get("pages", 0),
+        ticker=ticker, filing_type=filing_type, period=period,
+        filename=filename, storage_path=storage_path,
+        size_bytes=size_bytes, pages=meta.get("pages", 0),
         status="pending", extracted=meta.get("extracted", {}),
     )
-    db.add(f); db.commit(); db.refresh(f)
+    try:
+        db.add(f)
+        db.commit()
+        db.refresh(f)
+    except Exception:
+        db.rollback()
+        Path(storage_path).unlink(missing_ok=True)
+        raise
     return _serialize(f)
 
 
@@ -100,6 +132,11 @@ def analyze_filing(filing_id: int, db: Session = Depends(get_db)):
     f = db.query(Filing).filter_by(id=filing_id).first()
     if not f:
         raise HTTPException(404)
+    if not settings.allow_unverified_filing_ai:
+        raise HTTPException(
+            409,
+            "Filing analysis is disabled until OCR values pass reconciliation",
+        )
     try:
         text = pdf.extract_text(f.storage_path)
         result = ai.analyze_filing(text=text, ticker=f.ticker,
@@ -124,6 +161,11 @@ def ask_filing(filing_id: int, payload: AskIn, db: Session = Depends(get_db)):
     f = db.query(Filing).filter_by(id=filing_id).first()
     if not f:
         raise HTTPException(404)
+    if not settings.allow_unverified_filing_ai:
+        raise HTTPException(
+            409,
+            "Filing Q&A is disabled until OCR values pass reconciliation",
+        )
     text = pdf.extract_text(f.storage_path)
     answer = ai.ask_about_filing(text=text, question=payload.question,
                                  ticker=f.ticker, section=payload.section)
@@ -165,9 +207,13 @@ def delete_filing(filing_id: int, db: Session = Depends(get_db)):
     f = db.query(Filing).filter_by(id=filing_id).first()
     if not f:
         raise HTTPException(404)
+    source = db.query(OCRInboxItem).filter_by(published_filing_id=f.id).first()
+    if source:
+        raise HTTPException(409, "Verified OCR publications must be retained with their audit history")
     try:
         os.remove(f.storage_path)
     except OSError:
         pass
-    db.delete(f); db.commit()
+    db.delete(f)
+    db.commit()
     return {"ok": True}

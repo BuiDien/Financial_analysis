@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -7,10 +7,11 @@ from ..models.scan import ScanRun, ScanResult
 from ..scanner.runner import run_scan
 
 router = APIRouter()
+LEAN_ALIASES = {"long": "long_term", "short": "short_term"}
 
 
 class ScanIn(BaseModel):
-    limit: int | None = None
+    limit: int | None = Field(default=None, ge=0, le=200)
 
 
 @router.post("/scan")
@@ -32,6 +33,7 @@ def latest(db: Session = Depends(get_db)):
     return {
         "run_id": run.id,
         "started_at": run.started_at.isoformat() if run.started_at else None,
-        "results": [{"symbol": r.symbol, "total_score": r.total_score, "lean": r.lean,
+        "results": [{"symbol": r.symbol, "total_score": r.total_score,
+                     "lean": LEAN_ALIASES.get(r.lean, r.lean),
                      "rank": r.rank, "verified": r.verified, "scores": r.scores} for r in rows],
     }

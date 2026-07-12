@@ -11,6 +11,10 @@ MAX_TEXT_CHARS = 80_000
 
 def client() -> Anthropic:
     global _client
+    if not settings.enable_cloud_ai:
+        raise RuntimeError("Cloud AI is disabled; use the local Hermes provider")
+    if not settings.anthropic_api_key:
+        raise RuntimeError("Cloud AI is enabled but ANTHROPIC_API_KEY is not configured")
     if _client is None:
         _client = Anthropic(api_key=settings.anthropic_api_key)
     return _client

@@ -23,6 +23,21 @@ const saveFilings = (filings) => {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(filings)); } catch (e) {}
 };
 
+const isBackendFiling = (filing) => /^\d+$/.test(String(filing?.id));
+
+const fromApiFiling = (f) => ({
+  id: f.id,
+  name: f.filename,
+  ticker: f.ticker,
+  type: f.filing_type,
+  period: f.period,
+  size: f.size_bytes || 0,
+  uploaded: (f.uploaded_at || '').slice(0, 10),
+  status: f.status,
+  pages: f.pages || 0,
+  extracted: f.extracted || {},
+});
+
 const fmtBytes = (b) => {
   if (b < 1024) return b + ' B';
   if (b < 1024 * 1024) return (b / 1024).toFixed(1) + ' KB';
@@ -43,6 +58,23 @@ const PageFilings = () => {
 
   React.useEffect(() => { saveFilings(filings); }, [filings]);
 
+  React.useEffect(() => {
+    let cancelled = false;
+    const loadLiveFilings = async () => {
+      if (!window.HelixAPI) return;
+      if (!window.HelixAPI.checked) await window.HelixAPI.detect();
+      if (!window.HelixAPI.live) return;
+      try {
+        const rows = await window.HelixAPI.filings();
+        if (!cancelled) setFilings(rows.map(fromApiFiling));
+      } catch (e) {
+        if (!cancelled) window.toast?.(`Could not load filings: ${e.message || e}`, { type: 'error' });
+      }
+    };
+    loadLiveFilings();
+    return () => { cancelled = true; };
+  }, []);
+
   const addFiling = (filing) => {
     setFilings(f => [filing, ...f]);
     setShowUpload(false);
@@ -53,7 +85,15 @@ const PageFilings = () => {
     window.toast && window.toast(`Added "${filing.name}"`, { type: 'success' });
   };
 
-  const removeFiling = (id) => {
+  const removeFiling = async (id) => {
+    if (window.HelixAPI?.live && /^\d+$/.test(String(id))) {
+      try {
+        await window.HelixAPI.deleteFiling(id);
+      } catch (e) {
+        window.toast?.(`Could not remove filing: ${e.message || e}`, { type: 'error' });
+        return;
+      }
+    }
     setFilings(f => f.filter(x => x.id !== id));
     if (selected?.id === id) setSelected(null);
     window.toast && window.toast('Filing removed', { type: 'info' });
@@ -62,12 +102,19 @@ const PageFilings = () => {
   const analyzeFiling = async (filing) => {
     setAnalyzing(filing.id);
     try {
-      const prompt = `You are reviewing a "${filing.type}" financial filing for ${filing.ticker} (${filing.period}). The document is "${filing.name}". Extract the **5 most important findings** an analyst should know. Use this format strictly:\n\n**Bottom line:** [one sentence verdict]\n\n**Key findings:**\n- [finding 1, with specific numbers if relevant]\n- [finding 2]\n- [finding 3]\n- [finding 4]\n- [finding 5]\n\n**Watch list:** [2-3 risks or things to monitor]\n\nBe specific, numerical, and direct. No fluff.`;
-      const result = await window.claude.complete(prompt);
+      let result;
+      if (window.HelixAPI?.live && isBackendFiling(filing)) {
+        const response = await window.HelixAPI.analyzeFiling(filing.id);
+        result = response.analysis;
+      } else {
+        const prompt = `This is a DEMO filing record without readable document contents. Discuss only the visible metadata for ${filing.ticker} (${filing.period}); do not invent financial figures or claim to have read the PDF.`;
+        result = await window.HelixAPI.complete(prompt, { page: 'statements', context: { filing: filing.name, demo: true } });
+      }
       setAnalysisOutput(o => ({ ...o, [filing.id]: result }));
       setFilings(f => f.map(x => x.id === filing.id ? { ...x, status: 'analyzed' } : x));
+      setSelected(s => s?.id === filing.id ? { ...s, status: 'analyzed' } : s);
     } catch (e) {
-      setAnalysisOutput(o => ({ ...o, [filing.id]: 'Analysis failed. Please retry.' }));
+      setAnalysisOutput(o => ({ ...o, [filing.id]: `Analysis unavailable: ${e.message || e}` }));
     }
     setAnalyzing(null);
   };
@@ -316,6 +363,13 @@ const ExtractTile = ({ label, value }) => (
 
 // Visual placeholder for PDF — stylized first page
 const PdfPreview = ({ filing }) => (
+  isBackendFiling(filing) && window.HelixAPI?.live ? (
+    <iframe
+      title={`${filing.ticker} filing PDF`}
+      src={window.HelixAPI.filingFileUrl(filing.id)}
+      style={{ width: '100%', minHeight: 480, border: 0, background: 'white' }}
+    />
+  ) : (
   <div style={{
     background: 'white', maxWidth: 380, margin: '0 auto', aspectRatio: '8.5/11',
     boxShadow: '0 8px 24px rgba(0,0,0,0.12)', padding: '40px 36px',
@@ -347,15 +401,17 @@ const PdfPreview = ({ filing }) => (
       <div>{filing.pages || '—'} pages · Filed electronically</div>
     </div>
     <div style={{ marginTop: 20, fontSize: 8, color: '#999', fontStyle: 'italic', textAlign: 'center' }}>
-      [Document preview · {filing.pages} pages total]
+      [Demo preview only · no source PDF is available offline]
     </div>
   </div>
+  )
 );
 
 const UploadDialog = ({ onClose, onUpload }) => {
   const [dragActive, setDragActive] = React.useState(false);
   const [file, setFile] = React.useState(null);
   const [meta, setMeta] = React.useState({ ticker: '', type: '10-K', period: '' });
+  const [uploading, setUploading] = React.useState(false);
   const inputRef = React.useRef(null);
 
   const handleFile = (f) => {
@@ -370,11 +426,38 @@ const UploadDialog = ({ onClose, onUpload }) => {
     if (m && !meta.ticker) setMeta(x => ({ ...x, ticker: m[1] }));
   };
 
-  const submit = () => {
+  const submit = async () => {
     if (!file || !meta.ticker || !meta.period) {
       window.toast && window.toast('Add a file, ticker, and period', { type: 'error' });
       return;
     }
+
+    // Live: actually POST to the backend so this filing gets a real DB id —
+    // a client-only id (below) can't be dispatched for OCR sync (the backend
+    // expects an int matching a real Filing row; a fake id 404s/422s there).
+    if (window.HelixAPI?.live) {
+      setUploading(true);
+      try {
+        const f = await window.HelixAPI.uploadFiling(file, meta);
+        onUpload({
+          id: f.id, name: f.filename, ticker: f.ticker, type: f.filing_type,
+          period: f.period, size: f.size_bytes,
+          uploaded: (f.uploaded_at || new Date().toISOString()).slice(0, 10),
+          status: f.status, pages: f.pages,
+          extracted: f.extracted && Object.keys(f.extracted).length ? f.extracted : {
+            revenue: '—', netIncome: '—', fcf: '—',
+            notes: 'Newly uploaded. Click "Analyze with AI" to extract findings.',
+          },
+        });
+      } catch (e) {
+        window.toast && window.toast(`Upload failed: ${e.message || e}`, { type: 'error' });
+      } finally {
+        setUploading(false);
+      }
+      return;
+    }
+
+    // Offline: client-only mock filing (id is not backend-dispatchable).
     const newFiling = {
       id: 'f_' + Date.now(),
       name: file.name,
@@ -459,10 +542,14 @@ const UploadDialog = ({ onClose, onUpload }) => {
           </div>
         </div>
         <div style={{ padding: '12px 20px', borderTop: '1px solid var(--border)', background: 'var(--bg-sunken)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Stored locally · auto-extract on upload</span>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+            {window.HelixAPI?.live ? 'Uploaded to backend · auto-extract on upload' : 'Stored locally · auto-extract on upload'}
+          </span>
           <div className="row">
-            <button className="btn" onClick={onClose}>Cancel</button>
-            <button className="btn btn-primary" onClick={submit} disabled={!file}>Add to library</button>
+            <button className="btn" onClick={onClose} disabled={uploading}>Cancel</button>
+            <button className="btn btn-primary" onClick={submit} disabled={!file || uploading}>
+              {uploading ? 'Uploading…' : 'Add to library'}
+            </button>
           </div>
         </div>
       </div>
@@ -487,12 +574,26 @@ const FormField = ({ label, children }) => (
 window.PageFilings = PageFilings;
 
 const openFilingInNewTab = (filing) => {
+  if (window.HelixAPI?.live && isBackendFiling(filing)) {
+    window.open(window.HelixAPI.filingFileUrl(filing.id), '_blank', 'noopener,noreferrer');
+    return;
+  }
   const w = window.open('', '_blank');
   if (!w) return;
-  const companyName = filing.ticker === 'NVDA' ? 'NVIDIA CORPORATION'
-    : filing.ticker === 'AAPL' ? 'APPLE INC.'
-    : filing.ticker.toUpperCase() + ' INC.';
-  const ext = filing.extracted || {};
+  const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[ch]);
+  filing = {
+    ...filing,
+    name: escapeHtml(filing.name),
+    ticker: escapeHtml(filing.ticker),
+    type: escapeHtml(filing.type),
+    period: escapeHtml(filing.period),
+  };
+  const companyName = `${filing.ticker} DEMO COMPANY`;
+  const ext = Object.fromEntries(
+    Object.entries(filing.extracted || {}).map(([key, value]) => [key, escapeHtml(value)]),
+  );
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${filing.name}</title>
 <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@400;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
 <style>

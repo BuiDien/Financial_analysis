@@ -126,6 +126,7 @@ const App = () => {
       time: n.published ? new Date(n.published * 1000).toTimeString().slice(0, 5) : '—',
       title: n.title, src: n.publisher || 'Wire',
       tags: (n.tickers || []).slice(0, 3), sentiment: 'neutral',
+      url: n.url, region: n.region, category: n.category,
     }));
   };
 
@@ -142,7 +143,7 @@ const App = () => {
         Promise.all(mockData.watchlist.map(w =>
           window.HelixAPI.quote(w.sym).then(q => ({ sym: w.sym, q })).catch(() => null))),
         window.HelixAPI.portfolio().catch(() => null),
-        window.HelixAPI._get('/api/news?limit=9').catch(() => null),
+        window.HelixAPI.news(9).catch(() => null),
       ]);
       if (cancelled) return;
       setData(prev => {
@@ -232,6 +233,7 @@ const App = () => {
       'go-statements': () => setPage('statements'),
       'go-screener':   () => setPage('screener'),
       'go-sync':       () => setPage('sync'),
+      'go-ocr-inbox':  () => setPage('ocr-inbox'),
       'go-news':       () => setPage('news'),
       'go-alerts':     () => setPage('alerts'),
     });
@@ -255,6 +257,7 @@ const App = () => {
     screener: PageScreener,
     statements: PageStatements,
     sync: PageSync,
+    'ocr-inbox': PageOCRInbox,
     news: PageNews,
     alerts: PageAlerts,
   }[page] || PageDashboard;
@@ -292,6 +295,7 @@ const App = () => {
           { id: 'screener', label: 'Screener', icon: 'screener' },
           { id: 'statements', label: 'Financial Statements', icon: 'portfolio' },
           { id: 'sync', label: 'Sync', icon: 'sync' },
+          { id: 'ocr-inbox', label: 'OCR Inbox', icon: 'search' },
           { id: 'news', label: 'News & Insights', icon: 'news' },
           { id: 'alerts', label: 'Alerts', icon: 'alerts' },
           { id: 'settings', label: 'Settings', icon: 'settings' },
