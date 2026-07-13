@@ -175,7 +175,7 @@ def render_inbox_page(item_id: int, page_number: int, db: Session = Depends(get_
 @router.post("/{item_id}/run")
 async def run_ocr(item_id: int, db: Session = Depends(get_db)):
     item = _get_item(db, item_id)
-    if item.status != "uploaded":
+    if item.status not in {"uploaded", "held"}:
         raise HTTPException(409, f"Cannot run OCR while item is {item.status}")
     attempt = OCRAttempt(inbox_item=item, status="queued", automatic=0)
     db.add(attempt)

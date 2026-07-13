@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -14,9 +15,13 @@ SPEC.loader.exec_module(ocr_worker)
 class _Socket:
     def __init__(self, frames):
         self.frames = iter(frames)
+        self.sent = []
 
     async def recv(self):
         return next(self.frames)
+
+    async def send(self, frame):
+        self.sent.append(json.loads(frame))
 
 
 @pytest.mark.anyio
@@ -66,3 +71,26 @@ def test_placeholder_result_includes_review_evidence(monkeypatch):
     assert row["page"] == 1
     assert row["bbox"] == {"x": 0.0, "y": 0.0, "width": 1.0, "height": 1.0}
     assert row["rawText"].startswith("STUB")
+
+
+@pytest.mark.anyio
+async def test_process_job_acknowledges_hold_without_returning_results(monkeypatch):
+    socket = _Socket([
+        b"%PDF-1.4",
+        json.dumps({"type": "job_end", "jobId": "job_1"}),
+        json.dumps({"type": "job_control", "jobId": "job_1", "action": "hold"}),
+    ])
+    monkeypatch.setattr(
+        ocr_worker, "run_ocr",
+        lambda *_args: (time.sleep(0.2), [{"code": "late"}])[1],
+    )
+
+    outcome = await ocr_worker.process_job(
+        socket, {"jobId": "job_1", "bytes": 8}, "http://local-vllm",
+    )
+
+    assert outcome == "hold"
+    assert socket.sent[-1] == {
+        "type": "control_ack", "jobId": "job_1", "action": "hold",
+    }
+    assert not any(frame["type"] == "result" for frame in socket.sent)

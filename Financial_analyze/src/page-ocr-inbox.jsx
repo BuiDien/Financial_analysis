@@ -3,6 +3,7 @@
 
 const OCR_STATUS = {
   uploaded: ['Uploaded', 'var(--text-muted)'], queued: ['Queued', '#B45309'],
+  held: ['Held', '#B45309'],
   processing: ['Processing', '#1D4ED8'], ready_for_review: ['Ready for review', '#7C3AED'],
   reviewing: ['Reviewing', '#7C3AED'], verified: ['Verified · needs labels', '#15803D'],
   ready_to_publish: ['Ready to publish', '#15803D'], published: ['Published', '#15803D'],
@@ -107,7 +108,7 @@ const PageOCRInbox = ({ setPage }) => {
               {item.review ? `${item.review.counts.resolved}/${item.review.counts.total} resolved` : 'Not reviewed'}
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, flexWrap: 'wrap' }}>
-              {['uploaded', 'failed'].includes(item.status) && <button className="btn btn-primary" onClick={() => act(item, item.status === 'failed' ? 'retry' : 'run')}>{item.status === 'failed' ? 'Retry' : 'Run OCR'}</button>}
+              {['uploaded', 'held', 'failed'].includes(item.status) && <button className="btn btn-primary" onClick={() => act(item, item.status === 'failed' ? 'retry' : 'run')}>{item.status === 'failed' ? 'Retry' : item.status === 'held' ? 'Resume OCR' : 'Run OCR'}</button>}
               {item.status === 'queued' && <button className="btn" onClick={() => act(item, 'cancel')}>Cancel</button>}
               {item.review && <button className="btn" onClick={() => setReviewItem(item)}><Icon name="eye" size={12} /> Review</button>}
               {!item.published_filing_id && !['queued', 'processing'].includes(item.status) && <button className="btn" onClick={() => act(item, 'delete')}>Delete</button>}

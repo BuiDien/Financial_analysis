@@ -1,7 +1,7 @@
 // Sync — distributed OCR coordinator.
 //
 // This machine (the Mac/Core) is the coordinator: it listens, and a worker
-// laptop dials IN with a pairing code, receives PDF filings to OCR, and returns
+// laptop dials IN with a pairing code, receives OCR Inbox PDFs, and returns
 // structured statement rows. This page is the control panel.
 //
 // LIVE mode (backend reachable): drives backend/app/routes/sync.py over
@@ -36,11 +36,6 @@ const WORKER_RESULT_ROWS = [
   { id: 'ocf',   section: 'cashflow', metric: 'Operating Cash Flow',curr: '64089',  prev: '28090', page: 53, confidence: 98 },
   { id: 'fcf',   section: 'cashflow', metric: 'Free Cash Flow',     curr: '60853',  prev: '27021', page: 53, confidence: 94 },
 ];
-
-const loadFilingsLib = () => {
-  try { return JSON.parse(localStorage.getItem('helix_filings_v1') || '[]'); }
-  catch { return []; }
-};
 
 // Module-level store — NOT React state. app.jsx swaps in a different top-level
 // component for every tab (`{home: PageHome, ..., sync: PageSync}[page]`), so
@@ -107,9 +102,10 @@ const SyncStore = (() => {
       const appliedMap = {};
       state.jobs.forEach(j => { if (j.applied) appliedMap[j.id] = true; });
       patch.jobs = (s.jobs || []).map(j => ({
-        id: j.id, filingId: j.filingId, filename: j.filename, ticker: j.ticker,
+        id: j.id, filingId: j.filingId, inboxItemId: j.inboxItemId, kind: j.kind,
+        filename: j.filename, ticker: j.ticker,
         worker: j.worker, status: j.status, progress: j.progress || 0,
-        rows: j.rows || null, applied: appliedMap[j.id] || false,
+        rows: j.rows || null, error: j.error, applied: appliedMap[j.id] || false,
       }));
       set(patch);
     } catch (e) { /* keep last state; backend may be momentarily unreachable */ }
@@ -158,21 +154,14 @@ const SyncStore = (() => {
     addLog('sys', 'Pairing code regenerated.');
   };
 
-  // ── Dispatch a filing to a worker for OCR ──────────────────
+  // ── Dispatch an OCR Inbox PDF to a worker ──────────────────
   const dispatch = async (filing) => {
     if (isLive()) {
-      // Filings uploaded before the backend was reachable (or in an older
-      // offline session) carry a client-only id like "f_<timestamp>" — the
-      // backend's dispatch route expects a real int Filing id and 422s on
-      // anything else. Catch it here with a clear message instead of a raw
-      // network error.
-      if (!/^\d+$/.test(String(filing.id))) {
-        addLog('error', `"${filing.name}" was never uploaded to the backend — re-add it from the Filings tab while live.`);
-        return;
-      }
       try {
-        const r = await window.HelixAPI.syncDispatch(filing.id);
-        addLog('out', `Dispatched "${filing.name}" → worker (job ${r.jobId || '?'})`);
+        const r = filing.status === 'failed'
+          ? await window.HelixAPI.ocrInboxRetry(filing.id)
+          : await window.HelixAPI.ocrInboxRun(filing.id);
+        addLog('out', `Dispatched "${filing.filename}" from OCR Inbox → worker${r.job_id ? ` (job ${r.job_id})` : ''}`);
       } catch (e) {
         addLog('error', `Dispatch failed: ${e.message || e}`);
       }
@@ -247,24 +236,54 @@ const SyncStore = (() => {
     return added;
   };
 
+  const controlJob = async (job, action) => {
+    if (!isLive()) { addLog('error', 'Job controls require the live backend.'); return false; }
+    try {
+      await window.HelixAPI.syncControlJob(job.id, action);
+      set({ jobs: state.jobs.map(x => x.id === job.id
+        ? { ...x, status: action === 'hold' ? 'holding' : 'stopping' }
+        : x) });
+      addLog('out', `${action === 'hold' ? 'Hold' : 'Stop'} sent to ${job.worker} for "${job.filename}"`);
+      return true;
+    } catch (e) {
+      addLog('error', `${action === 'hold' ? 'Hold' : 'Stop'} failed: ${e.message || e}`);
+      return false;
+    }
+  };
+
   const clearDone = () => set({ jobs: state.jobs.filter(x => x.status !== 'done') });
 
   return {
     subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
     getSnapshot: () => state,
-    isLive, getWsUrl, addLog, toggleListen, regenCode, dispatch, applyResult, confirmResult, clearDone,
+    isLive, getWsUrl, addLog, toggleListen, regenCode, dispatch, applyResult, confirmResult, controlJob, clearDone,
   };
 })();
 
 const PageSync = ({ setPage }) => {
   const { listening, pairCode, workers, jobs, log } = React.useSyncExternalStore(SyncStore.subscribe, SyncStore.getSnapshot);
-  const [filings] = React.useState(loadFilingsLib);
+  const [inboxItems, setInboxItems] = React.useState([]);
+  const [inboxLoading, setInboxLoading] = React.useState(true);
   const [verifyJob, setVerifyJob] = React.useState(null);
+
+  const refreshInbox = React.useCallback(async () => {
+    if (!window.HelixAPI?.live) { setInboxLoading(false); return; }
+    try { setInboxItems(await window.HelixAPI.ocrInbox()); }
+    catch (e) { SyncStore.addLog('error', `Could not load OCR Inbox: ${e.message || e}`); }
+    finally { setInboxLoading(false); }
+  }, []);
+
+  React.useEffect(() => {
+    refreshInbox();
+    const timer = setInterval(refreshInbox, 1800);
+    return () => clearInterval(timer);
+  }, [refreshInbox]);
 
   const wsUrl = SyncStore.getWsUrl();
   const toggleListen = SyncStore.toggleListen;
   const regenCode = SyncStore.regenCode;
   const dispatch = SyncStore.dispatch;
+  const controlJob = SyncStore.controlJob;
   const clearDone = SyncStore.clearDone;
 
   const confirmResult = (job) => {
@@ -280,7 +299,7 @@ const PageSync = ({ setPage }) => {
       <div className="page-header">
         <div>
           <h1 className="page-title">Sync.</h1>
-          <p className="page-sub">Hand off PDF filings to a worker laptop for OCR — parsed statement data comes back automatically</p>
+          <p className="page-sub">Hand off OCR Inbox PDFs to a worker laptop — parsed statement data comes back for review automatically</p>
         </div>
         <div className="row">
           <button className={`btn ${listening ? '' : 'btn-primary'}`} onClick={toggleListen}>
@@ -334,31 +353,38 @@ const PageSync = ({ setPage }) => {
       </div>
 
       <div className="grid-2" style={{ marginBottom: 20 }}>
-        {/* Dispatch filings */}
+        {/* Dispatch OCR Inbox PDFs */}
         <div className="card">
           <div className="card-header">
             <h3 className="card-title">Dispatch a Filing for OCR</h3>
-            <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{filings.length} in library</span>
+            <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{inboxItems.length} in OCR Inbox</span>
           </div>
           <div className="card-body flush">
-            {filings.length === 0 ? (
+            {inboxLoading ? (
+              <div style={{ padding: 28, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Loading OCR Inbox…</div>
+            ) : inboxItems.length === 0 ? (
               <div style={{ padding: 28, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
-                No filings yet. Upload PDFs in Financial Statements → Filings, then dispatch them here.
-                <div style={{ marginTop: 12 }}><button className="btn" onClick={() => setPage('statements')}>Go to Filings</button></div>
+                No PDFs in OCR Inbox yet. Upload a PDF there, then dispatch it here.
+                <div style={{ marginTop: 12 }}><button className="btn" onClick={() => setPage('ocr-inbox')}>Go to OCR Inbox</button></div>
               </div>
-            ) : filings.map(f => {
-              const pending = jobs.find(j => j.filingId === f.id && j.status !== 'done');
+            ) : inboxItems.map(item => {
+              const pending = jobs.find(j => j.inboxItemId === item.id && !['done', 'failed', 'held', 'stopped'].includes(j.status));
+              const canDispatch = ['uploaded', 'held', 'failed'].includes(item.status);
               return (
-                <div key={f.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 12, padding: '12px 16px', borderBottom: '1px solid var(--border)', alignItems: 'center' }}>
+                <div key={item.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 12, padding: '12px 16px', borderBottom: '1px solid var(--border)', alignItems: 'center' }}>
                   <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</div>
-                    <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{f.ticker} · {f.type} · {f.period}</div>
+                    <div style={{ fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.filename}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-subtle)', textTransform: 'capitalize' }}>{item.pages} pages · {item.status.replaceAll('_', ' ')}</div>
                   </div>
-                  <button className="btn" disabled={!listening || !workers.length || !!pending}
-                    onClick={() => dispatch(f)}
-                    style={(!listening || !workers.length || !!pending) ? { opacity: 0.5 } : undefined}>
-                    {pending ? 'In queue…' : <><Icon name="sync" size={12} /> Send to worker</>}
-                  </button>
+                  {canDispatch ? (
+                    <button className="btn" disabled={!listening || !workers.length || !!pending}
+                      onClick={async () => { await dispatch(item); await refreshInbox(); }}
+                      style={(!listening || !workers.length || !!pending) ? { opacity: 0.5 } : undefined}>
+                      {pending ? 'In queue…' : <><Icon name="sync" size={12} /> {item.status === 'failed' ? 'Retry OCR' : item.status === 'held' ? 'Resume OCR' : 'Send to worker'}</>}
+                    </button>
+                  ) : item.review ? (
+                    <button className="btn" onClick={() => setPage('ocr-inbox')}>Open in Inbox</button>
+                  ) : <span style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'capitalize' }}>{item.status.replaceAll('_', ' ')}</span>}
                 </div>
               );
             })}
@@ -412,22 +438,26 @@ const PageSync = ({ setPage }) => {
                   <th>Worker</th>
                   <th style={{ width: 200 }}>Status</th>
                   <th className="right">Metrics</th>
-                  <th className="right" style={{ width: 120 }}></th>
+                  <th className="right" style={{ width: 190 }}></th>
                 </tr>
               </thead>
               <tbody>
                 {jobs.map(j => (
                   <tr key={j.id} style={{ cursor: 'default' }}>
                     <td>
-                      <span style={{ fontSize: 13, fontWeight: 500 }}>{j.ticker}</span>
+                      <span style={{ fontSize: 13, fontWeight: 500 }}>{j.ticker || (j.kind === 'inbox' ? 'OCR Inbox' : '—')}</span>
                       <span style={{ fontSize: 11, color: 'var(--text-subtle)', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>{j.filename}</span>
                     </td>
                     <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{j.worker}</td>
                     <td>
                       {j.status === 'done' ? (
                         <span className="pill pill-pos">✓ Returned</span>
-                      ) : j.status === 'error' ? (
+                      ) : ['error', 'failed'].includes(j.status) ? (
                         <span className="pill pill-neg">Failed</span>
+                      ) : j.status === 'held' ? (
+                        <span className="pill">Held</span>
+                      ) : j.status === 'stopped' ? (
+                        <span className="pill pill-neg">Stopped</span>
                       ) : (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           <div style={{ flex: 1, height: 6, background: 'var(--bg-sunken)', borderRadius: 3, overflow: 'hidden', minWidth: 80 }}>
@@ -439,8 +469,26 @@ const PageSync = ({ setPage }) => {
                     </td>
                     <td className="right num" style={{ color: 'var(--text-muted)' }}>{j.rows ? j.rows.length : '—'}</td>
                     <td className="right">
+                      {['sent', 'parsing'].includes(j.status) && j.kind === 'inbox' && (
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
+                          <button className="btn" onClick={() => controlJob(j, 'hold')}>Hold</button>
+                          <button className="btn" onClick={async () => {
+                            const confirmed = await window.askConfirm({ title: 'Stop OCR job', message: `Stop processing "${j.filename}"? You can send it again later.`, confirmText: 'Stop', danger: true });
+                            if (confirmed) controlJob(j, 'stop');
+                          }}>Stop</button>
+                        </div>
+                      )}
+                      {['holding', 'stopping'].includes(j.status) && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Sending command…</span>}
+                      {j.status === 'held' && j.kind === 'inbox' && (
+                        <button className="btn btn-primary" onClick={async () => {
+                          const item = inboxItems.find(x => x.id === j.inboxItemId);
+                          if (item) { await dispatch(item); await refreshInbox(); }
+                        }}>Resume</button>
+                      )}
                       {j.status === 'done' && (
-                        j.applied
+                        j.kind === 'inbox'
+                          ? <button className="btn btn-primary" onClick={() => setPage('ocr-inbox')}>Review in Inbox</button>
+                          : j.applied
                           ? <span style={{ fontSize: 11, color: 'var(--pos)', fontWeight: 600 }}>Applied ✓</span>
                           : <button className="btn btn-primary" onClick={() => setVerifyJob(j)}>Verify data</button>
                       )}
@@ -466,8 +514,9 @@ const PageSync = ({ setPage }) => {
                 </div>
               </li>
               <li>The worker appears under <strong>Connected Workers</strong>.</li>
-              <li>Click <strong>Send to worker</strong> on any filing — it OCR-parses locally and returns statement data.</li>
-              <li>Click <strong>Apply data</strong> to merge results into that filing's tracker.</li>
+              <li>Upload PDFs in <strong>OCR Inbox</strong>; the same documents appear in the dispatch list here.</li>
+              <li>Click <strong>Send to worker</strong> on an Inbox PDF — it OCR-parses locally and returns statement data.</li>
+              <li>When processing finishes, open the result in <strong>OCR Inbox</strong> to review every extracted row.</li>
             </ol>
           </div>
         </div>

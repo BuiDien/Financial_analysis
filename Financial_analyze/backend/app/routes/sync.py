@@ -38,7 +38,9 @@ import secrets
 import socket
 import time
 from datetime import datetime, timezone
+from typing import Literal
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Depends
+from pydantic import BaseModel
 from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
@@ -325,6 +327,29 @@ async def ocr_worker(ws: WebSocket):
                 if job:
                     await dispatch_next_queued(preferred_worker_id=worker_id,
                                                bind=job.get("db_bind"))
+            elif mtype == "control_ack":
+                job = coordinator.jobs.get(msg.get("jobId"))
+                action = msg.get("action")
+                expected = "holding" if action == "hold" else "stopping"
+                if not job or job.get("status") != expected:
+                    continue
+                if job.get("kind") == "inbox":
+                    with Session(bind=job["db_bind"]) as db:
+                        attempt = db.query(OCRAttempt).filter_by(id=job["attemptId"]).first()
+                        if attempt:
+                            attempt.status = "held" if action == "hold" else "canceled"
+                            attempt.finished_at = datetime.now(timezone.utc)
+                            attempt.inbox_item.status = "held" if action == "hold" else "uploaded"
+                            attempt.inbox_item.error = None
+                            if action == "stop":
+                                attempt.progress = 0
+                            db.commit()
+                job["status"] = "held" if action == "hold" else "stopped"
+                w = coordinator.workers.get(worker_id)
+                if w:
+                    w["status"] = "idle"
+                await dispatch_next_queued(preferred_worker_id=worker_id,
+                                           bind=job.get("db_bind"))
     except WebSocketDisconnect as e:
         logger.info("OCR worker %s disconnected (code=%s)", peer, e.code)
     except Exception:
@@ -348,6 +373,10 @@ async def ocr_worker(ws: WebSocket):
 
 # ── HTTP control surface for the UI ────────────────────────────
 
+
+class JobControl(BaseModel):
+    action: Literal["hold", "stop"]
+
 @router.get("/api/sync/status")
 def sync_status():
     return {
@@ -362,6 +391,27 @@ def sync_status():
 def regenerate_code():
     coordinator.pair_code = _gen_code()
     return {"pair_code": coordinator.pair_code}
+
+
+@router.post("/api/sync/jobs/{job_id}/control")
+async def control_job(job_id: str, control: JobControl):
+    job = coordinator.jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job.get("status") not in {"sent", "parsing"}:
+        raise HTTPException(409, f"Cannot {control.action} a job while it is {job.get('status')}")
+    worker = coordinator.workers.get(job.get("workerId"))
+    if not worker:
+        raise HTTPException(409, "Worker is no longer connected")
+    job["status"] = "holding" if control.action == "hold" else "stopping"
+    try:
+        await worker["ws"].send_json({
+            "type": "job_control", "jobId": job_id, "action": control.action,
+        })
+    except Exception as exc:
+        job["status"] = "parsing"
+        raise HTTPException(500, "Could not send control command to worker") from exc
+    return {"jobId": job_id, "status": job["status"], "action": control.action}
 
 
 @router.post("/api/sync/dispatch/{filing_id}")

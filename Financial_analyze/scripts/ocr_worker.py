@@ -21,6 +21,7 @@ The coordinator sends a JSON job header, binary PDF chunks, then a JSON
 import argparse
 import asyncio
 import json
+from contextlib import suppress
 
 import websockets
 
@@ -91,6 +92,47 @@ def run_ocr(pdf_bytes: bytes, vllm_url: str) -> list[dict]:
     ]
 
 
+async def process_job(ws, job: dict, vllm_url: str) -> str:
+    """Run one job while remaining responsive to hold/stop commands."""
+    job_id = job["jobId"]
+    await ws.send(json.dumps({"type": "progress", "jobId": job_id, "pct": 10}))
+    pdf_bytes = await receive_pdf(ws, job)
+    ocr_task = asyncio.create_task(asyncio.to_thread(run_ocr, pdf_bytes, vllm_url))
+    control_task = asyncio.create_task(ws.recv())
+    try:
+        done, _ = await asyncio.wait(
+            {ocr_task, control_task}, return_when=asyncio.FIRST_COMPLETED,
+        )
+        if control_task in done:
+            raw = control_task.result()
+            message = json.loads(raw) if isinstance(raw, str) else {}
+            if (
+                message.get("type") == "job_control"
+                and message.get("jobId") == job_id
+                and message.get("action") in {"hold", "stop"}
+            ):
+                ocr_task.cancel()
+                action = message["action"]
+                await ws.send(json.dumps({
+                    "type": "control_ack", "jobId": job_id, "action": action,
+                }))
+                return action
+            raise RuntimeError(f"Unexpected frame while processing job {job_id}")
+
+        control_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await control_task
+        rows = ocr_task.result()
+        await ws.send(json.dumps({"type": "progress", "jobId": job_id, "pct": 90}))
+        await ws.send(json.dumps({
+            "type": "result", "jobId": job_id, "schemaVersion": 1, "rows": rows,
+        }))
+        return "done"
+    finally:
+        if not control_task.done():
+            control_task.cancel()
+
+
 async def run_worker(connect_url: str, code: str, name: str, vllm_url: str):
     print(f"Connecting to {connect_url} ...")
     async with websockets.connect(connect_url, max_size=None) as ws:
@@ -127,18 +169,12 @@ async def run_worker(connect_url: str, code: str, name: str, vllm_url: str):
             filename = msg.get("filename", "?")
             print(f"Job {job_id}: {filename}")
 
-            await ws.send(json.dumps({"type": "progress", "jobId": job_id, "pct": 10}))
             try:
-                pdf_bytes = await receive_pdf(ws, msg)
-                rows = run_ocr(pdf_bytes, vllm_url)
+                outcome = await process_job(ws, msg, vllm_url)
             except Exception as e:
                 await ws.send(json.dumps({"type": "error", "jobId": job_id, "error": str(e)}))
                 continue
-            await ws.send(json.dumps({"type": "progress", "jobId": job_id, "pct": 90}))
-            await ws.send(json.dumps({
-                "type": "result", "jobId": job_id, "schemaVersion": 1, "rows": rows,
-            }))
-            print(f"Job {job_id}: done ({len(rows)} rows)")
+            print(f"Job {job_id}: {outcome}")
 
 
 def main():

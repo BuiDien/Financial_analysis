@@ -18,6 +18,22 @@ const StatTile = ({ label, value, delta, suffix = '', spark }) => (
   </div>
 );
 
+const dashboardNumber = (value, digits = 2) => {
+  const number = Number(value);
+  return Number.isFinite(number)
+    ? number.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })
+    : '—';
+};
+
+const dashboardDate = () => new Intl.DateTimeFormat(undefined, {
+  weekday: 'long', month: 'long', day: 'numeric',
+}).format(new Date());
+
+const dashboardTime = () => new Intl.DateTimeFormat(undefined, {
+  hour: '2-digit', minute: '2-digit', second: '2-digit',
+  timeZone: 'America/New_York', timeZoneName: 'short',
+}).format(new Date());
+
 const WatchlistTable = ({ rows, onSelect, onRemove }) => (
   <table className="table">
     <thead>
@@ -75,6 +91,15 @@ const AddSymbol = ({ onAdd, existing }) => {
   const commit = (sym) => {
     const s = (sym || q).trim().toUpperCase();
     if (!s) return;
+    if (!SYMBOL_CATALOG[s]) {
+      window.toast && window.toast(`Ticker ${s} is not available in the catalog`, { type: 'error' });
+      return;
+    }
+    if (existing.includes(s)) {
+      window.toast && window.toast(`${s} is already in this watchlist`, { type: 'info' });
+      setQ(''); setOpen(false);
+      return;
+    }
     onAdd(s);
     setQ(''); setOpen(false);
   };
@@ -213,19 +238,34 @@ const MoversList = ({ rows, type }) => (
 );
 
 const PageDashboard = ({ data, setPage, setActiveAsset }) => {
+  const store = useWatchlists();
+  const activeWatchlist = store.getActive();
+  const watchlistRows = activeWatchlist.symbols.map(sym => quoteFor(sym, data));
+  const [updatedAt, setUpdatedAt] = React.useState(dashboardTime);
+
+  React.useEffect(() => setUpdatedAt(dashboardTime()), [data]);
+
   const handleSelect = (sym) => {
     setActiveAsset(sym);
     setPage('detail');
   };
 
-  const gainers = [...data.watchlist].sort((a, b) => b.chg - a.chg).slice(0, 5);
-  const losers = [...data.watchlist].sort((a, b) => a.chg - b.chg).slice(0, 5);
+  const gainers = [...watchlistRows].sort((a, b) => b.chg - a.chg).slice(0, 5);
+  const losers = [...watchlistRows].sort((a, b) => a.chg - b.chg).slice(0, 5);
+  const indexFor = (symbol) => data.indices.find(index => index.sym === symbol) || {};
+  const sp500 = indexFor('S&P 500');
+  const nasdaq = indexFor('NASDAQ');
+  const vix = indexFor('VIX');
+  const tenYear = indexFor('10Y YIELD');
+  const gold = indexFor('GOLD');
+  const oil = indexFor('OIL');
 
   const exportMarketCSV = () => {
     const header = ['Ticker', 'Name', 'Price', 'Change %', 'Volume', 'Market Cap'];
     const rows = [header.join(',')];
-    data.watchlist.forEach(w => {
-      rows.push([w.sym, `"${w.name}"`, w.price, w.chg, `"${w.vol}"`, `"${w.mcap}"`].join(','));
+    watchlistRows.forEach(w => {
+      const csvName = String(w.name || '').replaceAll('"', '""');
+      rows.push([w.sym, `"${csvName}"`, w.price, w.chg, `"${w.vol || ''}"`, `"${w.mcap || ''}"`].join(','));
     });
     const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
@@ -240,20 +280,20 @@ const PageDashboard = ({ data, setPage, setActiveAsset }) => {
       <div className="page-header">
         <div>
           <h1 className="page-title">Markets, at a glance.</h1>
-          <p className="page-sub">Tuesday, May 4 · Equities open · Fed minutes due Wednesday</p>
+          <p className="page-sub">{dashboardDate()} · Market overview</p>
         </div>
         <div className="row">
-          <span style={{ fontSize: 11, color: 'var(--text-subtle)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Last update 09:42:18 ET</span>
+          <span style={{ fontSize: 11, color: 'var(--text-subtle)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Last update {updatedAt}</span>
           <button className="btn" onClick={exportMarketCSV}><Icon name="download" size={12} /> Export</button>
         </div>
       </div>
 
       {/* Stat strip */}
       <div className="stat-grid" style={{ marginBottom: 20 }}>
-        <StatTile label="S&P 500" value="5,847.32" delta={0.42} spark={data.indices[0].spark} />
-        <StatTile label="NASDAQ" value="18,634.21" delta={0.89} spark={data.indices[1].spark} />
-        <StatTile label="VIX" value="14.23" delta={-3.21} spark={data.indices[4].spark} />
-        <StatTile label="10Y Treasury" value="4.21" suffix="%" delta={0.04} spark={data.indices[5].spark} />
+        <StatTile label="S&P 500" value={dashboardNumber(sp500.val)} delta={sp500.chg} spark={sp500.spark} />
+        <StatTile label="NASDAQ" value={dashboardNumber(nasdaq.val)} delta={nasdaq.chg} spark={nasdaq.spark} />
+        <StatTile label="VIX" value={dashboardNumber(vix.val)} delta={vix.chg} spark={vix.spark} />
+        <StatTile label="10Y Treasury" value={dashboardNumber(tenYear.val)} suffix={tenYear.val == null ? '' : '%'} delta={tenYear.chg} spark={tenYear.spark} />
       </div>
 
       {/* Main grid */}
@@ -266,7 +306,7 @@ const PageDashboard = ({ data, setPage, setActiveAsset }) => {
           <div className="card">
             <div className="card-header">
               <h3 className="card-title">Top Gainers</h3>
-              <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>S&P 500</span>
+              <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{activeWatchlist.name}</span>
             </div>
             <div className="card-body" style={{ padding: '4px 16px' }}>
               <MoversList rows={gainers} />
@@ -275,7 +315,7 @@ const PageDashboard = ({ data, setPage, setActiveAsset }) => {
           <div className="card">
             <div className="card-header">
               <h3 className="card-title">Top Losers</h3>
-              <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>S&P 500</span>
+              <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{activeWatchlist.name}</span>
             </div>
             <div className="card-body" style={{ padding: '4px 16px' }}>
               <MoversList rows={losers} />
@@ -334,13 +374,13 @@ const PageDashboard = ({ data, setPage, setActiveAsset }) => {
       <div className="card">
         <div className="card-header">
           <h3 className="card-title">Macro Watch</h3>
-          <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>Key indicators · Last 30 days</span>
+          <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>Key indicators · Market snapshot</span>
         </div>
         <div className="card-body">
           <div className="grid-3">
-            <MacroIndicator name="US 10-Year Yield" value="4.21%" delta={0.04} spark={[4.10,4.12,4.15,4.18,4.16,4.19,4.21]} />
-            <MacroIndicator name="DXY (Dollar Index)" value="106.43" delta={-0.18} spark={[107,106.9,106.7,106.6,106.5,106.4,106.43]} />
-            <MacroIndicator name="Crude Oil (WTI)" value="$71.24" delta={-1.43} spark={[73,72.8,72.5,72,71.8,71.5,71.24]} />
+            <MacroIndicator name="US 10-Year Yield" value={`${dashboardNumber(tenYear.val)}${tenYear.val == null ? '' : '%'}`} delta={tenYear.chg} spark={tenYear.spark} />
+            <MacroIndicator name="Gold" value={gold.val == null ? '—' : `$${dashboardNumber(gold.val)}`} delta={gold.chg} spark={gold.spark} />
+            <MacroIndicator name="Crude Oil (WTI)" value={oil.val == null ? '—' : `$${dashboardNumber(oil.val)}`} delta={oil.chg} spark={oil.spark} />
           </div>
         </div>
       </div>
@@ -354,7 +394,7 @@ const MacroIndicator = ({ name, value, delta, spark }) => (
     <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginTop: 6 }}>
       <div>
         <div className="num" style={{ fontSize: 20, fontWeight: 600 }}>{value}</div>
-        <ChangeText value={delta} />
+        {delta !== undefined && <ChangeText value={delta} />}
       </div>
       <Sparkline data={spark} width={100} height={36} fill />
     </div>

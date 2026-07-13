@@ -182,6 +182,36 @@ def test_inbox_dispatch_review_and_publish(client):
         assert filing["status"] == "verified"
 
 
+@pytest.mark.parametrize(("action", "expected_status"), [
+    ("hold", "held"),
+    ("stop", "uploaded"),
+])
+def test_active_inbox_job_can_be_controlled_and_run_again(client, action, expected_status):
+    item = upload(client).json()["items"][0]
+    with client.websocket_connect("/ws/ocr") as ws:
+        pair(ws)
+        queued = client.post(f"/api/ocr-inbox/{item['id']}/run")
+        job, _ = receive_job(ws)
+
+        controlled = client.post(
+            f"/api/sync/jobs/{job['jobId']}/control", json={"action": action},
+        )
+        assert controlled.status_code == 200
+        assert ws.receive_json() == {
+            "type": "job_control", "jobId": job["jobId"], "action": action,
+        }
+        ws.send_json({"type": "control_ack", "jobId": job["jobId"], "action": action})
+        for _ in range(50):
+            current = client.get(f"/api/ocr-inbox/{item['id']}").json()
+            if current["status"] == expected_status:
+                break
+        assert current["status"] == expected_status
+
+    resumed = client.post(f"/api/ocr-inbox/{item['id']}/run")
+    assert resumed.status_code == 200
+    assert resumed.json()["item"]["status"] == "queued"
+
+
 def test_review_reject_requires_reason_and_revision_conflicts(client):
     item = upload(client).json()["items"][0]
     with client.websocket_connect("/ws/ocr") as ws:

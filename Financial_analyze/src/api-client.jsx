@@ -120,6 +120,7 @@ const HelixAPI = {
   syncStatus()                     { return this._get('/api/sync/status'); },
   syncRegenCode()                  { return this._send('POST', '/api/sync/pair-code'); },
   syncDispatch(filingId)           { return this._send('POST', `/api/sync/dispatch/${filingId}`); },
+  syncControlJob(jobId, action)    { return this._send('POST', `/api/sync/jobs/${jobId}/control`, { action }); },
   syncResult(jobId)                { return this._get(`/api/sync/result/${jobId}`); },
   syncWsUrl()                      { return this.base.replace(/^http/, 'ws') + '/ws/ocr'; },
 
