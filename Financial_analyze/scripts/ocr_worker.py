@@ -18,12 +18,66 @@ to MAX_PAIR_ATTEMPTS server-side) rather than reconnecting from scratch.
 The coordinator sends a JSON job header, binary PDF chunks, then a JSON
 ``job_end`` frame. The worker verifies the announced byte count before OCR.
 """
+
 import argparse
 import asyncio
 import json
 from contextlib import suppress
 
 import websockets
+
+
+OCR_PROTOCOL_VERSION = 1
+OCR_RESULT_SCHEMA_VERSION = 1
+OCR_CAPABILITIES = ["bbox"]
+
+
+class ResultRejected(RuntimeError):
+    """The coordinator already recorded and acknowledged a terminal rejection."""
+
+
+class InvalidWorkerResult(RuntimeError):
+    """The local OCR adapter produced a deterministic contract violation."""
+
+
+def validate_result_rows(rows: list[dict]) -> None:
+    """Fail locally before uploading rows the coordinator cannot review."""
+    if not isinstance(rows, list) or not rows:
+        raise InvalidWorkerResult("OCR result must contain at least one row")
+    for index, row in enumerate(rows):
+        prefix = f"rows[{index}]"
+        if not row.get("code") and not row.get("id"):
+            raise InvalidWorkerResult(f"{prefix} requires code or id")
+        if not row.get("label") and not row.get("metric"):
+            raise InvalidWorkerResult(f"{prefix} requires label or metric")
+        if not isinstance(row.get("curr"), str):
+            raise InvalidWorkerResult(f"{prefix}.curr must be a string")
+        if not isinstance(row.get("page"), int) or row["page"] < 1:
+            raise InvalidWorkerResult(f"{prefix}.page must be a positive integer")
+        confidence = row.get("confidence")
+        if not isinstance(confidence, int) or not 0 <= confidence <= 100:
+            raise InvalidWorkerResult(f"{prefix}.confidence must be an integer 0-100")
+        bbox = row.get("bbox")
+        if not isinstance(bbox, dict):
+            raise InvalidWorkerResult(f"{prefix}.bbox is required")
+        try:
+            x, y = float(bbox["x"]), float(bbox["y"])
+            width, height = float(bbox["width"]), float(bbox["height"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise InvalidWorkerResult(
+                f"{prefix}.bbox requires numeric x, y, width, and height"
+            ) from exc
+        if (
+            x < 0
+            or y < 0
+            or width <= 0
+            or height <= 0
+            or x + width > 1.000001
+            or y + height > 1.000001
+        ):
+            raise InvalidWorkerResult(
+                f"{prefix}.bbox must be a positive normalized rectangle inside the page"
+            )
 
 
 async def receive_pdf(ws, job: dict) -> bytes:
@@ -82,13 +136,20 @@ def run_ocr(pdf_bytes: bytes, vllm_url: str) -> list[dict]:
         raise RuntimeError(f"vLLM server unreachable at {vllm_url}: {e}") from e
 
     return [
-        {"code": "270", "section": "balance", "metric": "STUB — wire up PaddleOCR-VL parsing",
-         "curr": "0", "prev": "0", "page": 1, "confidence": 0,
-         # Normalized displayed-page coordinates. Real extraction must return
-         # the actual source row location; this full-page placeholder keeps the
-         # review transport exercisable without pretending it is real OCR.
-         "bbox": {"x": 0.0, "y": 0.0, "width": 1.0, "height": 1.0},
-         "rawText": "STUB — no OCR text extracted"},
+        {
+            "code": "270",
+            "section": "balance",
+            "metric": "STUB — wire up PaddleOCR-VL parsing",
+            "curr": "0",
+            "prev": "0",
+            "page": 1,
+            "confidence": 0,
+            # Normalized displayed-page coordinates. Real extraction must return
+            # the actual source row location; this full-page placeholder keeps the
+            # review transport exercisable without pretending it is real OCR.
+            "bbox": {"x": 0.0, "y": 0.0, "width": 1.0, "height": 1.0},
+            "rawText": "STUB — no OCR text extracted",
+        },
     ]
 
 
@@ -101,7 +162,8 @@ async def process_job(ws, job: dict, vllm_url: str) -> str:
     control_task = asyncio.create_task(ws.recv())
     try:
         done, _ = await asyncio.wait(
-            {ocr_task, control_task}, return_when=asyncio.FIRST_COMPLETED,
+            {ocr_task, control_task},
+            return_when=asyncio.FIRST_COMPLETED,
         )
         if control_task in done:
             raw = control_task.result()
@@ -113,9 +175,15 @@ async def process_job(ws, job: dict, vllm_url: str) -> str:
             ):
                 ocr_task.cancel()
                 action = message["action"]
-                await ws.send(json.dumps({
-                    "type": "control_ack", "jobId": job_id, "action": action,
-                }))
+                await ws.send(
+                    json.dumps(
+                        {
+                            "type": "control_ack",
+                            "jobId": job_id,
+                            "action": action,
+                        }
+                    )
+                )
                 return action
             raise RuntimeError(f"Unexpected frame while processing job {job_id}")
 
@@ -123,11 +191,34 @@ async def process_job(ws, job: dict, vllm_url: str) -> str:
         with suppress(asyncio.CancelledError):
             await control_task
         rows = ocr_task.result()
+        validate_result_rows(rows)
         await ws.send(json.dumps({"type": "progress", "jobId": job_id, "pct": 90}))
-        await ws.send(json.dumps({
-            "type": "result", "jobId": job_id, "schemaVersion": 1, "rows": rows,
-        }))
-        return "done"
+        await ws.send(
+            json.dumps(
+                {
+                    "type": "result",
+                    "jobId": job_id,
+                    "schemaVersion": OCR_RESULT_SCHEMA_VERSION,
+                    "rows": rows,
+                }
+            )
+        )
+        raw_ack = await asyncio.wait_for(ws.recv(), timeout=30)
+        ack = json.loads(raw_ack) if isinstance(raw_ack, str) else {}
+        if ack.get("jobId") != job_id:
+            raise RuntimeError(f"Unexpected result acknowledgment for {job_id}: {ack}")
+        if ack.get("type") == "result_rejected":
+            raise ResultRejected(
+                f"Coordinator rejected result: {ack.get('error', 'unknown error')}"
+            )
+        if ack.get("type") != "result_ack":
+            raise RuntimeError(
+                f"Coordinator did not acknowledge result {job_id}: {ack}"
+            )
+        detail = f"done — {ack.get('rowCount', len(rows))} rows accepted"
+        if ack.get("reviewId") is not None:
+            detail += f", review {ack['reviewId']} ready"
+        return detail
     finally:
         if not control_task.done():
             control_task.cancel()
@@ -136,7 +227,17 @@ async def process_job(ws, job: dict, vllm_url: str) -> str:
 async def run_worker(connect_url: str, code: str, name: str, vllm_url: str):
     print(f"Connecting to {connect_url} ...")
     async with websockets.connect(connect_url, max_size=None) as ws:
-        await ws.send(json.dumps({"type": "hello", "name": name}))
+        await ws.send(
+            json.dumps(
+                {
+                    "type": "hello",
+                    "name": name,
+                    "protocolVersion": OCR_PROTOCOL_VERSION,
+                    "resultSchemaVersions": [OCR_RESULT_SCHEMA_VERSION],
+                    "capabilities": OCR_CAPABILITIES,
+                }
+            )
+        )
         pair_required = json.loads(await ws.recv())
         if pair_required.get("type") != "pair_required":
             print(f"Unexpected response to hello: {pair_required}")
@@ -150,11 +251,19 @@ async def run_worker(connect_url: str, code: str, name: str, vllm_url: str):
             if attempts_left <= 0:
                 print(f"Pairing failed: {welcome}")
                 return
-            code = input(f"Wrong code ({attempts_left} attempts left). Re-enter code: ").strip()
+            code = input(
+                f"Wrong code ({attempts_left} attempts left). Re-enter code: "
+            ).strip()
             await ws.send(json.dumps({"type": "pair", "pairId": pair_id, "code": code}))
             welcome = json.loads(await ws.recv())
         if welcome.get("type") != "welcome":
             print(f"Pairing failed: {welcome}")
+            return
+        if (
+            welcome.get("protocolVersion") != OCR_PROTOCOL_VERSION
+            or welcome.get("resultSchemaVersion") != OCR_RESULT_SCHEMA_VERSION
+        ):
+            print(f"Coordinator contract is incompatible: {welcome}")
             return
         print(f"Paired. workerId={welcome.get('workerId')}. Waiting for jobs...")
 
@@ -171,8 +280,26 @@ async def run_worker(connect_url: str, code: str, name: str, vllm_url: str):
 
             try:
                 outcome = await process_job(ws, msg, vllm_url)
+            except ResultRejected as e:
+                print(f"Job {job_id}: failed — {e}")
+                continue
             except Exception as e:
-                await ws.send(json.dumps({"type": "error", "jobId": job_id, "error": str(e)}))
+                retryable = not isinstance(e, InvalidWorkerResult)
+                await ws.send(
+                    json.dumps(
+                        {
+                            "type": "error",
+                            "jobId": job_id,
+                            "error": str(e),
+                            "errorCode": (
+                                "invalid_result"
+                                if not retryable
+                                else "worker_job_failed"
+                            ),
+                            "retryable": retryable,
+                        }
+                    )
+                )
                 continue
             print(f"Job {job_id}: {outcome}")
 
@@ -180,7 +307,9 @@ async def run_worker(connect_url: str, code: str, name: str, vllm_url: str):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--connect", required=True, help="ws://<mac-host>:8000/ws/ocr")
-    p.add_argument("--code", required=True, help="pairing code shown on the Mac's Sync page")
+    p.add_argument(
+        "--code", required=True, help="pairing code shown on the Mac's Sync page"
+    )
     p.add_argument("--name", default="OCR Worker")
     p.add_argument("--vllm-url", default="http://localhost:8001")
     args = p.parse_args()
