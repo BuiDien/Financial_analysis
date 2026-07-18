@@ -8,17 +8,40 @@ from ..models.ocr import OCRAttempt, OCRAuditEvent, OCRInboxItem, OCRReviewJob, 
 from ..ocr_contract import MAX_RESULT_BYTES, OCRWorkerResult
 
 
+class OCRResultValidationError(ValueError):
+    """A deterministic worker-contract failure that must not be retried."""
+
+    code = "invalid_result"
+    retryable = False
+
+
+def _summarize_validation_error(exc: ValidationError, limit: int = 8) -> str:
+    errors = exc.errors(include_url=False, include_input=False)
+    violations = []
+    for error in errors[:limit]:
+        location = ".".join(str(part) for part in error["loc"])
+        violations.append(f"{location}: {error['msg']}")
+    remaining = len(errors) - len(violations)
+    suffix = f"; +{remaining} more" if remaining else ""
+    return (
+        f"OCR result contract rejected ({len(errors)} validation errors): "
+        f"{'; '.join(violations)}{suffix}"
+    )
+
+
 def validate_worker_result(message: dict, page_count: int) -> OCRWorkerResult:
     encoded_size = len(json.dumps(message, ensure_ascii=False).encode("utf-8"))
     if encoded_size > MAX_RESULT_BYTES:
-        raise ValueError("OCR result exceeds the maximum message size")
+        raise OCRResultValidationError("OCR result exceeds the maximum message size")
     try:
         result = OCRWorkerResult.model_validate(message)
     except ValidationError as exc:
-        raise ValueError(str(exc)) from exc
+        raise OCRResultValidationError(_summarize_validation_error(exc)) from exc
     for row in result.rows:
         if page_count and row.page > page_count:
-            raise ValueError(f"row page {row.page} exceeds document page count {page_count}")
+            raise OCRResultValidationError(
+                f"row page {row.page} exceeds document page count {page_count}"
+            )
     return result
 
 
@@ -33,6 +56,7 @@ def create_review_from_result(
         attempt=attempt,
         status="ready_for_review",
         schema_version=result.schemaVersion,
+        result_format="structured_rows_v1",
     )
     for index, row in enumerate(result.rows):
         data = row.model_dump(mode="json", exclude_none=True)
@@ -60,6 +84,13 @@ def create_review_from_result(
 
 
 def review_counts(review: OCRReviewJob) -> dict:
+    if review.result_format == "page_markdown_v2":
+        pages = review.attempt.pages
+        counts = {"total": len(pages), "pending": 0, "approved": 0, "corrected": 0}
+        for page in pages:
+            counts[page.review_status] = counts.get(page.review_status, 0) + 1
+        counts["resolved"] = counts["total"] - counts["pending"]
+        return counts
     counts = {"total": len(review.rows), "pending": 0, "approved": 0,
               "corrected": 0, "rejected": 0, "manually_added": 0}
     for row in review.rows:

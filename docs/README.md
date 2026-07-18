@@ -13,6 +13,8 @@ All planning & design docs for the project. Start with **PLAN.md** (the master b
 - [`API_CONTRACT.md`](design/API_CONTRACT.md) — Presentation ↔ Core seam (frozen v1)
 - [`OCR_PROTOCOL.md`](design/OCR_PROTOCOL.md) — Core ↔ external OCR system (the port)
 - [`SYNC_WORKER_GUIDE.md`](design/SYNC_WORKER_GUIDE.md) — how a worker laptop connects + talks to the Sync WebSocket (+ reference worker)
+- [`OCR_WORKER_PAGE_MARKDOWN_V2_UPGRADE.md`](design/OCR_WORKER_PAGE_MARKDOWN_V2_UPGRADE.md) — current detailed WSL worker upgrade runbook
+- [`OCR_WORKER_V1_UPGRADE.md`](design/OCR_WORKER_V1_UPGRADE.md) — legacy structured-row worker migration only
 - [`HERMES_BRAIN.md`](design/HERMES_BRAIN.md) — the agentic brain (Hermes Agent + Qwen3 35B)
 - [`SKILL_INTEGRATION.md`](design/SKILL_INTEGRATION.md) — borrowing financial skills/methodology
 - [`DISCUSSION_BACKLOG.md`](design/DISCUSSION_BACKLOG.md) — parked topics + external-repo decisions
@@ -31,6 +33,7 @@ All planning & design docs for the project. Start with **PLAN.md** (the master b
 - [`2026-06-23-vn-market-scanner-tier1.md`](plans/2026-06-23-vn-market-scanner-tier1.md) — 8 tasks
 - [`2026-06-24-ocr-document-workflow.md`](plans/2026-06-24-ocr-document-workflow.md) — 6 tasks (Stage 3)
 - [`2026-07-12-ocr-inbox-human-verification.md`](plans/2026-07-12-ocr-inbox-human-verification.md) — implemented direct-upload and review slice
+- [`2026-07-18-ocr-page-markdown-protocol.md`](plans/2026-07-18-ocr-page-markdown-protocol.md) — page-by-page Markdown worker/server migration plan
 
 ### `archive/` — superseded
 - [`PLAN_DETAILED.md`](archive/PLAN_DETAILED.md) — old detailed plan (superseded by PLAN.md)

@@ -6,14 +6,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..db import get_db
 from ..models.filing import Filing
-from ..models.ocr import OCRAttempt, OCRAuditEvent, OCRInboxItem, OCRReviewJob, OCRReviewRow
+from ..models.ocr import (
+    OCRAttempt, OCRAuditEvent, OCRInboxItem, OCRPageResult, OCRReviewJob,
+    OCRReviewRow,
+)
+from ..ocr_page_contract import MAX_PAGE_MARKDOWN_BYTES, OCR_PAGE_RESULT_FORMAT
 from ..ocr_contract import OCRResultRow
 from ..services import pdf
 from ..services.ocr_review import review_counts
@@ -54,9 +58,14 @@ def _serialize_item(item: OCRInboxItem) -> dict:
             "id": attempt.id, "job_id": attempt.job_id, "status": attempt.status,
             "progress": attempt.progress, "worker": attempt.worker_name,
             "error": attempt.error, "automatic": bool(attempt.automatic),
+            "result_format": attempt.result_format,
+            "expected_pages": attempt.expected_pages,
+            "received_pages": attempt.received_pages,
+            "result_sha256": attempt.result_sha256,
         },
         "review": None if not review else {
             "id": review.id, "status": review.status, "revision": review.revision,
+            "result_format": review.result_format,
             "counts": review_counts(review),
         },
         "created_at": item.created_at.isoformat() if item.created_at else None,
@@ -260,9 +269,12 @@ def update_labels(item_id: int, labels: LabelsIn, db: Session = Depends(get_db))
     item.period = labels.period.strip()
     item.currency = labels.currency.strip().upper()
     item.unit = labels.unit.strip()
-    if item.status == "verified":
-        item.status = "ready_to_publish"
     review = _latest_review(item)
+    if (
+        item.status == "verified"
+        and (not review or review.result_format != OCR_PAGE_RESULT_FORMAT)
+    ):
+        item.status = "ready_to_publish"
     if review:
         review.revision += 1
         review.events.append(OCRAuditEvent(
@@ -278,6 +290,11 @@ class ReviewActionIn(BaseModel):
     revision: int = Field(ge=1)
     data: dict | None = None
     reason: str | None = Field(default=None, max_length=1000)
+
+
+class MarkdownReviewActionIn(BaseModel):
+    revision: int = Field(ge=1)
+    markdown: str | None = None
 
 
 def _get_review(db: Session, review_id: int) -> OCRReviewJob:
@@ -296,12 +313,44 @@ def _serialize_row(row: OCRReviewRow) -> dict:
     }
 
 
+def _serialize_page(page: OCRPageResult, *, include_markdown: bool = False) -> dict:
+    data = {
+        "id": page.id,
+        "page": page.page_number,
+        "status": page.review_status,
+        "byte_size": page.byte_size,
+        "content_sha256": page.content_sha256,
+        "has_correction": page.reviewed_markdown is not None,
+    }
+    if include_markdown:
+        data.update({
+            "raw_markdown": page.raw_markdown,
+            "reviewed_markdown": page.reviewed_markdown,
+            "effective_markdown": (
+                page.reviewed_markdown
+                if page.reviewed_markdown is not None
+                else page.raw_markdown
+            ),
+        })
+    return data
+
+
 def _serialize_review(review: OCRReviewJob) -> dict:
     return {
         "id": review.id, "inbox_item_id": review.inbox_item_id,
         "status": review.status, "revision": review.revision,
+        "schema_version": review.schema_version,
+        "result_format": review.result_format,
         "counts": review_counts(review),
-        "rows": [_serialize_row(row) for row in review.rows],
+        "rows": (
+            [_serialize_row(row) for row in review.rows]
+            if review.result_format != OCR_PAGE_RESULT_FORMAT else []
+        ),
+        "pages": (
+            [_serialize_page(page) for page in review.attempt.pages]
+            if review.result_format == OCR_PAGE_RESULT_FORMAT else []
+        ),
+        "merged_markdown_sha256": review.attempt.result_sha256,
         "events": [{
             "id": event.id, "row_id": event.row_id, "action": event.action,
             "revision": event.revision, "before": event.before_data,
@@ -314,6 +363,115 @@ def _serialize_review(review: OCRReviewJob) -> dict:
 @router.get("/reviews/{review_id}")
 def get_review(review_id: int, db: Session = Depends(get_db)):
     return _serialize_review(_get_review(db, review_id))
+
+
+def _get_review_page(
+    db: Session, review: OCRReviewJob, page_number: int,
+) -> OCRPageResult:
+    if review.result_format != OCR_PAGE_RESULT_FORMAT:
+        raise HTTPException(409, "This review contains structured rows, not Markdown pages")
+    page = (
+        db.query(OCRPageResult)
+        .filter_by(attempt_id=review.attempt_id, page_number=page_number)
+        .first()
+    )
+    if not page:
+        raise HTTPException(404, "OCR review page not found")
+    return page
+
+
+@router.get("/reviews/{review_id}/pages/{page_number}")
+def get_review_page(
+    review_id: int, page_number: int, db: Session = Depends(get_db),
+):
+    review = _get_review(db, review_id)
+    page = _get_review_page(db, review, page_number)
+    result = _serialize_page(page, include_markdown=True)
+    result.update({
+        "review_id": review.id,
+        "revision": review.revision,
+        "page_count": review.attempt.expected_pages,
+        "has_previous": page_number > 1,
+        "has_next": page_number < (review.attempt.expected_pages or 0),
+    })
+    return result
+
+
+def _effective_merged_markdown(review: OCRReviewJob) -> str:
+    sections = []
+    for page in review.attempt.pages:
+        markdown = (
+            page.reviewed_markdown
+            if page.reviewed_markdown is not None
+            else page.raw_markdown
+        )
+        sections.append(f"<!-- PAGE:{page.page_number} -->\n\n{markdown}")
+    return "\n\n---\n\n".join(sections)
+
+
+@router.get("/reviews/{review_id}/markdown", response_class=PlainTextResponse)
+def get_review_markdown(
+    review_id: int, source: str = "effective", db: Session = Depends(get_db),
+):
+    review = _get_review(db, review_id)
+    if review.result_format != OCR_PAGE_RESULT_FORMAT:
+        raise HTTPException(409, "This review does not contain Markdown pages")
+    if source == "raw":
+        return PlainTextResponse(
+            review.attempt.merged_markdown or "", media_type="text/markdown"
+        )
+    if source != "effective":
+        raise HTTPException(422, "source must be raw or effective")
+    return PlainTextResponse(
+        _effective_merged_markdown(review), media_type="text/markdown"
+    )
+
+
+def _mutate_page(
+    review: OCRReviewJob, page: OCRPageResult, action: str,
+    payload: MarkdownReviewActionIn, db: Session,
+):
+    if payload.revision != review.revision:
+        raise HTTPException(409, "Review changed; refresh before saving")
+    if review.status in {"verified", "published"}:
+        raise HTTPException(409, "Verified reviews must be reopened before editing")
+    before = _serialize_page(page, include_markdown=True)
+    if action == "approve":
+        page.review_status = "approved"
+        page.reviewed_markdown = None
+    elif action == "correct":
+        if payload.markdown is None:
+            raise HTTPException(422, "Corrected Markdown is required")
+        if len(payload.markdown.encode("utf-8")) > MAX_PAGE_MARKDOWN_BYTES:
+            raise HTTPException(422, "Corrected Markdown exceeds the 1 MiB page limit")
+        page.review_status = "corrected"
+        page.reviewed_markdown = payload.markdown
+    elif action == "restore":
+        page.review_status = "pending"
+        page.reviewed_markdown = None
+    else:
+        raise HTTPException(404, "Unknown page review action")
+    review.status = "reviewing"
+    review.revision += 1
+    review.events.append(OCRAuditEvent(
+        action=f"page_{action}",
+        revision=review.revision,
+        before_data=before,
+        after_data=_serialize_page(page, include_markdown=True),
+    ))
+    db.commit()
+    db.refresh(review)
+    return _serialize_review(review)
+
+
+@router.post("/reviews/{review_id}/pages/{page_number}/{action}")
+def mutate_review_page(
+    review_id: int, page_number: int, action: str,
+    payload: MarkdownReviewActionIn, db: Session = Depends(get_db),
+):
+    review = _get_review(db, review_id)
+    page = _get_review_page(db, review, page_number)
+    return _mutate_page(review, page, action, payload, db)
 
 
 def _mutate_row(review: OCRReviewJob, row: OCRReviewRow, action: str,
@@ -376,6 +534,8 @@ def mutate_review_row(review_id: int, row_id: int, action: str,
 @router.post("/reviews/{review_id}/rows")
 def add_manual_row(review_id: int, payload: ReviewActionIn, db: Session = Depends(get_db)):
     review = _get_review(db, review_id)
+    if review.result_format == OCR_PAGE_RESULT_FORMAT:
+        raise HTTPException(409, "Markdown page reviews cannot contain structured rows")
     if payload.revision != review.revision:
         raise HTTPException(409, "Review changed; refresh before saving")
     if review.status in {"verified", "published"}:
@@ -414,17 +574,29 @@ def verify_review(review_id: int, payload: ReviewActionIn, db: Session = Depends
         raise HTTPException(409, "Review changed; refresh before verifying")
     if review.status in {"verified", "published"}:
         raise HTTPException(409, "Review is already verified")
-    if not review.rows or any(row.status == "pending" for row in review.rows):
-        raise HTTPException(409, "Every OCR row must be resolved before verification")
-    if all(row.status == "rejected" for row in review.rows):
-        raise HTTPException(409, "At least one approved, corrected, or manual row is required")
+    if review.result_format == OCR_PAGE_RESULT_FORMAT:
+        if not review.attempt.pages or any(
+            page.review_status == "pending" for page in review.attempt.pages
+        ):
+            raise HTTPException(
+                409, "Every OCR Markdown page must be resolved before verification"
+            )
+    else:
+        if not review.rows or any(row.status == "pending" for row in review.rows):
+            raise HTTPException(409, "Every OCR row must be resolved before verification")
+        if all(row.status == "rejected" for row in review.rows):
+            raise HTTPException(409, "At least one approved, corrected, or manual row is required")
     review.status = "verified"
     review.verified_at = datetime.now(timezone.utc)
     review.revision += 1
     item = review.inbox_item
     labels_complete = all((item.company, item.ticker, item.filing_type, item.period,
                            item.currency, item.unit))
-    item.status = "ready_to_publish" if labels_complete else "verified"
+    item.status = (
+        "verified"
+        if review.result_format == OCR_PAGE_RESULT_FORMAT
+        else ("ready_to_publish" if labels_complete else "verified")
+    )
     review.events.append(OCRAuditEvent(
         action="verified", revision=review.revision,
         after_data=review_counts(review),
@@ -442,6 +614,11 @@ def publish_item(item_id: int, db: Session = Depends(get_db)):
     review = _latest_review(item)
     if not review or review.status != "verified":
         raise HTTPException(409, "A verified review is required before publication")
+    if review.result_format == OCR_PAGE_RESULT_FORMAT:
+        raise HTTPException(
+            409,
+            "Verified Markdown must be structurally extracted before publication",
+        )
     if not all((item.company, item.ticker, item.filing_type, item.period,
                 item.currency, item.unit)):
         raise HTTPException(409, "Company, ticker, type, period, currency, and unit are required")

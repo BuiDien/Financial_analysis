@@ -1,4 +1,6 @@
-from app.models.ocr import OCRAttempt, OCRInboxItem, OCRReviewJob, OCRReviewRow
+from app.models.ocr import (
+    OCRAttempt, OCRInboxItem, OCRPageResult, OCRReviewJob, OCRReviewRow,
+)
 
 
 def test_ocr_models_persist_review_relationships(db, tmp_path):
@@ -30,3 +32,32 @@ def test_ocr_models_persist_review_relationships(db, tmp_path):
     assert saved.attempts[0].job_id == "job_test"
     assert saved.reviews[0].rows[0].status == "pending"
     assert saved.reviews[0].rows[0].raw_data["code"] == "270"
+
+
+def test_ocr_page_results_are_ordered_and_cascade_with_attempt(db, tmp_path):
+    item = OCRInboxItem(
+        filename="pages.pdf",
+        storage_path=str(tmp_path / "pages.pdf"),
+        size_bytes=8,
+        pages=2,
+        checksum_sha256="b" * 64,
+    )
+    attempt = OCRAttempt(status="receiving_pages", job_id="job_pages")
+    attempt.pages.extend([
+        OCRPageResult(
+            page_number=2, raw_markdown="two", content_sha256="2" * 64,
+            byte_size=3,
+        ),
+        OCRPageResult(
+            page_number=1, raw_markdown="one", content_sha256="1" * 64,
+            byte_size=3,
+        ),
+    ])
+    item.attempts.append(attempt)
+    db.add(item)
+    db.commit()
+
+    assert [page.page_number for page in attempt.pages] == [1, 2]
+    db.delete(attempt)
+    db.commit()
+    assert db.query(OCRPageResult).count() == 0

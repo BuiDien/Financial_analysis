@@ -1,5 +1,6 @@
 from sqlalchemy import (
-    Column, Integer, String, DateTime, ForeignKey, JSON, Text, UniqueConstraint, func,
+    CheckConstraint, Column, Integer, String, DateTime, ForeignKey, JSON, Text,
+    UniqueConstraint, func,
 )
 from sqlalchemy.orm import relationship
 
@@ -52,6 +53,11 @@ class OCRAttempt(Base):
     status = Column(String(32), nullable=False, default="queued", index=True)
     progress = Column(Integer, nullable=False, default=0)
     schema_version = Column(Integer, nullable=True)
+    result_format = Column(String(40), nullable=False, default="structured_rows_v1")
+    expected_pages = Column(Integer, nullable=True)
+    received_pages = Column(Integer, nullable=False, default=0)
+    merged_markdown = Column(Text, nullable=True)
+    result_sha256 = Column(String(64), nullable=True)
     error = Column(Text, nullable=True)
     automatic = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -61,6 +67,10 @@ class OCRAttempt(Base):
     inbox_item = relationship("OCRInboxItem", back_populates="attempts")
     review = relationship(
         "OCRReviewJob", back_populates="attempt", uselist=False, cascade="all, delete-orphan",
+    )
+    pages = relationship(
+        "OCRPageResult", back_populates="attempt", cascade="all, delete-orphan",
+        order_by="OCRPageResult.page_number",
     )
     parent_attempt = relationship("OCRAttempt", remote_side=[id])
 
@@ -74,6 +84,7 @@ class OCRReviewJob(Base):
     status = Column(String(32), nullable=False, default="ready_for_review", index=True)
     revision = Column(Integer, nullable=False, default=1)
     schema_version = Column(Integer, nullable=False, default=1)
+    result_format = Column(String(40), nullable=False, default="structured_rows_v1")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     verified_at = Column(DateTime(timezone=True), nullable=True)
     published_at = Column(DateTime(timezone=True), nullable=True)
@@ -88,6 +99,33 @@ class OCRReviewJob(Base):
         "OCRAuditEvent", back_populates="review", cascade="all, delete-orphan",
         order_by="OCRAuditEvent.id",
     )
+
+
+class OCRPageResult(Base):
+    __tablename__ = "ocr_page_results"
+    __table_args__ = (
+        UniqueConstraint("attempt_id", "page_number", name="uq_ocr_page_attempt_page"),
+        CheckConstraint("page_number >= 1", name="ck_ocr_page_number_positive"),
+        CheckConstraint("byte_size >= 0", name="ck_ocr_page_byte_size_nonnegative"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    attempt_id = Column(
+        Integer, ForeignKey("ocr_attempts.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    page_number = Column(Integer, nullable=False)
+    raw_markdown = Column(Text, nullable=False)
+    reviewed_markdown = Column(Text, nullable=True)
+    review_status = Column(String(32), nullable=False, default="pending", index=True)
+    content_sha256 = Column(String(64), nullable=False)
+    byte_size = Column(Integer, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False,
+    )
+
+    attempt = relationship("OCRAttempt", back_populates="pages")
 
 
 class OCRReviewRow(Base):
