@@ -42,12 +42,14 @@ class PageErrorBoundary extends React.Component {
 }
 
 const App = () => {
+  const focusedOCRReviewId = new URLSearchParams(window.location.search).get('ocrReview');
   const mockData = React.useMemo(() => JSON.parse(document.getElementById('market-data').textContent), []);
   // null = still deciding real-vs-mock. Renders a loading screen instead of
   // ever painting mock numbers when the backend turns out to be live.
   const [data, setData] = React.useState(null);
   const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
   const [page, setPage] = React.useState(() => {
+    if (focusedOCRReviewId) return 'ocr-inbox';
     try {
       const s = JSON.parse(localStorage.getItem('helix_settings_v1') || '{}');
       if (s.defaultLanding === 'last') return localStorage.getItem('helix_last_page') || 'home';
@@ -109,14 +111,16 @@ const App = () => {
     return hit && hit.q.price ? { ...w, price: hit.q.price, chg: hit.q.change_pct ?? w.chg } : w;
   });
   const applyPortfolio = (base, pf) => {
-    if (!pf || !pf.holdings || !pf.holdings.length) return base.portfolio;
+    if (!pf || !Array.isArray(pf.holdings)) return base.portfolio;
     return {
       ...base.portfolio,
-      totalValue: pf.total_value, totalGain: pf.total_gain, totalGainPct: pf.total_gain_pct,
+      totalValue: pf.total_value || 0, totalGain: pf.total_gain || 0, totalGainPct: pf.total_gain_pct || 0,
+      dayChange: pf.today_change || 0, dayChangePct: pf.today_change_pct || 0,
+      cash: pf.cash_value || 0, displayCurrency: pf.display_currency || 'USD', demo: false,
       holdings: pf.holdings.map(h => ({
-        sym: h.ticker, shares: h.shares, avgCost: h.cost_basis / (h.shares || 1),
+        sym: h.ticker, shares: h.shares, avgCost: h.avg_cost ?? (h.cost_basis / (h.shares || 1)),
         price: h.price, value: h.value, gain: h.gain, gainPct: h.gain_pct,
-        weight: pf.total_value ? (h.value / pf.total_value) * 100 : 0,
+        weight: h.weight ?? (pf.total_value ? (h.value / pf.total_value) * 100 : 0),
       })),
     };
   };
@@ -131,6 +135,7 @@ const App = () => {
   };
 
   React.useEffect(() => {
+    if (focusedOCRReviewId) return undefined;
     let cancelled = false;
 
     const hydrate = async () => {
@@ -162,7 +167,7 @@ const App = () => {
     const REFRESH_MS = 5 * 60 * 1000;   // keep indices/quotes/portfolio/news live, not just on load
     const interval = setInterval(hydrate, REFRESH_MS);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [mockData]);
+  }, [focusedOCRReviewId, mockData]);
 
   // Apply theme
   React.useEffect(() => {
@@ -239,6 +244,22 @@ const App = () => {
     });
   }, []);
 
+  if (focusedOCRReviewId) {
+    return (
+      <>
+        <div className="app" data-focus="ocr-review" data-ai="closed">
+          <main className="main" data-screen-label="ocr-review">
+            <PageErrorBoundary pageKey={`ocr-review-${focusedOCRReviewId}`}>
+              <PageOCRInbox setPage={setPage} />
+            </PageErrorBoundary>
+          </main>
+        </div>
+        <ToastHost />
+        <PromptHost />
+      </>
+    );
+  }
+
   if (!data) {
     return (
       <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14 }}>
@@ -280,7 +301,7 @@ const App = () => {
           )}
           </PageErrorBoundary>
         </main>
-        {aiOpen && <AIPanel page={page} onClose={() => setAiOpen(false)} />}
+        {aiOpen && <AIPanel page={page} portfolio={data.portfolio} onClose={() => setAiOpen(false)} />}
       </div>
 
       <ToastHost />

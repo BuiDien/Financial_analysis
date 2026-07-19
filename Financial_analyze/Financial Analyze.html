@@ -130,6 +130,13 @@
       "sidebar main ai";
   }
 
+  .app[data-focus="ocr-review"] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    grid-template-areas: "main";
+    height: 100dvh;
+  }
+
   /* Sidebar */
   .sidebar {
     grid-area: sidebar;
