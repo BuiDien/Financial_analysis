@@ -28,9 +28,35 @@ localStorage.setItem('helix_api_url', 'http://localhost:8000'); location.reload(
 cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env            # add ANTHROPIC_API_KEY
+cp .env.example .env
 uvicorn app.main:app --reload --port 8000
 ```
+
+Hermes Agent itself runs as a separate local gateway. Enable its authenticated
+loopback API server, then run `hermes gateway start`. FastAPI connects to it at
+`http://127.0.0.1:8642` by default. `scripts/run.sh` automatically reuses
+`gateway.api_server.key` from the local Hermes configuration when
+`HERMES_API_KEY` is not already set. If you start FastAPI directly, export the
+same key as `HERMES_API_KEY` first.
+
+OCR label correction does not use Hermes. It sends each user-marked label
+directly to local Ollama and uses `gemma4:12b` by default:
+
+```bash
+ollama pull gemma4:12b
+ollama serve
+```
+
+The backend sends the correction system prompt plus one label, sets
+`think: false`, and requires JSON containing only `corrected_label` and
+`confidence`. It does not set an output-token limit. The result remains a
+suggestion until the user accepts and applies it.
+
+When a page-capable OCR worker uploads Markdown, the server saves and checks
+each page against the Obsidian library. Once `result_end` confirms every page
+has arrived, the server starts Ollama review for the remaining labels in a
+background thread. Worker acknowledgements are not blocked by model work, and
+all resulting corrections still require an explicit user Accept or Reject.
 
 Swagger docs: http://localhost:8000/docs
 
@@ -38,7 +64,8 @@ Swagger docs: http://localhost:8000/docs
 
 | UI feature | Frontend file | Endpoint | Status |
 |---|---|---|---|
-| AI sidebar chat | `src/ai-panel.jsx` | `POST /api/ai/chat` | **wired** (auto) |
+| AI sidebar chat | `src/ai-panel.jsx` | `POST /api/ai/chat`, `GET /api/ai/health` | **wired to Hermes Agent** |
+| OCR label correction | `src/page-ocr-inbox.jsx` | `POST /api/ocr-inbox/reviews/{id}/pages/{page}/label-review-runs` | **wired directly to Ollama** |
 | Reader "Ask about this filing" | `src/page-reader.jsx` | `POST /api/filings/{id}/ask` | **wired** (auto) |
 | Reader OCR Parse | `src/ocr-tool.jsx` | `POST /api/filings/{id}/ocr-parse` | **wired** (auto) |
 | Data Tracker autosave | `src/page-reader.jsx` | `PUT /api/filings/{id}/tracker` | **wired** (auto, debounced) |
@@ -48,7 +75,7 @@ Swagger docs: http://localhost:8000/docs
 | Dashboard quotes | `src/page-dashboard.jsx` | `GET /api/quote/{t}`, `/api/indices` | mock — swap when ready |
 | Asset detail chart | `src/page-detail.jsx` | `GET /api/history/{t}?period=1mo` | mock — swap when ready |
 | Statements page | `src/page-statements.jsx` | `GET /api/statements/{t}` | mock — swap when ready |
-| Portfolio | `src/page-portfolio.jsx` | `GET /api/portfolio` | mock — swap when ready |
+| Portfolio | `src/page-portfolio.jsx` | `/api/portfolio`, `/api/portfolio/transactions`, `/api/portfolio/performance`, `/api/portfolio/imports/*` | live ledger with explicit read-only demo fallback |
 | Screener | `src/page-screener.jsx` | `GET /api/screener` | mock — swap when ready |
 | News | `src/page-news.jsx` | `GET /api/news` | mock — swap when ready |
 
@@ -72,8 +99,8 @@ React.useEffect(() => {
   match the Data Tracker's default rows, so imports map 1:1.
 - **Tracker state** — saved verbatim as JSON (`income[]`, `balance[]`, `cashflow[]`, `flags[]`)
   to `filings.tracker` (JSON column). Same shape in localStorage and Postgres.
-- **AI prompts** — `backend/app/services/ai.py` mirrors the frontend prompt templates,
-  so answers feel identical in mock and live mode.
+- **AI prompts** — `backend/app/services/ai.py` adds page context and proxies the OpenAI-compatible
+  Hermes Agent API. The browser never talks to the raw model or stores the agent bearer key.
 
 ## Production checklist
 

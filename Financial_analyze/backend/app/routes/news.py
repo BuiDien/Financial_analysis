@@ -53,9 +53,10 @@ def news(limit: int = Query(30, ge=1, le=100)):
 def news_search(
     q: str = Query(min_length=2, max_length=200),
     count: int = Query(5, ge=1, le=20),
+    time_range: str = Query("week", pattern="^(day|week|month)$"),
 ):
     try:
-        return news_service.search_web(q, count)
+        return news_service.search_web(q, count, time_range)
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
 

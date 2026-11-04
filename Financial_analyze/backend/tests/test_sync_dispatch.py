@@ -3,6 +3,7 @@
 Covers the coordinator side of docs/design/OCR_PROTOCOL.md: two-step pairing,
 the job/chunks/job_end sequence, and the error frame freeing the worker.
 """
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -12,17 +13,92 @@ from sqlalchemy.pool import StaticPool
 from app.main import app
 from app.db import Base, get_db
 from app.models.filing import Filing
-from app.routes.sync import coordinator, CHUNK_SIZE
+from app.routes import sync
+from app.routes.sync import (
+    CHUNK_SIZE,
+    OCR_PROTOCOL_VERSION,
+    OCR_RESULT_SCHEMA_VERSION,
+    _lan_ip,
+    _parse_physical_interface_ips,
+    _print_worker_message,
+    coordinator,
+)
 
 PDF_BYTES = b"%PDF-1.4 " + bytes(range(256)) * 3000  # ~768 KB → 2 chunks
 
 
+def test_physical_interface_ip_prefers_wifi_and_ignores_cloudflare_tunnel():
+    ifconfig_output = """
+en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+\tinet 192.168.1.26 netmask 0xffffff00 broadcast 192.168.1.255
+\tstatus: active
+utun6: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1280
+\tinet 172.16.0.2 --> 172.16.0.2 netmask 0xffffffff
+"""
+
+    assert _parse_physical_interface_ips(ifconfig_output) == ["192.168.1.26"]
+
+
+def test_physical_interface_ip_ignores_inactive_adapter():
+    ifconfig_output = """
+en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+\tinet 192.168.1.20 netmask 0xffffff00 broadcast 192.168.1.255
+\tstatus: inactive
+en5: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+\tinet 192.168.1.30 netmask 0xffffff00 broadcast 192.168.1.255
+\tstatus: active
+"""
+
+    assert _parse_physical_interface_ips(ifconfig_output) == ["192.168.1.30"]
+
+
+def test_lan_ip_uses_detected_physical_interface(monkeypatch):
+    monkeypatch.setattr(sync.settings, "sync_advertised_host", "")
+    monkeypatch.setattr(sync, "_physical_interface_ips", lambda: ["192.168.1.26"])
+
+    assert _lan_ip() == "192.168.1.26"
+
+
+def test_lan_ip_allows_optional_explicit_override(monkeypatch):
+    monkeypatch.setattr(sync.settings, "sync_advertised_host", "core-mac.local")
+    monkeypatch.setattr(
+        sync,
+        "_physical_interface_ips",
+        lambda: pytest.fail("automatic detection should not run with an override"),
+    )
+
+    assert _lan_ip() == "core-mac.local"
+
+
+def test_print_worker_message_includes_complete_unicode_payload(capsys):
+    message = {
+        "type": "result",
+        "jobId": "job_1",
+        "schemaVersion": 1,
+        "rows": [{"code": "270", "metric": "TỔNG CỘNG TÀI SẢN"}],
+    }
+
+    _print_worker_message("worker_1", "Dien WSL", message)
+
+    output = capsys.readouterr().out
+    assert "OCR WORKER MESSAGE BEGIN" in output
+    assert '"jobId": "job_1"' in output
+    assert '"metric": "TỔNG CỘNG TÀI SẢN"' in output
+    assert "OCR WORKER MESSAGE END" in output
+
+
 @pytest.fixture
-def client(tmp_path):
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False},
-                           poolclass=StaticPool)
+def client(tmp_path, monkeypatch):
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
+    # WebSocket follow-up dispatches open their own session rather than using
+    # FastAPI's request dependency, so keep those sessions inside this fixture.
+    monkeypatch.setattr(sync, "SessionLocal", Session)
 
     def override():
         s = Session()
@@ -36,9 +112,17 @@ def client(tmp_path):
     pdf_path = tmp_path / "vnm-q4.pdf"
     pdf_path.write_bytes(PDF_BYTES)
     s = Session()
-    s.add(Filing(id=1, ticker="VNM", filing_type="10-K", period="Q4 2024",
-                 filename="vnm-q4.pdf", storage_path=str(pdf_path),
-                 size_bytes=len(PDF_BYTES)))
+    s.add(
+        Filing(
+            id=1,
+            ticker="VNM",
+            filing_type="10-K",
+            period="Q4 2024",
+            filename="vnm-q4.pdf",
+            storage_path=str(pdf_path),
+            size_bytes=len(PDF_BYTES),
+        )
+    )
     s.commit()
     s.close()
     yield TestClient(app)
@@ -47,11 +131,24 @@ def client(tmp_path):
 
 
 def pair(ws):
-    ws.send_json({"type": "hello", "name": "Test Worker"})
+    ws.send_json(
+        {
+            "type": "hello",
+            "name": "Test Worker",
+            "protocolVersion": OCR_PROTOCOL_VERSION,
+            "resultSchemaVersions": [OCR_RESULT_SCHEMA_VERSION],
+            "capabilities": ["bbox"],
+        }
+    )
     pair_required = ws.receive_json()
     assert pair_required["type"] == "pair_required"
-    ws.send_json({"type": "pair", "pairId": pair_required["pairId"],
-                  "code": coordinator.pair_code})
+    ws.send_json(
+        {
+            "type": "pair",
+            "pairId": pair_required["pairId"],
+            "code": coordinator.pair_code,
+        }
+    )
     welcome = ws.receive_json()
     assert welcome["type"] == "welcome"
 
@@ -67,6 +164,7 @@ def receive_job(ws):
             buf.extend(frame["bytes"])
             continue
         import json
+
         end = json.loads(frame["text"])
         assert end == {"type": "job_end", "jobId": job["jobId"]}
         return job, bytes(buf)
@@ -82,12 +180,27 @@ def test_dispatch_streams_pdf_in_binary_chunks(client):
         job, pdf = receive_job(ws)
         assert job["jobId"] == job_id
         assert job["bytes"] == len(PDF_BYTES)
+        assert job["protocolVersion"] == OCR_PROTOCOL_VERSION
+        assert job["resultSchemaVersion"] == OCR_RESULT_SCHEMA_VERSION
+        assert job["requiredCapabilities"] == ["bbox"]
         assert "pdf_b64" not in job
         assert pdf == PDF_BYTES
         assert len(PDF_BYTES) > CHUNK_SIZE  # guarantees the multi-chunk path ran
 
-        ws.send_json({"type": "result", "jobId": job_id,
-                      "rows": [{"code": "270", "curr": "1", "prev": "2"}]})
+        ws.send_json(
+            {
+                "type": "result",
+                "jobId": job_id,
+                "rows": [{"code": "270", "curr": "1", "prev": "2"}],
+            }
+        )
+        ack = ws.receive_json()
+        assert ack == {
+            "type": "result_ack",
+            "jobId": job_id,
+            "status": "done",
+            "rowCount": 1,
+        }
         # result frame processed once the next HTTP call round-trips
         for _ in range(50):
             job_state = client.get(f"/api/sync/result/{job_id}").json()
@@ -117,10 +230,32 @@ def test_worker_error_fails_job_and_frees_worker(client):
 
 def test_obsolete_one_step_worker_gets_upgrade_message(client):
     with client.websocket_connect("/ws/ocr") as ws:
-        ws.send_json({"type": "hello", "name": "Old Worker", "code": coordinator.pair_code})
+        ws.send_json(
+            {"type": "hello", "name": "Old Worker", "code": coordinator.pair_code}
+        )
 
         denied = ws.receive_json()
 
         assert denied["type"] == "deny"
         assert denied["attemptsLeft"] == 0
         assert "outdated worker" in denied["reason"]
+
+
+def test_incompatible_worker_is_rejected_before_pairing(client):
+    with client.websocket_connect("/ws/ocr") as ws:
+        ws.send_json(
+            {
+                "type": "hello",
+                "name": "Legacy OCR Worker",
+                "protocolVersion": 1,
+                "resultSchemaVersions": [1],
+                "capabilities": [],
+            }
+        )
+
+        denied = ws.receive_json()
+
+        assert denied["type"] == "deny"
+        assert denied["attemptsLeft"] == 0
+        assert denied["requiredCapabilities"] == ["bbox"]
+        assert "incompatible worker" in denied["reason"]

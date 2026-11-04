@@ -1,4 +1,5 @@
 """FastAPI app entry point."""
+
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -6,7 +7,17 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
 from .db import init_db
-from .routes import market, fundamentals, portfolio, filings, ai, news, sync, scan, ocr_inbox
+from .routes import (
+    market,
+    fundamentals,
+    portfolio,
+    filings,
+    ai,
+    news,
+    sync,
+    scan,
+    ocr_inbox,
+)
 
 settings = get_settings()
 
@@ -15,6 +26,7 @@ settings = get_settings()
 async def lifespan(_app: FastAPI):
     init_db()
     sync.recover_interrupted_attempts()
+    portfolio.recover_jobs()
     if settings.enable_scheduler:
         from .services import scheduler
 
@@ -40,6 +52,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 @app.get("/")
 def root():

@@ -1,4 +1,5 @@
 import importlib.util
+import asyncio
 import json
 import time
 from pathlib import Path
@@ -10,6 +11,17 @@ WORKER_PATH = Path(__file__).parents[2] / "scripts" / "ocr_worker.py"
 SPEC = importlib.util.spec_from_file_location("ocr_worker", WORKER_PATH)
 ocr_worker = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(ocr_worker)
+
+
+def _valid_row():
+    return {
+        "code": "270",
+        "metric": "Total assets",
+        "curr": "100",
+        "page": 1,
+        "confidence": 90,
+        "bbox": {"x": 0.1, "y": 0.2, "width": 0.7, "height": 0.04},
+    }
 
 
 class _Socket:
@@ -24,13 +36,38 @@ class _Socket:
         self.sent.append(json.loads(frame))
 
 
+class _ResultSocket:
+    def __init__(self, ack):
+        self.initial = iter(
+            [
+                b"%PDF-1.4",
+                json.dumps({"type": "job_end", "jobId": "job_1"}),
+            ]
+        )
+        self.ack = ack
+        self.sent = []
+
+    async def recv(self):
+        try:
+            return next(self.initial)
+        except StopIteration:
+            while not any(frame.get("type") == "result" for frame in self.sent):
+                await asyncio.sleep(0)
+            return json.dumps(self.ack)
+
+    async def send(self, frame):
+        self.sent.append(json.loads(frame))
+
+
 @pytest.mark.anyio
 async def test_receive_pdf_reassembles_binary_chunks():
-    socket = _Socket([
-        b"%PDF-",
-        b"1.4",
-        json.dumps({"type": "job_end", "jobId": "job_1"}),
-    ])
+    socket = _Socket(
+        [
+            b"%PDF-",
+            b"1.4",
+            json.dumps({"type": "job_end", "jobId": "job_1"}),
+        ]
+    )
 
     payload = await ocr_worker.receive_pdf(socket, {"jobId": "job_1", "bytes": 8})
 
@@ -39,10 +76,12 @@ async def test_receive_pdf_reassembles_binary_chunks():
 
 @pytest.mark.anyio
 async def test_receive_pdf_rejects_byte_count_mismatch():
-    socket = _Socket([
-        b"short",
-        json.dumps({"type": "job_end", "jobId": "job_1"}),
-    ])
+    socket = _Socket(
+        [
+            b"short",
+            json.dumps({"type": "job_end", "jobId": "job_1"}),
+        ]
+    )
 
     with pytest.raises(RuntimeError, match="byte count mismatch"):
         await ocr_worker.receive_pdf(socket, {"jobId": "job_1", "bytes": 10})
@@ -50,9 +89,11 @@ async def test_receive_pdf_rejects_byte_count_mismatch():
 
 @pytest.mark.anyio
 async def test_receive_pdf_rejects_wrong_job_end():
-    socket = _Socket([
-        json.dumps({"type": "job_end", "jobId": "job_other"}),
-    ])
+    socket = _Socket(
+        [
+            json.dumps({"type": "job_end", "jobId": "job_other"}),
+        ]
+    )
 
     with pytest.raises(RuntimeError, match="Unexpected frame"):
         await ocr_worker.receive_pdf(socket, {"jobId": "job_1", "bytes": 0})
@@ -60,9 +101,14 @@ async def test_receive_pdf_rejects_wrong_job_end():
 
 def test_placeholder_result_includes_review_evidence(monkeypatch):
     class _Response:
-        def __enter__(self): return self
-        def __exit__(self, *_args): return None
-        def read(self): return b"{}"
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self):
+            return b"{}"
 
     monkeypatch.setattr("urllib.request.urlopen", lambda *_args, **_kwargs: _Response())
 
@@ -73,24 +119,87 @@ def test_placeholder_result_includes_review_evidence(monkeypatch):
     assert row["rawText"].startswith("STUB")
 
 
+def test_worker_rejects_rows_without_review_evidence():
+    with pytest.raises(ocr_worker.InvalidWorkerResult, match="bbox is required"):
+        ocr_worker.validate_result_rows(
+            [
+                {
+                    "code": "270",
+                    "metric": "Total assets",
+                    "curr": "100",
+                    "page": 1,
+                    "confidence": 90,
+                }
+            ]
+        )
+
+
 @pytest.mark.anyio
 async def test_process_job_acknowledges_hold_without_returning_results(monkeypatch):
-    socket = _Socket([
-        b"%PDF-1.4",
-        json.dumps({"type": "job_end", "jobId": "job_1"}),
-        json.dumps({"type": "job_control", "jobId": "job_1", "action": "hold"}),
-    ])
+    socket = _Socket(
+        [
+            b"%PDF-1.4",
+            json.dumps({"type": "job_end", "jobId": "job_1"}),
+            json.dumps({"type": "job_control", "jobId": "job_1", "action": "hold"}),
+        ]
+    )
     monkeypatch.setattr(
-        ocr_worker, "run_ocr",
+        ocr_worker,
+        "run_ocr",
         lambda *_args: (time.sleep(0.2), [{"code": "late"}])[1],
     )
 
     outcome = await ocr_worker.process_job(
-        socket, {"jobId": "job_1", "bytes": 8}, "http://local-vllm",
+        socket,
+        {"jobId": "job_1", "bytes": 8},
+        "http://local-vllm",
     )
 
     assert outcome == "hold"
     assert socket.sent[-1] == {
-        "type": "control_ack", "jobId": "job_1", "action": "hold",
+        "type": "control_ack",
+        "jobId": "job_1",
+        "action": "hold",
     }
     assert not any(frame["type"] == "result" for frame in socket.sent)
+
+
+@pytest.mark.anyio
+async def test_process_job_reports_done_only_after_coordinator_accepts(monkeypatch):
+    socket = _ResultSocket(
+        {
+            "type": "result_ack",
+            "jobId": "job_1",
+            "status": "ready_for_review",
+            "rowCount": 1,
+            "reviewId": 42,
+        }
+    )
+    monkeypatch.setattr(ocr_worker, "run_ocr", lambda *_args: [_valid_row()])
+
+    outcome = await ocr_worker.process_job(
+        socket,
+        {"jobId": "job_1", "bytes": 8},
+        "http://local-vllm",
+    )
+
+    assert outcome == "done — 1 rows accepted, review 42 ready"
+
+
+@pytest.mark.anyio
+async def test_process_job_surfaces_coordinator_rejection(monkeypatch):
+    socket = _ResultSocket(
+        {
+            "type": "result_rejected",
+            "jobId": "job_1",
+            "error": "invalid row",
+        }
+    )
+    monkeypatch.setattr(ocr_worker, "run_ocr", lambda *_args: [_valid_row()])
+
+    with pytest.raises(RuntimeError, match="Coordinator rejected result: invalid row"):
+        await ocr_worker.process_job(
+            socket,
+            {"jobId": "job_1", "bytes": 8},
+            "http://local-vllm",
+        )

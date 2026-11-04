@@ -20,12 +20,6 @@ const DEFAULT_SETTINGS = {
   aiModel: 'claude-sonnet-4-5',
   aiTone: 'concise', // concise | detailed | numbers-only
   aiAutoSummary: true, // auto-generate summaries on filing upload
-  // Local Hermes agent
-  hermesEndpoint: 'http://localhost:11434', // Ollama default
-  hermesModel: 'hermes3',
-  hermesContextWindow: 32768, // always use the maximum
-  hermesTemperature: 0.4,
-  hermesKeepLocal: true, // never send filing text off-device
   // Backend
   backendUrl: 'http://localhost:8000',
   anthropicKeySet: false
@@ -38,7 +32,7 @@ const loadSettings = () => {
   } catch {return { ...DEFAULT_SETTINGS };}
 };
 
-const CURRENCIES = ['USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF', 'CNY'];
+const CURRENCIES = ['USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF', 'CNY', 'VND'];
 const LANDING_PAGES = [
 { id: 'last', label: 'Last visited' },
 { id: 'home', label: 'Home' },
@@ -57,6 +51,7 @@ const PageSettings = ({ theme, setTheme, density, setDensity, accent, setAccent,
   const [testing, setTesting] = React.useState(false);
   const [showPlan, setShowPlan] = React.useState(false);
   const [hermesStatus, setHermesStatus] = React.useState('unknown'); // unknown | live | down | checking
+  const [hermesModel, setHermesModel] = React.useState('');
 
   const set = (key, value) => {
     setSettings((s) => {
@@ -70,20 +65,23 @@ const PageSettings = ({ theme, setTheme, density, setDensity, accent, setAccent,
     window.__settingsSaveT = setTimeout(() => setSaved(false), 1500);
   };
 
+  const setBaseCurrency = async (value) => {
+    set('baseCurrency', value);
+    if (!window.HelixAPI?.live) return;
+    try {
+      await window.HelixAPI.setPortfolioCurrency(value);
+      window.toast?.(`Portfolio display currency is converting to ${value}`, { type: 'info' });
+    } catch (e) {
+      window.toast?.(`Could not change portfolio currency: ${e.message || e}`, { type: 'error' });
+    }
+  };
+
   const testHermes = async () => {
     setHermesStatus('checking');
     try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 2500);
-      // Ollama exposes GET /api/tags; LM Studio / llama.cpp expose /v1/models
-      let res;
-      try {
-        res = await fetch(`${settings.hermesEndpoint}/api/tags`, { signal: ctrl.signal });
-      } catch {
-        res = await fetch(`${settings.hermesEndpoint}/v1/models`, { signal: ctrl.signal });
-      }
-      clearTimeout(t);
-      setHermesStatus(res && res.ok ? 'live' : 'down');
+      const status = await window.HelixAPI.aiHealth();
+      setHermesModel(status.model || 'hermes-agent');
+      setHermesStatus('live');
     } catch {
       setHermesStatus('down');
     }
@@ -153,7 +151,7 @@ const PageSettings = ({ theme, setTheme, density, setDensity, accent, setAccent,
                 <input className="set-input" type="email" value={settings.email} onChange={(e) => set('email', e.target.value)} />
               </Field>
               <Field label="Base currency" hint="Used across portfolio and statements">
-                <select className="set-input" value={settings.baseCurrency} onChange={(e) => set('baseCurrency', e.target.value)}>
+                <select className="set-input" value={settings.baseCurrency} onChange={(e) => setBaseCurrency(e.target.value)}>
                   {CURRENCIES.map((c) => <option key={c}>{c}</option>)}
                 </select>
               </Field>
@@ -255,15 +253,15 @@ const PageSettings = ({ theme, setTheme, density, setDensity, accent, setAccent,
                 padding: 12, borderRadius: 8, background: 'var(--bg-sunken)',
                 border: '1px solid var(--border)', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5
               }}>
-                    The <strong style={{ color: 'var(--text)' }}>Hermes</strong> agent runs entirely on your machine via a local server
-                    (Ollama, LM Studio, or llama.cpp). Filing text never leaves your device.
+                    <strong style={{ color: 'var(--text)' }}>Hermes Agent</strong> runs on this machine with its skills,
+                    memory, and financial MCP tools. The FastAPI backend keeps the agent API key out of the browser.
                   </div>
 
-                  <Field label="Local endpoint" hint="Ollama default is :11434">
+                  <Field label="Agent gateway" hint="Configured server-side in backend/.env">
                     <div style={{ display: 'flex', gap: 8 }}>
-                      <input className="set-input" value={settings.hermesEndpoint}
-                  onChange={(e) => set('hermesEndpoint', e.target.value)} style={{ flex: 1 }}
-                  placeholder="http://localhost:11434" />
+                      <div className="set-input" style={{ flex: 1, color: 'var(--text-muted)', cursor: 'default' }}>
+                        FastAPI → Hermes Agent
+                      </div>
                       <button className="btn btn-primary" onClick={testHermes} disabled={hermesStatus === 'checking'}>
                         {hermesStatus === 'checking' ? 'Pinging…' : 'Test agent'}
                       </button>
@@ -283,37 +281,15 @@ const PageSettings = ({ theme, setTheme, density, setDensity, accent, setAccent,
                     </div>
                     {hermesStatus === 'down' &&
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.5, fontFamily: 'var(--font-mono)' }}>
-                        Start it with: ollama run {settings.hermesModel || 'hermes3'}
+                        Start FastAPI, then run: hermes gateway run
+                      </div>
+                }
+                    {hermesStatus === 'live' && hermesModel &&
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.5, fontFamily: 'var(--font-mono)' }}>
+                        Model: {hermesModel}
                       </div>
                 }
                   </div>
-
-                  <Field label="Model" hint="Must be pulled into your local server">
-                    <select className="set-input" value={settings.hermesModel} onChange={(e) => set('hermesModel', e.target.value)}>
-                      <option value="hermes3">Hermes 3 (8B · balanced)</option>
-                      <option value="hermes3:70b">Hermes 3 70B (deepest)</option>
-                      <option value="nous-hermes2">Nous Hermes 2</option>
-                      <option value="nous-hermes2-mixtral">Nous Hermes 2 · Mixtral 8x7B</option>
-                      <option value="custom">Custom (set in endpoint)</option>
-                    </select>
-                  </Field>
-
-                  <Field label={`Temperature · ${settings.hermesTemperature}`} hint="Lower = more deterministic">
-                    <SegmentedControl
-                      options={[{ id: 0.1, label: 'Precise' }, { id: 0.4, label: 'Balanced' }, { id: 0.8, label: 'Creative' }]}
-                      value={settings.hermesTemperature}
-                      onChange={(v) => set('hermesTemperature', v)} />
-                  </Field>
-
-                  <Field label="Context window" hint="Always uses the maximum your model supports">
-                    <div className="set-input" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: 'var(--text-muted)', cursor: 'default' }}>
-                      <span>Maximum available</span>
-                      <span className="ticker" style={{ fontSize: 11, color: 'var(--text)' }}>32K tokens</span>
-                    </div>
-                  </Field>
-
-                  <Toggle label="Keep everything on-device" hint="Block any cloud fallback — local agent only"
-              value={settings.hermesKeepLocal} onChange={(v) => set('hermesKeepLocal', v)} />
                 </> :
 
             <Field label="Model" hint="Runs in the cloud via your backend's API key">
@@ -361,7 +337,7 @@ const PageSettings = ({ theme, setTheme, density, setDensity, accent, setAccent,
                 </div>
               </div>
               <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 12, padding: 12, background: 'var(--bg-sunken)', borderRadius: 6 }}>
-                The Anthropic API key lives server-side in your <span className="ticker" style={{ fontSize: 11 }}>backend/.env</span> file — it is never stored in the browser.
+                Hermes and Anthropic API keys live server-side in your <span className="ticker" style={{ fontSize: 11 }}>backend/.env</span> file — they are never stored in the browser.
               </div>
             </SettingsCard>
           }

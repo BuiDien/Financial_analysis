@@ -2,9 +2,10 @@
 
 A self-hosted platform that turns scanned Vietnamese financial statements and live market data into **verified, structured financial insight** — running entirely on local hardware, with a built-in layer that catches reading errors before they reach any analysis.
 
-> **Status (2026-07-10):** working prototype. Market data, the deterministic VN scanner,
+> **Status (2026-07-18):** working prototype. Market data, the deterministic VN scanner,
 > filings, distributed PDF transfer, and curated news are implemented. Real OCR structuring,
-> reconciliation, authentication, and Hermes Agent integration are not yet complete. See
+> reconciliation, authentication, and the financial-tool side of Hermes Agent integration are not yet complete.
+> The UI-to-Hermes API bridge and news MCP registration are implemented. See
 > [`docs/PLAN.md`](docs/PLAN.md) for the verified status matrix and build order.
 
 ---
@@ -51,7 +52,7 @@ Mac (M2 Max, 64GB)                                   GPU laptop (RTX 4070, 8GB)
 - **OCR Inbox** accepts unlabeled PDFs before they become filings, persists worker attempts, and requires
   source-backed row review before labeled data can be published.
 - **Three tiers** — presentation, business logic, data — with dependencies flowing strictly downward.
-- **The brain** is [Hermes Agent](https://github.com/NousResearch/hermes-agent) running Qwen3 35B locally, given financial tools via an **MCP server** and an **Obsidian vault** as its memory + report store.
+- **The brain** is [Hermes Agent](https://github.com/NousResearch/hermes-agent) running Gemma 4 26B locally, given financial tools via an **MCP server** and an **Obsidian vault** as its memory + report store.
 - **Fully local** — sensitive financial data never leaves the user's network (only market-data fetching and optional news search reach the internet).
 
 ## Components

@@ -51,18 +51,20 @@ def test_news_returns_us_only_when_vn_fetch_fails(monkeypatch, client):
 
 
 def test_news_search_proxies_results(monkeypatch, client):
-    monkeypatch.setattr(news_service, "search_web", lambda q, count: [
-        {"title": "Result", "url": "https://x.test", "content": "snippet"},
+    monkeypatch.setattr(news_service, "search_web", lambda q, count, time_range: [
+        {"title": "Result", "url": "https://x.test", "content": "snippet",
+         "source": "Reuters", "published": "2026-08-07T10:00:00Z"},
     ])
 
-    resp = client.get("/api/news/search?q=fed+rates&count=5")
+    resp = client.get("/api/news/search?q=fed+rates&count=5&time_range=day")
 
     assert resp.status_code == 200
-    assert resp.json() == [{"title": "Result", "url": "https://x.test", "content": "snippet"}]
+    assert resp.json() == [{"title": "Result", "url": "https://x.test", "content": "snippet",
+                            "source": "Reuters", "published": "2026-08-07T10:00:00Z"}]
 
 
 def test_news_search_returns_503_when_searxng_down(monkeypatch, client):
-    def _boom(q, count):
+    def _boom(q, count, time_range):
         raise RuntimeError("SearXNG unreachable at http://127.0.0.1:8888 — is it running?")
     monkeypatch.setattr(news_service, "search_web", _boom)
 
@@ -99,3 +101,4 @@ def test_news_routes_validate_request_bounds(client):
     assert client.get("/api/news?limit=101").status_code == 422
     assert client.get("/api/news/search?q=x&count=5").status_code == 422
     assert client.get("/api/news/search?q=markets&count=21").status_code == 422
+    assert client.get("/api/news/search?q=markets&time_range=year").status_code == 422

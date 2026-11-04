@@ -103,18 +103,58 @@ class _FakeSearchResponse:
 
 def test_search_web_returns_results(monkeypatch):
     payload = {"results": [
-        {"title": "A", "url": "https://a.test", "content": "snippet a"},
-        {"title": "B", "url": "https://b.test", "content": "snippet b"},
+        {"title": "A", "url": "https://a.test/story#top", "content": "snippet a",
+         "engine": "Reuters", "publishedDate": "2026-08-07T10:00:00Z"},
+        {"title": "A duplicate", "url": "https://a.test/story", "content": "duplicate"},
+        {"title": "B", "url": "https://b.test", "content": "snippet b", "engines": ["bing news"]},
     ]}
 
     def _opener(req, timeout=10):
-        assert "q=test" in req.full_url
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(req.full_url).query)
+        assert query == {
+            "q": ["test"],
+            "format": ["json"],
+            "categories": ["news"],
+            "time_range": ["day"],
+        }
         return _FakeSearchResponse(payload)
     monkeypatch.setattr(urllib.request, "urlopen", _opener)
 
-    results = news.search_web("test", count=5)
+    results = news.search_web("test", count=5, time_range="day")
 
-    assert results == payload["results"]
+    assert results == [
+        {"title": "A", "url": "https://a.test/story", "content": "snippet a",
+         "source": "Reuters", "published": "2026-08-07T10:00:00Z"},
+        {"title": "B", "url": "https://b.test", "content": "snippet b",
+         "source": "bing news", "published": ""},
+    ]
+
+
+def test_search_web_rejects_invalid_time_range():
+    with pytest.raises(ValueError, match="time_range"):
+        news.search_web("test", time_range="all")
+
+
+def test_search_web_falls_back_when_news_engines_return_nothing(monkeypatch):
+    calls = []
+
+    def _opener(req, timeout=10):
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(req.full_url).query)
+        calls.append(query)
+        if query["categories"] == ["news"]:
+            return _FakeSearchResponse({"results": []})
+        return _FakeSearchResponse({"results": [
+            {"title": "Fallback", "url": "https://example.test/news", "content": "Current story"},
+        ]})
+
+    monkeypatch.setattr(urllib.request, "urlopen", _opener)
+
+    results = news.search_web("markets", count=5)
+
+    assert calls[0]["categories"] == ["news"]
+    assert calls[1]["categories"] == ["general"]
+    assert calls[1]["q"] == ["markets news"]
+    assert results[0]["title"] == "Fallback"
 
 
 def test_search_web_raises_when_unreachable(monkeypatch):

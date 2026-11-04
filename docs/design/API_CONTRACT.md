@@ -142,12 +142,20 @@ Presentation: reader page subscribes, updates progress + review table live.
 
 ---
 
-## 5. AI analysis (local Ollama/Hermes)  [P5]
+## 5. AI analysis (local Hermes Agent)  [P5]
 
 ### POST /api/ai/chat
-body: `{"page":"reader","page_context":{...},"messages":[{"role":"user","content":"..."}]}`
+body: `{"provider":"hermes","page":"reader","page_context":{...},"messages":[{"role":"user","content":"..."}]}`
 ```json
 {"answer":"..."}
+```
+
+`provider` is `hermes` by default; `cloud` is accepted only when the server-side cloud provider is
+explicitly enabled. The Core proxies Hermes so `HERMES_API_KEY` never enters browser storage.
+
+### GET /api/ai/health
+```json
+{"status":"ok","provider":"hermes","model":"hermes-agent"}
 ```
 
 ### POST /api/statements/{id}/analyze
@@ -155,6 +163,45 @@ body: `{"page":"reader","page_context":{...},"messages":[{"role":"user","content
 {"summary":"...","comparison":[...],"anomalies":[...]}
 ```
 Gate: only statements with no open flags (all verified/repaired). Else 409.
+
+---
+
+## 6. Local portfolio ledger
+
+Portfolio records retain native currencies; `display_currency` changes presentation
+and projections only. Mutations return a durable `job_id`; poll the job before
+assuming projections are current.
+
+```
+GET    /api/portfolio
+PATCH  /api/portfolio/preferences
+GET    /api/portfolio/performance?range=1m|3m|ytd|1y|all
+GET    /api/portfolio/transactions?page=1&page_size=50&type=BUY&q=VNM
+POST   /api/portfolio/transactions
+PATCH  /api/portfolio/transactions/{id}   # replacement revision
+DELETE /api/portfolio/transactions/{id}   # audited void
+GET    /api/portfolio/jobs/{job_id}
+```
+
+Transaction types: `BUY`, `SELL`, `DIVIDEND`, `DEPOSIT`, `WITHDRAWAL`, `FEE`,
+`TAX`. Trades require `ticker`, `quantity`, `unit_price`, `currency`, and
+`effective_at`; cash events use `cash_amount`. Sells consume FIFO lots.
+
+CSV import is staged and atomic:
+
+```
+POST /api/portfolio/imports/preview       # multipart file
+POST /api/portfolio/imports/{id}/validate # {"mapping":{"CSV column":"canonical_field"}}
+POST /api/portfolio/imports/{id}/commit
+GET  /api/portfolio/imports/{id}/errors
+```
+
+Exports:
+
+```
+GET /api/portfolio/statement
+GET /api/portfolio/transactions/export
+```
 
 ---
 

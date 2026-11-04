@@ -7,6 +7,20 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # AI
+    ai_provider: str = "hermes"
+    hermes_api_url: str = "http://127.0.0.1:8642"
+    hermes_api_key: str = ""
+    hermes_model: str = "mlx-community/gemma-4-26B-A4B-it-OptiQ-4bit"
+    hermes_timeout_seconds: float = 300.0
+    ollama_api_url: str = "http://127.0.0.1:11434"
+    ollama_ocr_model: str = "gemma4:12b"
+    ollama_timeout_seconds: float = 60.0
+    ollama_ocr_num_ctx: int = 4096
+    enable_automatic_ocr_label_review: bool = True
+    automatic_ocr_label_limit: int = 150
+    sync_advertised_host: str = ""
+    obsidian_vault_path: str = ""
+    obsidian_label_library_path: str = "Financial Analyze/Label Library"
     anthropic_api_key: str = ""
     enable_cloud_ai: bool = False
     allow_unverified_filing_ai: bool = False

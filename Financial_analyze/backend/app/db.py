@@ -97,6 +97,22 @@ def _upgrade_legacy_ocr_schema():
         "ocr_review_jobs": {
             "result_format": "VARCHAR(40) NOT NULL DEFAULT 'structured_rows_v1'",
         },
+        "ocr_label_review_runs": {
+            "requested_rows": "JSON",
+            "current_table_number": "INTEGER",
+            "current_row_number": "INTEGER",
+            "processed_count": "INTEGER NOT NULL DEFAULT 0",
+            "trigger": "VARCHAR(24) NOT NULL DEFAULT 'user'",
+        },
+        "ocr_label_suggestions": {
+            "suggested_label": "TEXT",
+        },
+        "ocr_page_results": {
+            "label_check_status": "VARCHAR(24) NOT NULL DEFAULT 'pending'",
+            "label_check_summary": "JSON",
+            "label_check_error": "TEXT",
+            "label_checked_at": "TIMESTAMP",
+        },
     }
     with engine.begin() as conn:
         for table_name, additions in additions_by_table.items():

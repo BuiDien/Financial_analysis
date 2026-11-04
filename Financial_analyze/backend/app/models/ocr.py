@@ -99,6 +99,12 @@ class OCRReviewJob(Base):
         "OCRAuditEvent", back_populates="review", cascade="all, delete-orphan",
         order_by="OCRAuditEvent.id",
     )
+    label_review_runs = relationship(
+        "OCRLabelReviewRun",
+        back_populates="review",
+        cascade="all, delete-orphan",
+        order_by="OCRLabelReviewRun.id",
+    )
 
 
 class OCRPageResult(Base):
@@ -120,6 +126,12 @@ class OCRPageResult(Base):
     review_status = Column(String(32), nullable=False, default="pending", index=True)
     content_sha256 = Column(String(64), nullable=False)
     byte_size = Column(Integer, nullable=False)
+    label_check_status = Column(
+        String(24), nullable=False, default="pending", index=True,
+    )
+    label_check_summary = Column(JSON, nullable=True)
+    label_check_error = Column(Text, nullable=True)
+    label_checked_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False,
@@ -166,3 +178,102 @@ class OCRAuditEvent(Base):
 
     review = relationship("OCRReviewJob", back_populates="events")
     row = relationship("OCRReviewRow", back_populates="events")
+
+
+class OCRLabelReviewRun(Base):
+    __tablename__ = "ocr_label_review_runs"
+    __table_args__ = (
+        CheckConstraint("page_number >= 1", name="ck_ocr_label_run_page_positive"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    review_id = Column(
+        Integer,
+        ForeignKey("ocr_review_jobs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    page_number = Column(Integer, nullable=False)
+    base_revision = Column(Integer, nullable=False)
+    page_content_sha256 = Column(String(64), nullable=False)
+    status = Column(String(24), nullable=False, default="queued", index=True)
+    trigger = Column(String(24), nullable=False, default="user")
+    skill_name = Column(String(80), nullable=False, default="kiem-tra-nhan-ocr")
+    skill_version = Column(String(24), nullable=False, default="0.1.0")
+    model = Column(String(120), nullable=True)
+    # Rows selected by the user or collected by the automatic worker checker.
+    # Ollama still processes them one label at a time.
+    requested_rows = Column(JSON, nullable=True)
+    current_table_number = Column(Integer, nullable=True)
+    current_row_number = Column(Integer, nullable=True)
+    processed_count = Column(Integer, nullable=False, default=0)
+    tool_call_count = Column(Integer, nullable=False, default=0)
+    input_token_count = Column(Integer, nullable=True)
+    output_token_count = Column(Integer, nullable=True)
+    duration_ms = Column(Integer, nullable=True)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+
+    review = relationship("OCRReviewJob", back_populates="label_review_runs")
+    suggestions = relationship(
+        "OCRLabelSuggestion",
+        back_populates="run",
+        cascade="all, delete-orphan",
+        order_by="OCRLabelSuggestion.id",
+    )
+
+
+class OCRLabelSuggestion(Base):
+    __tablename__ = "ocr_label_suggestions"
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id", "table_number", "row_number",
+            name="uq_ocr_label_suggestion_run_row",
+        ),
+        CheckConstraint(
+            "current_level IS NULL OR current_level BETWEEN -1 AND 3",
+            name="ck_ocr_label_suggestion_current_level",
+        ),
+        CheckConstraint(
+            "suggested_level BETWEEN -1 AND 3",
+            name="ck_ocr_label_suggestion_suggested_level",
+        ),
+        CheckConstraint(
+            "user_edited_level IS NULL OR user_edited_level BETWEEN -1 AND 3",
+            name="ck_ocr_label_suggestion_user_level",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    run_id = Column(
+        Integer,
+        ForeignKey("ocr_label_review_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    table_number = Column(Integer, nullable=False)
+    row_number = Column(Integer, nullable=False)
+    label_cell_hash = Column(String(64), nullable=False)
+    current_label = Column(Text, nullable=False)
+    suggested_label = Column(Text, nullable=True)
+    current_level = Column(Integer, nullable=True)
+    suggested_level = Column(Integer, nullable=False)
+    confidence = Column(String(12), nullable=False)
+    reason_codes = Column(JSON, nullable=False, default=list)
+    evidence = Column(JSON, nullable=False, default=dict)
+    explanation = Column(Text, nullable=False)
+    visual_confirmation_required = Column(Integer, nullable=False, default=0)
+    decision = Column(String(16), nullable=False, default="pending", index=True)
+    user_edited_level = Column(Integer, nullable=True)
+    applied_revision = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    run = relationship("OCRLabelReviewRun", back_populates="suggestions")

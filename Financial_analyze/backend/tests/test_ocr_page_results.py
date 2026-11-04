@@ -1,6 +1,12 @@
 import pytest
 
-from app.models.ocr import OCRAttempt, OCRInboxItem, OCRPageResult
+from app.config import get_settings
+from app.models.ocr import (
+    OCRAttempt, OCRInboxItem, OCRLabelReviewRun, OCRPageResult,
+)
+from app.services import ocr_label_review
+from app.services.ocr_auto_label_review import run_auto_document_label_review
+from app.services.ocr_label_library import get_label_library
 from app.services.ocr_page_results import (
     OCRPageConflictError, finalize_page_result, store_page_result,
 )
@@ -110,3 +116,90 @@ def test_out_of_order_pages_are_merged_in_page_order(db, tmp_path):
     assert attempt.received_pages == 2
     assert attempt.merged_markdown.index("PAGE:1") < attempt.merged_markdown.index("PAGE:2")
     assert item.status == "ready_for_review"
+
+
+def test_completed_document_queues_obsidian_and_ollama_labels_once(
+    db, tmp_path, monkeypatch,
+):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "enable_automatic_ocr_label_review", True)
+    monkeypatch.setattr(settings, "automatic_ocr_label_limit", 20)
+    monkeypatch.setattr(settings, "obsidian_vault_path", str(tmp_path / "vault"))
+    monkeypatch.setattr(
+        settings,
+        "obsidian_label_library_path",
+        "Financial Analyze/Label Library",
+    )
+    library = get_label_library(
+        settings.obsidian_vault_path,
+        settings.obsidian_label_library_path,
+    )
+    library.record_verified_page(
+        "balance_sheet",
+        """| Label | Current |
+| --- | ---: |
+| NỢ PHẢI TRẢ | 60 |""",
+        "b" * 64,
+    )
+    attempt, item = _attempt(db, tmp_path)
+    first, _status = store_page_result(
+        db,
+        attempt,
+        item,
+        _message(1, """| Label | Current |
+| --- | ---: |
+| NƠ PHAI TRA | 60 |"""),
+    )
+    second, _status = store_page_result(
+        db,
+        attempt,
+        item,
+        _message(2, """| Label | Current |
+| --- | ---: |
+| LƠI NHUÂN SAU THUÊ | 40 |"""),
+    )
+    review, missing = finalize_page_result(
+        db,
+        attempt,
+        item,
+        {
+            "type": "result_end",
+            "jobId": "job_test",
+            "schemaVersion": 2,
+            "pageCount": 2,
+        },
+    )
+    db.commit()
+    assert missing == []
+    assert first.label_check_summary["candidates"][0]["source"] == "obsidian"
+    assert second.label_check_summary["candidates"][0]["source"] == "ollama"
+
+    ollama_labels = []
+
+    def complete(_system, label, **_kwargs):
+        ollama_labels.append(label)
+        return (
+            '{"corrected_label":"LỢI NHUẬN SAU THUẾ",'
+            '"confidence":"high"}'
+        )
+
+    monkeypatch.setattr(ocr_label_review.ai, "ollama_label_complete", complete)
+    run_auto_document_label_review(db.get_bind(), review.id)
+    db.expire_all()
+
+    runs = (
+        db.query(OCRLabelReviewRun)
+        .filter_by(review_id=review.id, trigger="worker_auto")
+        .order_by(OCRLabelReviewRun.page_number)
+        .all()
+    )
+    assert len(runs) == 2
+    assert [run.status for run in runs] == ["completed", "completed"]
+    assert [run.tool_call_count for run in runs] == [0, 1]
+    assert runs[0].suggestions[0].suggested_label == "NỢ PHẢI TRẢ"
+    assert runs[0].suggestions[0].reason_codes == ["obsidian_verified_label"]
+    assert runs[1].suggestions[0].suggested_label == "LỢI NHUẬN SAU THUẾ"
+    assert ollama_labels == ["LƠI NHUÂN SAU THUÊ"]
+
+    run_auto_document_label_review(db.get_bind(), review.id)
+    assert db.query(OCRLabelReviewRun).filter_by(review_id=review.id).count() == 2

@@ -98,31 +98,79 @@ def fetch_vn_rss(query: str | None = None, limit: int = 30) -> list[dict]:
     return items[:limit]
 
 
-def search_web(query: str, count: int = 5) -> list[dict]:
-    """Search the web via a local, self-hosted SearXNG instance.
+def search_web(query: str, count: int = 5, time_range: str = "week") -> list[dict]:
+    """Search recent news via a local, self-hosted SearXNG instance.
 
     Args:
         query: search terms.
         count: max results to return.
+        time_range: SearXNG freshness window (day, week, or month).
 
-    Returns [{title, url, content}]. Raises RuntimeError with a clear
-    "is it running?" message if SearXNG isn't reachable.
+    Returns [{title, url, content, source, published}]. Empty and duplicate
+    results are removed. Raises RuntimeError with a clear "is it running?"
+    message if SearXNG isn't reachable.
     """
-    qs = urllib.parse.urlencode({"q": query, "format": "json"})
-    req = urllib.request.Request(f"{SEARXNG_URL}/search?{qs}")
-    try:
+    if time_range not in {"day", "week", "month"}:
+        raise ValueError("time_range must be day, week, or month")
+
+    def fetch_results(search_query: str, category: str) -> list[dict]:
+        qs = urllib.parse.urlencode({
+            "q": search_query,
+            "format": "json",
+            "categories": category,
+            "time_range": time_range,
+        })
+        req = urllib.request.Request(f"{SEARXNG_URL}/search?{qs}")
         with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read())
+            return json.loads(resp.read()).get("results", [])
+
+    try:
+        raw_results = fetch_results(query, "news")
     except Exception as e:
         raise RuntimeError(
             f"SearXNG unreachable at {SEARXNG_URL} — is it running? "
             f"(./scripts/run_searxng.sh) Error: {e}"
         ) from e
 
-    return [
-        {"title": r.get("title", ""), "url": r.get("url", ""), "content": r.get("content", "")}
-        for r in data.get("results", [])[:count]
-    ]
+    # Public news engines are frequently rate-limited or CAPTCHA-blocked.
+    # Preserve a working search by falling back to general engines, while
+    # keeping the same freshness window and making news intent explicit.
+    if not raw_results:
+        try:
+            raw_results = fetch_results(f"{query} news", "general")
+        except Exception:
+            raw_results = []
+
+    results = []
+    seen_urls = set()
+    for item in raw_results:
+        title = str(item.get("title") or "").strip()
+        url = str(item.get("url") or "").strip()
+        if not title or not url:
+            continue
+
+        # Fragments do not identify a different article. Treat a trailing
+        # slash as equivalent too, while returning the original clean URL.
+        parsed = urllib.parse.urlsplit(url)
+        dedupe_url = urllib.parse.urlunsplit(
+            (parsed.scheme.lower(), parsed.netloc.lower(), parsed.path.rstrip("/"), parsed.query, "")
+        )
+        if dedupe_url in seen_urls:
+            continue
+        seen_urls.add(dedupe_url)
+
+        engines = item.get("engines") or []
+        source = item.get("engine") or (engines[0] if engines else "")
+        results.append({
+            "title": title,
+            "url": urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, "")),
+            "content": str(item.get("content") or "").strip(),
+            "source": str(source or ""),
+            "published": str(item.get("publishedDate") or item.get("pubdate") or ""),
+        })
+        if len(results) >= count:
+            break
+    return results
 
 
 def read_article(url: str) -> dict:

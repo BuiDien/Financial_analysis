@@ -1,369 +1,261 @@
-// Portfolio page
+// Trustworthy portfolio overview + audited transaction ledger.
+
+const PORTFOLIO_CURRENCIES = ['USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF', 'CNY', 'VND'];
+const TX_TYPES = ['BUY', 'SELL', 'DIVIDEND', 'DEPOSIT', 'WITHDRAWAL', 'FEE', 'TAX'];
+
+const pfMoney = (value, currency = 'USD', digits = 2) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '—';
+  try { return new Intl.NumberFormat(undefined, { style: 'currency', currency, minimumFractionDigits: digits, maximumFractionDigits: digits }).format(n); }
+  catch { return `${currency} ${n.toLocaleString(undefined, { maximumFractionDigits: digits })}`; }
+};
+
+const pfLocalDateTime = (value = new Date()) => {
+  const date = new Date(value);
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+};
+
+const demoPortfolio = (data) => {
+  const p = data.portfolio;
+  return {
+    id: null, name: 'Demo portfolio', display_currency: p.displayCurrency || 'USD',
+    total_value: p.totalValue || 0, cash_value: p.cash || 0,
+    today_change: p.dayChange || 0, today_change_pct: p.dayChangePct || 0,
+    total_gain: p.totalGain || 0, total_gain_pct: p.totalGainPct || 0,
+    holdings: (p.holdings || []).map(h => ({
+      ticker: h.sym, currency: 'USD', shares: h.shares, avg_cost: h.avgCost,
+      price: h.price, value: h.value, value_native: h.value,
+      gain: h.gain, gain_pct: h.gainPct, weight: h.weight,
+    })),
+    cash: [{ currency: 'USD', balance: p.cash || 0, converted: p.cash || 0 }],
+    complete: true, missing: [], stale: [], projection_status: 'demo', demo: true,
+  };
+};
+
+const PortfolioStatus = ({ portfolio, live }) => {
+  if (!live) return <span className="pill" style={{ color: 'var(--text-muted)' }}>Demo · backend offline</span>;
+  if (portfolio.projection_status !== 'ready') return <span className="pill" style={{ color: 'var(--accent)' }}>{portfolio.projection_status}</span>;
+  if (!portfolio.complete) return <span className="pill neg">Incomplete valuation</span>;
+  if (portfolio.stale?.length) return <span className="pill" style={{ color: 'var(--warn, #a16207)' }}>Stale data</span>;
+  return <span className="pill pos">Verified live</span>;
+};
+
+const PortfolioMetric = ({ label, value, delta }) => <div className="stat"><div className="stat-label">{label}</div><div className="stat-value" style={{ fontSize: 24 }}>{value}</div>{delta !== undefined && <div className="stat-delta"><ChangeText value={delta} /></div>}</div>;
 
 const PagePortfolio = ({ data, setActiveAsset, setPage }) => {
-  const [extra, setExtra] = React.useState([]);   // locally-added positions
-  const [livePortfolio, setLivePortfolio] = React.useState(null);
-  const [showAdd, setShowAdd] = React.useState(false);
-  const base = livePortfolio || data.portfolio;
+  const [portfolio, setPortfolio] = React.useState(null);
+  const [live, setLive] = React.useState(false);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState('');
+  const [tab, setTab] = React.useState('overview');
+  const [range, setRange] = React.useState('1y');
+  const [chartMode, setChartMode] = React.useState('value');
+  const [performance, setPerformance] = React.useState([]);
+  const [transactions, setTransactions] = React.useState({ items: [], total: 0, page: 1, page_size: 50 });
+  const [txFilter, setTxFilter] = React.useState('');
+  const [txQuery, setTxQuery] = React.useState('');
+  const [showTx, setShowTx] = React.useState(false);
+  const [editTx, setEditTx] = React.useState(null);
+  const [showImport, setShowImport] = React.useState(false);
+  const [busy, setBusy] = React.useState('');
 
-  const mapApiPortfolio = (pf) => ({
-    ...data.portfolio,
-    totalValue: pf.total_value,
-    totalGain: pf.total_gain,
-    totalGainPct: pf.total_gain_pct,
-    holdings: (pf.holdings || []).map(h => ({
-      id: h.id,
-      sym: h.ticker,
-      shares: h.shares,
-      avgCost: h.cost_basis / (h.shares || 1),
-      price: h.price,
-      value: h.value,
-      gain: h.gain,
-      gainPct: h.gain_pct,
-      weight: pf.total_value ? (h.value / pf.total_value) * 100 : 0,
-    })),
-  });
+  const loadPortfolio = React.useCallback(async () => {
+    setError('');
+    if (!window.HelixAPI) { delete window.__livePortfolioContext; setPortfolio(demoPortfolio(data)); setLive(false); setLoading(false); return; }
+    if (!window.HelixAPI.checked) await window.HelixAPI.detect();
+    if (!window.HelixAPI.live) { delete window.__livePortfolioContext; setPortfolio(demoPortfolio(data)); setLive(false); setLoading(false); return; }
+    try {
+      const pf = await window.HelixAPI.portfolio();
+      window.__livePortfolioContext = pf;
+      setPortfolio(pf); setLive(true);
+    } catch (e) { setError(e.message || String(e)); }
+    setLoading(false);
+  }, [data]);
 
-  React.useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      if (!window.HelixAPI) return;
-      if (!window.HelixAPI.checked) await window.HelixAPI.detect();
-      if (!window.HelixAPI.live) return;
-      try {
-        const pf = await window.HelixAPI.portfolio();
-        if (!cancelled) setLivePortfolio(mapApiPortfolio(pf));
-      } catch {}
-    };
-    load();
-    return () => { cancelled = true; };
-  }, []);
-  // Merge base holdings with any added this session, recomputing totals
-  const p = React.useMemo(() => {
-    const holdings = [...base.holdings, ...extra];
-    const addedValue = extra.reduce((s, h) => s + h.value, 0);
-    const addedGain = extra.reduce((s, h) => s + h.gain, 0);
-    const totalValue = base.totalValue + addedValue;
-    const totalGain = base.totalGain + addedGain;
-    // Recompute weights against the new total
-    const reweighted = holdings.map(h => ({ ...h, weight: (h.value / totalValue) * 100 }));
-    return {
-      ...base, holdings: reweighted, totalValue, totalGain,
-      totalGainPct: ((totalGain) / (totalValue - totalGain)) * 100,
-    };
-  }, [base, extra]);
+  const loadPerformance = React.useCallback(async () => {
+    if (!window.HelixAPI?.live) { setPerformance([]); return; }
+    try { setPerformance((await window.HelixAPI.portfolioPerformance(range)).items || []); }
+    catch { setPerformance([]); }
+  }, [range]);
 
-  const addPosition = async (pos) => {
-    const value = pos.shares * pos.price;
-    const cost = pos.shares * pos.avgCost;
-    const gain = value - cost;
-    if (window.HelixAPI?.live) {
-      try {
-        await window.HelixAPI.addHolding({
-          ticker: pos.sym,
-          shares: pos.shares,
-          cost_basis: cost,
-        });
-        const pf = await window.HelixAPI.portfolio();
-        setLivePortfolio(mapApiPortfolio(pf));
-        setShowAdd(false);
-        window.toast?.(`Added ${pos.shares} ${pos.sym}`, { type: 'success' });
-      } catch (e) {
-        window.toast?.(`Could not add position: ${e.message || e}`, { type: 'error' });
-      }
-      return;
+  const loadTransactions = React.useCallback(async (page = 1) => {
+    if (!window.HelixAPI?.live) { setTransactions({ items: [], total: 0, page: 1, page_size: 50 }); return; }
+    try { setTransactions(await window.HelixAPI.portfolioTransactions({ page, page_size: 50, ...(txFilter ? { type: txFilter } : {}), ...(txQuery ? { q: txQuery } : {}) })); }
+    catch (e) { setError(e.message || String(e)); }
+  }, [txFilter, txQuery]);
+
+  React.useEffect(() => { loadPortfolio(); const id = setInterval(loadPortfolio, 5 * 60 * 1000); return () => clearInterval(id); }, [loadPortfolio]);
+  React.useEffect(() => { if (live) loadPerformance(); }, [live, range, loadPerformance]);
+  React.useEffect(() => { if (live && tab === 'transactions') { const id = setTimeout(() => loadTransactions(1), 250); return () => clearTimeout(id); } }, [live, tab, txFilter, txQuery, loadTransactions]);
+
+  const awaitJob = async (jobId) => {
+    if (!jobId) return;
+    for (let i = 0; i < 120; i++) {
+      const job = await window.HelixAPI.portfolioJob(jobId);
+      setBusy(`${job.type.replaceAll('_', ' ')} · ${job.progress}%`);
+      if (job.status === 'completed') return;
+      if (job.status === 'failed') throw new Error(job.error || 'Portfolio rebuild failed');
+      await new Promise(resolve => setTimeout(resolve, 500));
     }
-    setExtra(prev => [...prev, {
-      sym: pos.sym, shares: pos.shares, avgCost: pos.avgCost, price: pos.price,
-      value, gain, gainPct: cost ? (gain / cost) * 100 : 0, weight: 0,
-    }]);
-    setShowAdd(false);
-    window.toast && window.toast(`Added ${pos.shares} ${pos.sym}`, { type: 'success' });
+    throw new Error('Portfolio rebuild timed out');
   };
 
-  const downloadStatement = () => {
-    const today = new Date().toISOString().slice(0, 10);
-    const lines = [];
-    lines.push('PORTFOLIO STATEMENT');
-    lines.push(`Generated: ${today}`);
-    lines.push('');
-    lines.push(`Total value:      $${p.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}`);
-    lines.push(`Total gain:       $${p.totalGain.toLocaleString('en-US', { minimumFractionDigits: 2 })} (${p.totalGainPct >= 0 ? '+' : ''}${p.totalGainPct.toFixed(2)}%)`);
-    lines.push(`Cash:             $${(p.cash || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}`);
-    lines.push(`Positions:        ${p.holdings.length}`);
-    lines.push('');
-    lines.push('HOLDINGS');
-    lines.push('Ticker   Shares     Avg Cost      Price   Mkt Value      Gain      Gain%   Weight');
-    p.holdings.forEach(h => {
-      lines.push(
-        h.sym.padEnd(8) +
-        String(h.shares).padStart(7) +
-        ('$' + h.avgCost.toFixed(2)).padStart(12) +
-        ('$' + h.price.toFixed(2)).padStart(11) +
-        ('$' + Math.round(h.value).toLocaleString('en-US')).padStart(12) +
-        ('$' + Math.round(h.gain).toLocaleString('en-US')).padStart(11) +
-        ((h.gainPct >= 0 ? '+' : '') + h.gainPct.toFixed(1) + '%').padStart(9) +
-        (h.weight.toFixed(1) + '%').padStart(8)
-      );
-    });
-    const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = `portfolio_statement_${today}.txt`; a.click();
-    URL.revokeObjectURL(url);
-    window.toast && window.toast('Statement downloaded', { type: 'success' });
+  const refreshAll = async () => { await loadPortfolio(); await loadPerformance(); if (tab === 'transactions') await loadTransactions(transactions.page); };
+
+  const saveTransaction = async (payload) => {
+    if (!live) return;
+    setBusy(editTx ? 'Replacing transaction…' : 'Adding transaction…');
+    try {
+      const result = editTx ? await window.HelixAPI.replaceTransaction(editTx.id, payload) : await window.HelixAPI.addTransaction(payload);
+      await awaitJob(result.job_id); setShowTx(false); setEditTx(null); await refreshAll();
+      window.toast?.(editTx ? 'Transaction replaced' : 'Transaction added', { type: 'success' });
+    } catch (e) { window.toast?.(e.message || String(e), { type: 'error', duration: 7000 }); }
+    setBusy('');
   };
 
-  const exportHoldingsCSV = () => {
-    const header = ['Ticker', 'Shares', 'Avg Cost', 'Price', 'Market Value', 'Total Gain', 'Gain %', 'Weight %'];
-    const rows = [header.join(',')];
-    p.holdings.forEach(h => {
-      rows.push([h.sym, h.shares, h.avgCost, h.price, h.value, h.gain, h.gainPct, h.weight].join(','));
-    });
-    rows.push(['Total', '', '', '', p.totalValue, p.totalGain, p.totalGainPct, 100].join(','));
-    const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = 'portfolio_holdings.csv'; a.click();
-    URL.revokeObjectURL(url);
-    window.toast && window.toast(`Exported ${p.holdings.length} holdings`, { type: 'success' });
+  const voidTransaction = async (tx) => {
+    if (!await window.askConfirm({ title: 'Void transaction', message: `Void this ${tx.type.toLowerCase()} transaction? Its audit history will be preserved.`, confirmText: 'Void', danger: true })) return;
+    setBusy('Voiding transaction…');
+    try { const result = await window.HelixAPI.voidTransaction(tx.id); await awaitJob(result.job_id); await refreshAll(); window.toast?.('Transaction voided', { type: 'success' }); }
+    catch (e) { window.toast?.(e.message || String(e), { type: 'error' }); }
+    setBusy('');
   };
 
-  // Performance series — cumulative gain over time
-  const perfSeries = React.useMemo(() => {
-    const days = 90;
-    const arr = [];
-    let v = p.totalValue - p.totalGain;
-    for (let i = 0; i < days; i++) {
-      const drift = 0.0008 + Math.sin(i / 12) * 0.002;
-      const noise = (Math.sin(i * 1.7) + Math.cos(i * 0.9)) * 0.004;
-      v = v * (1 + drift + noise);
-      arr.push(v);
-    }
-    arr[arr.length - 1] = p.totalValue;
-    return arr;
-  }, [p.totalValue, p.totalGain]);
+  const changeCurrency = async (currency) => {
+    if (!live || currency === portfolio.display_currency) return;
+    setBusy(`Converting to ${currency}…`);
+    try {
+      const result = await window.HelixAPI.setPortfolioCurrency(currency); await awaitJob(result.job_id); await refreshAll();
+      const settings = JSON.parse(localStorage.getItem('helix_settings_v1') || '{}');
+      localStorage.setItem('helix_settings_v1', JSON.stringify({ ...settings, baseCurrency: currency }));
+    } catch (e) { window.toast?.(e.message || String(e), { type: 'error', duration: 7000 }); }
+    setBusy('');
+  };
 
-  const allocColors = ['#C2410C', '#9A3412', '#7C2D12', '#A16207', '#1D4ED8', '#15803D', '#7C3AED', '#0E7490', '#9333EA', '#BE185D', '#0F766E'];
-  const allocSegments = p.holdings.map((h, i) => ({ value: h.value, color: allocColors[i % allocColors.length], label: h.sym }));
+  const exportHoldings = () => {
+    const rows = [['Ticker', 'Native Currency', 'Shares', 'Avg Cost', 'Last', `Value (${portfolio.display_currency})`, `Gain (${portfolio.display_currency})`, 'Gain %', 'Weight %']];
+    portfolio.holdings.forEach(h => rows.push([h.ticker, h.currency, h.shares, h.avg_cost, h.price ?? '', h.value ?? '', h.gain ?? '', h.gain_pct ?? '', h.weight ?? '']));
+    const blob = new Blob([rows.map(row => row.join(',')).join('\n')], { type: 'text/csv' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'portfolio_holdings.csv'; a.click(); URL.revokeObjectURL(a.href);
+  };
+
+  if (loading || !portfolio) return <div className="page"><div className="skeleton" style={{ height: 220 }} /></div>;
+  const currency = portfolio.display_currency;
+  const colors = ['#C2410C', '#1D4ED8', '#15803D', '#7C3AED', '#A16207', '#0E7490', '#BE185D'];
+  const segments = portfolio.holdings.filter(h => h.value > 0).map((h, i) => ({ value: h.value, label: h.ticker, color: colors[i % colors.length] }));
+  const chartData = performance.map(point => chartMode === 'twr' ? point.twr : point.value);
 
   return (
     <div className="page">
       <div className="page-header">
         <div>
-          <h1 className="page-title">Your portfolio.</h1>
-          <p className="page-sub">{p.holdings.length} holdings</p>
+          <div className="row" style={{ marginBottom: 4 }}><h1 className="page-title" style={{ margin: 0 }}>Your portfolio.</h1><PortfolioStatus portfolio={portfolio} live={live} /></div>
+          <p className="page-sub">{portfolio.holdings.length} positions · Ledger revision {portfolio.ledger_revision || 0}{portfolio.as_of ? ` · ${new Date(portfolio.as_of).toLocaleString()}` : ''}</p>
         </div>
-        <div className="row">
-          <button className="btn" onClick={downloadStatement}><Icon name="download" size={12} /> Statement</button>
-          <button className="btn btn-primary" onClick={() => setShowAdd(true)}><Icon name="plus" size={12} /> Add position</button>
+        <div className="row" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <select className="btn" value={currency} disabled={!live || !!busy} onChange={e => changeCurrency(e.target.value)} title="Display currency only — native records are unchanged">
+            {PORTFOLIO_CURRENCIES.map(c => <option key={c}>{c}</option>)}
+          </select>
+          <button className="btn" disabled={!live} onClick={() => { const a = document.createElement('a'); a.href = window.HelixAPI.portfolioStatementUrl(); a.click(); }}><Icon name="download" size={12} /> Statement</button>
+          <button className="btn" disabled={!live} onClick={() => setShowImport(true)}><Icon name="download" size={12} /> Import CSV</button>
+          <button className="btn btn-primary" disabled={!live} onClick={() => { setEditTx(null); setShowTx(true); }}><Icon name="plus" size={12} /> Add transaction</button>
         </div>
       </div>
 
-      {/* Hero stat */}
-      <div className="card" style={{ marginBottom: 20, padding: 24 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 32, alignItems: 'center' }}>
-          <div>
-            <div style={{ fontSize: 11, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Total Value</div>
-            <div className="num" style={{ fontSize: 44, fontWeight: 600, letterSpacing: '-0.02em', marginTop: 4 }}>
-              ${fmtNum(p.totalValue, 0)}<span style={{ color: 'var(--text-subtle)', fontSize: 24 }}>.{(p.totalValue % 1).toFixed(2).slice(2)}</span>
-            </div>
-            <div className="row" style={{ marginTop: 12, gap: 16, flexWrap: 'wrap' }}>
-              <div>
-                <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>Today</div>
-                <div className="row" style={{ gap: 6 }}>
-                  <span className="num pos" style={{ fontSize: 16, fontWeight: 600 }}>+${fmtNum(p.dayChange)}</span>
-                  <Pill value={p.dayChangePct} />
-                </div>
+      {!live && <div className="card" style={{ padding: 12, marginBottom: 16, color: 'var(--text-muted)', borderColor: 'var(--border-strong)' }}>This is read-only demo data. Connect the FastAPI backend to create and persist a real portfolio.</div>}
+      {busy && <div className="card" style={{ padding: 10, marginBottom: 16, color: 'var(--accent)' }}>{busy}</div>}
+      {error && <div className="card" style={{ padding: 10, marginBottom: 16, color: 'var(--neg)' }}>{error}</div>}
+      {portfolio.missing?.length > 0 && <div className="card" style={{ padding: 10, marginBottom: 16, color: 'var(--neg)' }}>Incomplete valuation: {portfolio.missing.map(x => x.key).join(', ')}</div>}
+      {portfolio.stale?.length > 0 && <div className="card" style={{ padding: 10, marginBottom: 16, color: 'var(--text-muted)' }}>Using last-known data for {portfolio.stale.map(x => x.key).join(', ')}. Values are visibly retained, never generated.</div>}
+
+      <div className="row" style={{ marginBottom: 16, borderBottom: '1px solid var(--border)' }}>
+        {['overview', 'transactions'].map(id => <button key={id} className="card-action" onClick={() => setTab(id)} style={{ padding: '10px 4px', marginRight: 18, color: tab === id ? 'var(--accent)' : 'var(--text-muted)', borderBottom: tab === id ? '2px solid var(--accent)' : '2px solid transparent', textTransform: 'capitalize' }}>{id}</button>)}
+      </div>
+
+      {tab === 'overview' ? <>
+        <div className="stat-grid" style={{ marginBottom: 20 }}>
+          <PortfolioMetric label="Total value" value={pfMoney(portfolio.total_value, currency)} />
+          <PortfolioMetric label="Today" value={pfMoney(portfolio.today_change, currency)} delta={portfolio.today_change_pct} />
+          <PortfolioMetric label="Investment gain" value={pfMoney(portfolio.total_gain, currency)} delta={portfolio.total_gain_pct} />
+          <PortfolioMetric label="Cash" value={pfMoney(portfolio.cash_value, currency)} />
+        </div>
+
+        {portfolio.holdings.length === 0 ? <PortfolioEmpty onAdd={() => setShowTx(true)} onImport={() => setShowImport(true)} live={live} /> : <>
+          <div className="card" style={{ marginBottom: 20 }}>
+            <div className="card-header" style={{ flexWrap: 'wrap' }}>
+              <div><h3 className="card-title">Performance</h3><span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>Deposits and withdrawals are excluded from TWR</span></div>
+              <div className="row">
+                <div className="range-chips">{['value', 'twr'].map(m => <button key={m} className="range-chip" aria-selected={chartMode === m} onClick={() => setChartMode(m)}>{m === 'twr' ? 'TWR %' : 'Value'}</button>)}</div>
+                <div className="range-chips">{['1m', '3m', 'ytd', '1y', 'all'].map(r => <button key={r} className="range-chip" aria-selected={range === r} onClick={() => setRange(r)}>{r.toUpperCase()}</button>)}</div>
               </div>
-              <div>
-                <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>All-time</div>
-                <div className="row" style={{ gap: 6 }}>
-                  <span className="num pos" style={{ fontSize: 16, fontWeight: 600 }}>+${fmtNum(p.totalGain, 0)}</span>
-                  <Pill value={p.totalGainPct} />
-                </div>
-              </div>
-              <div>
-                <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>Cash</div>
-                <div className="num" style={{ fontSize: 16, fontWeight: 600 }}>${fmtNum(p.cash, 0)}</div>
-              </div>
             </div>
+            <div className="card-body" style={{ height: 230 }}>{chartData.length > 1 ? <AreaChart data={chartData} width={1050} height={200} padding={{ t: 10, r: 60, b: 10, l: 0 }} /> : <div style={{ height: '100%', display: 'grid', placeItems: 'center', color: 'var(--text-subtle)' }}>Performance appears after historical prices are available.</div>}<div style={{ fontSize: 11, color: 'var(--text-subtle)', textAlign: 'right' }}>Net contributions in range: {pfMoney(performance.reduce((sum, point) => sum + Number(point.net_flow || 0), 0), currency)}</div></div>
           </div>
-          <div style={{ height: 160 }}>
-            <AreaChart data={perfSeries} width={760} height={160} padding={{ t: 8, r: 50, b: 8, l: 0 }} />
-          </div>
-        </div>
-      </div>
 
-      {/* Allocation + Performance attribution */}
-      <div className="grid-2" style={{ marginBottom: 20 }}>
-        <div className="card">
-          <div className="card-header">
-            <h3 className="card-title">Allocation</h3>
-            <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>By position</span>
+          <div className="grid-2" style={{ marginBottom: 20 }}>
+            <div className="card"><div className="card-header"><h3 className="card-title">Allocation</h3><span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>Verified market value</span></div><div className="card-body" style={{ display: 'flex', gap: 24, alignItems: 'center' }}><Donut segments={segments} size={160} thickness={28} /><div style={{ flex: 1 }}>{portfolio.holdings.slice(0, 7).map((h, i) => <div key={`${h.ticker}-${h.currency}`} style={{ display: 'grid', gridTemplateColumns: '12px 1fr auto', gap: 8, marginBottom: 7, fontSize: 12 }}><span style={{ width: 10, height: 10, background: colors[i % colors.length], borderRadius: 2 }} /><span className="ticker">{h.ticker}</span><span className="num">{Number(h.weight || 0).toFixed(1)}%</span></div>)}</div></div></div>
+            <div className="card"><div className="card-header"><h3 className="card-title">Cash balances</h3><span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>Native and converted</span></div><div className="card-body">{portfolio.cash.length ? portfolio.cash.map(row => <div key={row.currency} className="between row" style={{ padding: '10px 0', borderBottom: '1px solid var(--border)' }}><div><span className="ticker">{row.currency}</span>{row.warning && <span className="pill neg" style={{ marginLeft: 8 }}>Unreconciled</span>}</div><div style={{ textAlign: 'right' }}><div className="num">{pfMoney(row.balance, row.currency)}</div>{row.currency !== currency && <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{pfMoney(row.converted, currency)}</div>}</div></div>) : <span style={{ color: 'var(--text-subtle)' }}>No cash transactions yet.</span>}</div></div>
           </div>
-          <div className="card-body" style={{ display: 'flex', gap: 24, alignItems: 'center' }}>
-            <Donut segments={allocSegments} size={160} thickness={28} />
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {p.holdings.slice(0, 7).map((h, i) => (
-                <div key={h.sym} style={{ display: 'grid', gridTemplateColumns: '12px 1fr auto', gap: 8, alignItems: 'center', fontSize: 12 }}>
-                  <span style={{ width: 10, height: 10, background: allocColors[i % allocColors.length], borderRadius: 2 }}></span>
-                  <span className="ticker" style={{ fontSize: 12 }}>{h.sym}</span>
-                  <span className="num" style={{ color: 'var(--text-muted)' }}>{h.weight.toFixed(1)}%</span>
-                </div>
-              ))}
-              <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 4 }}>+ {p.holdings.length - 7} more</div>
-            </div>
-          </div>
-        </div>
 
-        <div className="card">
-          <div className="card-header">
-            <h3 className="card-title">Performance Attribution · Today</h3>
-          </div>
-          <div className="card-body" style={{ padding: 0 }}>
-            {[...p.holdings].sort((a, b) => Math.abs(b.gain * 0.01) - Math.abs(a.gain * 0.01)).slice(0, 6).map(h => {
-              const dayContrib = h.value * (data.watchlist.find(w => w.sym === h.sym)?.chg || 0) / 100;
-              return (
-                <div key={h.sym} style={{
-                  display: 'grid', gridTemplateColumns: '60px 1fr 80px', gap: 12,
-                  padding: '10px 16px', borderBottom: '1px solid var(--border)', alignItems: 'center',
-                }}>
-                  <span className="ticker">{h.sym}</span>
-                  <div style={{ position: 'relative', height: 18, background: 'var(--bg-sunken)', borderRadius: 3 }}>
-                    <div style={{
-                      position: 'absolute', left: '50%', top: 0, height: '100%',
-                      width: `${Math.min(50, Math.abs(dayContrib) / 50)}%`,
-                      background: dayContrib >= 0 ? 'var(--pos)' : 'var(--neg)',
-                      transform: dayContrib >= 0 ? 'none' : 'translateX(-100%)',
-                      borderRadius: 3,
-                    }} />
-                    <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1, background: 'var(--border-strong)' }} />
-                  </div>
-                  <span className={`num ${dayContrib >= 0 ? 'pos' : 'neg'}`} style={{ fontSize: 12, fontWeight: 600, textAlign: 'right' }}>
-                    {dayContrib >= 0 ? '+' : ''}${fmtNum(Math.abs(dayContrib), 0)}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
+          <HoldingsTable holdings={portfolio.holdings} currency={currency} onSelect={sym => { setActiveAsset(sym); setPage('detail'); }} onExport={exportHoldings} />
+        </>}
+      </> : <TransactionsPanel data={transactions} filter={txFilter} setFilter={setTxFilter} query={txQuery} setQuery={setTxQuery} onPage={loadTransactions} onAdd={() => { setEditTx(null); setShowTx(true); }} onEdit={tx => { setEditTx(tx); setShowTx(true); }} onVoid={voidTransaction} onExport={() => { const a = document.createElement('a'); a.href = window.HelixAPI.portfolioTransactionsExportUrl(); a.click(); }} />}
 
-      {/* Holdings table */}
-      <div className="card">
-        <div className="card-header">
-          <h3 className="card-title">Holdings</h3>
-          <div className="row">
-            <button className="btn"><Icon name="filter" size={12} /> Filter</button>
-            <button className="btn" onClick={exportHoldingsCSV}><Icon name="download" size={12} /> Export</button>
-          </div>
-        </div>
-        <div className="card-body flush">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Ticker</th>
-                <th className="right">Shares</th>
-                <th className="right">Avg Cost</th>
-                <th className="right">Last</th>
-                <th className="right">Market Value</th>
-                <th className="right">Total Gain</th>
-                <th className="right">% Gain</th>
-                <th className="right">Weight</th>
-              </tr>
-            </thead>
-            <tbody>
-              {p.holdings.map(h => (
-                <tr key={h.sym} onClick={() => { setActiveAsset(h.sym); setPage('detail'); }}>
-                  <td><span className="ticker">{h.sym}</span></td>
-                  <td className="right num">{h.shares}</td>
-                  <td className="right num" style={{ color: 'var(--text-muted)' }}>${fmtNum(h.avgCost)}</td>
-                  <td className="right num">${fmtNum(h.price)}</td>
-                  <td className="right num">${fmtNum(h.value, 0)}</td>
-                  <td className={`right num ${h.gain >= 0 ? 'pos' : 'neg'}`}>{h.gain >= 0 ? '+' : ''}${fmtNum(Math.abs(h.gain), 0)}</td>
-                  <td className="right"><Pill value={h.gainPct} /></td>
-                  <td className="right num" style={{ color: 'var(--text-muted)' }}>{h.weight.toFixed(2)}%</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {showAdd && <AddPositionModal onClose={() => setShowAdd(false)} onAdd={addPosition} watchlist={data.watchlist} />}
+      {showTx && <TransactionModal initial={editTx} currency={currency} onClose={() => { setShowTx(false); setEditTx(null); }} onSave={saveTransaction} busy={!!busy} />}
+      {showImport && <PortfolioImportModal onClose={() => setShowImport(false)} onCommitted={async result => { setShowImport(false); setBusy('Importing…'); try { await awaitJob(result.job_id); await refreshAll(); window.toast?.(`Imported ${result.imported} transactions`, { type: 'success' }); } catch (e) { window.toast?.(e.message, { type: 'error' }); } setBusy(''); }} />}
     </div>
   );
 };
 
-const AddPositionModal = ({ onClose, onAdd, watchlist = [] }) => {
-  const [sym, setSym] = React.useState('');
-  const [shares, setShares] = React.useState('');
-  const [avgCost, setAvgCost] = React.useState('');
-  const [price, setPrice] = React.useState('');
+const PortfolioEmpty = ({ onAdd, onImport, live }) => <div className="card" style={{ padding: 48, textAlign: 'center' }}><h3 className="serif" style={{ fontSize: 22, marginBottom: 8 }}>Start with the ledger.</h3><p style={{ color: 'var(--text-muted)', marginBottom: 20 }}>Add a deposit and buy, or import a CSV. Empty means empty—no sample positions are mixed into live data.</p><div className="row" style={{ justifyContent: 'center' }}><button className="btn btn-primary" disabled={!live} onClick={onAdd}>Add transaction</button><button className="btn" disabled={!live} onClick={onImport}>Import CSV</button></div></div>;
 
-  // Auto-fill current price from the watchlist if the ticker is known
-  const onSymChange = (v) => {
-    const up = v.toUpperCase();
-    setSym(up);
-    const w = watchlist.find(x => x.sym === up);
-    if (w) setPrice(String(w.price));
-  };
+const HoldingsTable = ({ holdings, currency, onSelect, onExport }) => <div className="card"><div className="card-header"><h3 className="card-title">Holdings</h3><button className="btn" onClick={onExport}><Icon name="download" size={12} /> Export</button></div><div className="card-body flush" style={{ overflowX: 'auto' }}><table className="table"><thead><tr><th>Ticker</th><th>Native</th><th className="right">Shares</th><th className="right">Avg FIFO cost</th><th className="right">Last</th><th className="right">Value ({currency})</th><th className="right">Unrealized</th><th className="right">Weight</th></tr></thead><tbody>{holdings.map(h => <tr key={`${h.ticker}-${h.currency}`} onClick={() => onSelect(h.ticker)}><td><span className="ticker">{h.ticker}</span></td><td>{h.currency}</td><td className="right num">{Number(h.shares).toLocaleString(undefined, { maximumFractionDigits: 6 })}</td><td className="right num">{pfMoney(h.avg_cost, h.currency)}</td><td className="right num">{pfMoney(h.price, h.currency)}</td><td className="right num">{pfMoney(h.value, currency)}</td><td className="right"><span className={h.gain >= 0 ? 'pos num' : 'neg num'}>{pfMoney(h.gain, currency)}</span><div><Pill value={h.gain_pct || 0} /></div></td><td className="right num">{Number(h.weight || 0).toFixed(2)}%</td></tr>)}</tbody></table></div></div>;
 
-  const valid = sym.trim() && parseFloat(shares) > 0 && parseFloat(avgCost) > 0 && parseFloat(price) > 0;
-  const submit = () => {
-    if (!valid) return;
-    onAdd({ sym: sym.trim().toUpperCase(), shares: parseFloat(shares), avgCost: parseFloat(avgCost), price: parseFloat(price) });
-  };
+const TransactionsPanel = ({ data, filter, setFilter, query, setQuery, onPage, onAdd, onEdit, onVoid, onExport }) => <div className="card"><div className="card-header" style={{ flexWrap: 'wrap' }}><div><h3 className="card-title">Transaction ledger</h3><span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{data.total} audited records</span></div><div className="row"><input className="btn" style={{ width: 150 }} value={query} onChange={e => setQuery(e.target.value)} placeholder="Ticker or note…" /><select className="btn" value={filter} onChange={e => setFilter(e.target.value)}><option value="">All types</option>{TX_TYPES.map(x => <option key={x}>{x}</option>)}</select><button className="btn" onClick={onExport}><Icon name="download" size={12} /> Export</button><button className="btn btn-primary" onClick={onAdd}><Icon name="plus" size={12} /> Add</button></div></div><div className="card-body flush" style={{ overflowX: 'auto' }}><table className="table"><thead><tr><th>Date</th><th>Type</th><th>Ticker</th><th className="right">Quantity</th><th className="right">Price / cash</th><th>Currency</th><th>Source</th><th>Status</th><th></th></tr></thead><tbody>{data.items.map(tx => <tr key={tx.id}><td className="num">{new Date(tx.effective_at).toLocaleDateString()}</td><td><span className="ticker">{tx.type}</span></td><td>{tx.ticker || '—'}</td><td className="right num">{tx.quantity ?? '—'}</td><td className="right num">{pfMoney(tx.unit_price ?? tx.cash_amount, tx.currency)}</td><td>{tx.currency}</td><td>{tx.source}</td><td><span className={`pill ${tx.status === 'active' ? 'pos' : ''}`}>{tx.status}</span></td><td className="right">{tx.status === 'active' && <div className="row" style={{ justifyContent: 'flex-end' }}><button className="card-action" onClick={() => onEdit(tx)}>Edit</button><button className="card-action" style={{ color: 'var(--neg)' }} onClick={() => onVoid(tx)}>Void</button></div>}</td></tr>)}</tbody></table>{data.items.length === 0 && <div style={{ padding: 36, textAlign: 'center', color: 'var(--text-subtle)' }}>No transactions match this filter.</div>}</div><div className="card-header"><button className="btn" disabled={data.page <= 1} onClick={() => onPage(data.page - 1)}>Previous</button><span className="num" style={{ fontSize: 11 }}>Page {data.page} of {Math.max(1, Math.ceil(data.total / data.page_size))}</span><button className="btn" disabled={data.page * data.page_size >= data.total} onClick={() => onPage(data.page + 1)}>Next</button></div></div>;
 
-  const field = {
-    width: '100%', padding: '9px 11px', fontSize: 13, fontFamily: 'inherit',
-    background: 'var(--bg-sunken)', border: '1px solid var(--border)',
-    borderRadius: 'var(--radius)', color: 'var(--text)', outline: 'none',
-  };
-  const labelStyle = { fontSize: 11, fontWeight: 600, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 5 };
+const TransactionModal = ({ initial, currency, onClose, onSave, busy }) => {
+  const seed = initial || {};
+  const [type, setType] = React.useState(seed.type || 'BUY');
+  const [effectiveAt, setEffectiveAt] = React.useState(pfLocalDateTime(seed.effective_at || new Date()));
+  const [ticker, setTicker] = React.useState(seed.ticker || '');
+  const [quantity, setQuantity] = React.useState(seed.quantity ?? '');
+  const [unitPrice, setUnitPrice] = React.useState(seed.unit_price ?? '');
+  const [cashAmount, setCashAmount] = React.useState(seed.cash_amount ?? '');
+  const [nativeCurrency, setNativeCurrency] = React.useState(seed.currency || currency);
+  const [fees, setFees] = React.useState(seed.fees || '');
+  const [taxes, setTaxes] = React.useState(seed.taxes || '');
+  const [note, setNote] = React.useState(seed.note || '');
+  const trade = ['BUY', 'SELL'].includes(type);
+  const valid = trade ? ticker.trim() && Number(quantity) > 0 && Number(unitPrice) >= 0 : Number(cashAmount) > 0;
+  const submit = () => onSave({ type, effective_at: new Date(effectiveAt).toISOString(), ticker: trade || type === 'DIVIDEND' ? (ticker.trim().toUpperCase() || null) : null, quantity: trade ? Number(quantity) : null, unit_price: trade ? Number(unitPrice) : null, cash_amount: trade ? null : Number(cashAmount), currency: nativeCurrency, fees: Number(fees) || 0, taxes: Number(taxes) || 0, note: note || null, source: initial?.source || 'manual', external_id: initial?.external_id || null });
+  const field = { width: '100%', padding: '9px 11px', background: 'var(--bg-sunken)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 5, fontFamily: 'inherit' };
+  const label = { display: 'block', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-subtle)', marginBottom: 5 };
+  return <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,.45)', display: 'grid', placeItems: 'center', padding: 20 }}><div onClick={e => e.stopPropagation()} className="card" style={{ width: '100%', maxWidth: 560 }}><div className="card-header"><h3 className="card-title">{initial ? 'Replace transaction' : 'Add transaction'}</h3><button className="icon-btn" onClick={onClose}><Icon name="close" size={12} /></button></div><div className="card-body stack"><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}><div><label style={label}>Type</label><select style={field} value={type} onChange={e => setType(e.target.value)}>{TX_TYPES.map(x => <option key={x}>{x}</option>)}</select></div><div><label style={label}>Effective time</label><input style={field} type="datetime-local" value={effectiveAt} onChange={e => setEffectiveAt(e.target.value)} /></div></div>{(trade || type === 'DIVIDEND') && <div><label style={label}>Ticker</label><input style={field} value={ticker} onChange={e => setTicker(e.target.value.toUpperCase())} placeholder="AAPL or VN:VNM" /></div>}{trade ? <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}><div><label style={label}>Quantity</label><input style={field} type="number" step="any" value={quantity} onChange={e => setQuantity(e.target.value)} /></div><div><label style={label}>Unit price</label><input style={field} type="number" step="any" value={unitPrice} onChange={e => setUnitPrice(e.target.value)} /></div></div> : <div><label style={label}>Cash amount</label><input style={field} type="number" step="any" value={cashAmount} onChange={e => setCashAmount(e.target.value)} /></div>}<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}><div><label style={label}>Native currency</label><select style={field} value={nativeCurrency} onChange={e => setNativeCurrency(e.target.value)}>{PORTFOLIO_CURRENCIES.map(c => <option key={c}>{c}</option>)}</select></div><div><label style={label}>Fees</label><input style={field} type="number" step="any" value={fees} onChange={e => setFees(e.target.value)} /></div><div><label style={label}>Taxes</label><input style={field} type="number" step="any" value={taxes} onChange={e => setTaxes(e.target.value)} /></div></div><div><label style={label}>Note</label><textarea style={{ ...field, minHeight: 70 }} value={note} onChange={e => setNote(e.target.value)} /></div>{trade && valid && <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>Gross trade: {pfMoney(Number(quantity) * Number(unitPrice), nativeCurrency)}</div>}</div><div className="card-header" style={{ justifyContent: 'flex-end' }}><button className="btn" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={!valid || busy} onClick={submit}>{initial ? 'Save replacement' : 'Add transaction'}</button></div></div></div>;
+};
 
-  const estVal = (parseFloat(shares) || 0) * (parseFloat(price) || 0);
-
-  return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'grid', placeItems: 'center', padding: 24 }}>
-      <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 440, background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 10, boxShadow: '0 24px 64px rgba(0,0,0,0.3)', overflow: 'hidden' }}>
-        <div style={{ padding: '16px 18px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h3 className="serif" style={{ fontSize: 17, fontWeight: 600, margin: 0 }}>Add position</h3>
-          <button className="icon-btn" onClick={onClose} style={{ width: 26, height: 26 }}><Icon name="close" size={12} /></button>
-        </div>
-        <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <div>
-            <label style={labelStyle}>Ticker</label>
-            <input style={field} value={sym} onChange={e => onSymChange(e.target.value)} placeholder="e.g. AAPL" autoFocus />
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
-            <div>
-              <label style={labelStyle}>Shares</label>
-              <input style={field} type="number" value={shares} onChange={e => setShares(e.target.value)} placeholder="0" />
-            </div>
-            <div>
-              <label style={labelStyle}>Avg cost</label>
-              <input style={field} type="number" value={avgCost} onChange={e => setAvgCost(e.target.value)} placeholder="0.00" />
-            </div>
-            <div>
-              <label style={labelStyle}>Price</label>
-              <input style={field} type="number" value={price} onChange={e => setPrice(e.target.value)} placeholder="0.00" />
-            </div>
-          </div>
-          {estVal > 0 && (
-            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-              Market value: <strong className="num" style={{ color: 'var(--text)' }}>${estVal.toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong>
-            </div>
-          )}
-        </div>
-        <div style={{ padding: '12px 18px', borderTop: '1px solid var(--border)', background: 'var(--bg-sunken)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <button className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={submit} disabled={!valid}>Add to portfolio</button>
-        </div>
-      </div>
-    </div>
-  );
+const PortfolioImportModal = ({ onClose, onCommitted }) => {
+  const [preview, setPreview] = React.useState(null); const [mapping, setMapping] = React.useState({}); const [validation, setValidation] = React.useState(null); const [busy, setBusy] = React.useState(false); const [error, setError] = React.useState('');
+  const upload = async file => { if (!file) return; setBusy(true); setError(''); try { const p = await window.HelixAPI.portfolioImportPreview(file); setPreview(p); const auto = {}; p.headers.forEach(h => { const match = p.canonical_fields.find(f => f.toLowerCase() === h.trim().toLowerCase()); if (match) auto[h] = match; }); setMapping(auto); } catch (e) { setError(e.message); } setBusy(false); };
+  const validate = async () => { setBusy(true); setError(''); try { setValidation(await window.HelixAPI.portfolioImportValidate(preview.import_id, mapping)); } catch (e) { setError(e.message); } setBusy(false); };
+  const commit = async () => { setBusy(true); try { onCommitted(await window.HelixAPI.portfolioImportCommit(preview.import_id)); } catch (e) { setError(e.message); setBusy(false); } };
+  return <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,.45)', display: 'grid', placeItems: 'center', padding: 20 }}><div onClick={e => e.stopPropagation()} className="card" style={{ width: '100%', maxWidth: 720, maxHeight: '88vh', overflow: 'auto' }}><div className="card-header"><div><h3 className="card-title">Import transaction CSV</h3><span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>Upload → map → validate → atomic commit</span></div><button className="icon-btn" onClick={onClose}><Icon name="close" size={12} /></button></div><div className="card-body">{!preview ? <div style={{ padding: 36, textAlign: 'center' }}><input type="file" accept=".csv,text/csv" disabled={busy} onChange={e => upload(e.target.files?.[0])} /></div> : <><p style={{ color: 'var(--text-muted)' }}>{preview.row_count.toLocaleString()} rows · map source columns to ledger fields.</p><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>{preview.headers.map(h => <div key={h} className="row"><span style={{ flex: 1, fontSize: 12 }}>{h}</span><select className="btn" value={mapping[h] || ''} onChange={e => { setMapping(m => ({ ...m, [h]: e.target.value })); setValidation(null); }}><option value="">Ignore</option>{preview.canonical_fields.map(f => <option key={f}>{f}</option>)}</select></div>)}</div>{validation && <div style={{ marginTop: 16, padding: 12, background: 'var(--bg-sunken)', color: validation.error_rows ? 'var(--neg)' : 'var(--pos)' }}>{validation.valid_rows} valid · {validation.error_rows} errors{validation.errors?.slice(0, 5).map(e => <div key={e.row} style={{ fontSize: 11 }}>Row {e.row}: {e.message}</div>)}{validation.error_rows > 0 && <div style={{ marginTop: 8 }}><a className="btn" href={window.HelixAPI.portfolioImportErrorsUrl(preview.import_id)}>Download error report</a></div>}</div>}</>}{error && <div style={{ color: 'var(--neg)', marginTop: 12 }}>{error}</div>}</div><div className="card-header" style={{ justifyContent: 'flex-end' }}><button className="btn" onClick={onClose}>Cancel</button>{preview && <button className="btn" disabled={busy} onClick={validate}>Validate</button>}<button className="btn btn-primary" disabled={busy || !validation?.can_commit} onClick={commit}>Commit atomically</button></div></div></div>;
 };
 
 window.PagePortfolio = PagePortfolio;
+
+if (!document.getElementById('portfolio-page-style')) {
+  const style = document.createElement('style');
+  style.id = 'portfolio-page-style';
+  style.textContent = `
+    @media (max-width: 900px) {
+      .main[data-screen-label="portfolio"] .grid-2 { grid-template-columns: 1fr !important; }
+      .main[data-screen-label="portfolio"] .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+      .main[data-screen-label="portfolio"] .page-header { align-items: flex-start; gap: 12px; }
+    }
+    @media (max-width: 560px) {
+      .main[data-screen-label="portfolio"] .stat-grid { grid-template-columns: 1fr !important; }
+      .main[data-screen-label="portfolio"] .page { padding-left: 12px; padding-right: 12px; }
+    }
+  `;
+  document.head.appendChild(style);
+}

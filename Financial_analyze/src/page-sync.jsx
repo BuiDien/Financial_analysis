@@ -94,6 +94,8 @@ const SyncStore = (() => {
   const pollTick = async () => {
     try {
       const s = await window.HelixAPI.syncStatus();
+      const previousById = Object.fromEntries(state.jobs.map(job => [job.id, job]));
+      const transitionLogs = [];
       const patch = { workers: (s.workers || []).map(w => ({
         id: w.id, name: w.name, ip: w.ip, status: w.status, done: w.done || 0,
       })) };
@@ -105,9 +107,29 @@ const SyncStore = (() => {
         id: j.id, filingId: j.filingId, inboxItemId: j.inboxItemId, kind: j.kind,
         filename: j.filename, ticker: j.ticker,
         worker: j.worker, status: j.status, progress: j.progress || 0,
-        rows: j.rows || null, error: j.error, applied: appliedMap[j.id] || false,
+        rows: j.rows || null, rowCount: j.rowCount ?? j.rows?.length ?? null,
+        reviewId: j.reviewId, completedAt: j.completedAt,
+        error: j.error, applied: appliedMap[j.id] || false,
       }));
       set(patch);
+      patch.jobs.forEach(job => {
+        const previous = previousById[job.id];
+        if (!previous || previous.status === job.status) return;
+        if (job.status === 'parsing') {
+          transitionLogs.push(['worker', `${job.worker || 'Worker'} started processing "${job.filename}" (job ${job.id})`]);
+        } else if (job.status === 'done') {
+          const rows = job.rowCount == null ? '' : ` · ${job.rowCount} rows`;
+          const review = job.reviewId == null ? '' : ` · review ${job.reviewId} ready`;
+          transitionLogs.push(['in', `${job.worker || 'Worker'} completed "${job.filename}"${rows}${review} (job ${job.id})`]);
+        } else if (['failed', 'error'].includes(job.status)) {
+          transitionLogs.push(['error', `${job.worker || 'Worker'} failed "${job.filename}" (job ${job.id}): ${job.error || 'unknown error'}`]);
+        } else if (job.status === 'held') {
+          transitionLogs.push(['worker', `${job.worker || 'Worker'} held "${job.filename}" (job ${job.id})`]);
+        } else if (job.status === 'stopped') {
+          transitionLogs.push(['worker', `${job.worker || 'Worker'} stopped "${job.filename}" (job ${job.id})`]);
+        }
+      });
+      transitionLogs.forEach(([kind, text]) => addLog(kind, text));
     } catch (e) { /* keep last state; backend may be momentarily unreachable */ }
   };
 

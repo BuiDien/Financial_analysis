@@ -14,8 +14,9 @@ Repo: github.com/NousResearch/hermes-agent · docs: hermes-agent.nousresearch.co
   "Path 1 Python tool-calling, MCP later" — MCP is now the path.)*
 - **Skills** live in `~/.hermes/skills/`, agentskills.io standard (`SKILL.md` + frontmatter). VN skills
   adapted from `anthropics/financial-services` (`financial-analysis` vertical).
-- **Website chat → Hermes Agent API server** (`/v1/chat/completions`, OpenAI-compatible, `API_SERVER_KEY`).
-  `src/api-client.jsx :: hermesComplete()` already speaks this shape.
+- **Website chat → Core proxy → Hermes Agent API server** (`/v1/chat/completions`, OpenAI-compatible,
+  `API_SERVER_KEY`). The proxy keeps the bearer key out of browser storage and prevents direct browser
+  access to an agent that owns terminal and MCP tools.
 - **Code calculates, Hermes narrates** — math lives in MCP tools (Python), never in the model.
 - **Obsidian vault on the Mac** = memory + reports. Hermes Agent already has the vault; structured
   statement/report notes written via MCP obsidian tools (or a skill).
@@ -30,8 +31,8 @@ Mac (M2 Max, 64GB)
         ▲ MCP (config.yaml)                         ▲ /v1/chat/completions
         │                                           │
   Core (FastAPI) ── MCP server (financial tools) ───┘ serves UI + SQLite + OCR pipeline
-        ▲ HelixAPI (data)              ▲ chat
-  Website ─────────────────────────────┘
+        ▲ HelixAPI (data + chat proxy)
+  Website
 GPU laptop (RTX 4070): OCR system  ◄── Core OCR port
 ```
 Boundaries: UI↔Core (`API_CONTRACT.md`) · Core↔OCR (`OCR_PROTOCOL.md`) · Hermes↔Core-tools (MCP) ·
@@ -44,7 +45,7 @@ Website↔Hermes (API server). Brain + Core both on the Mac.
 | Skill discovery + slash commands | ✅ `~/.hermes/skills/` | the VN skill `.md`s |
 | Tool calling | ✅ MCP client | the **MCP server** (Core) + its tools |
 | Memory / sessions | ✅ | — |
-| Website ↔ brain | ✅ API server | point `hermesComplete()` at it |
+| Website ↔ brain | ✅ API server | FastAPI adapter + health/chat routes |
 | Model | ✅ Ollama Qwen3 35B | — |
 
 ## MCP server (the Core's job)

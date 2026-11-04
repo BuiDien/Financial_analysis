@@ -5,7 +5,9 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import (
+    APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile,
+)
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -14,12 +16,22 @@ from ..config import get_settings
 from ..db import get_db
 from ..models.filing import Filing
 from ..models.ocr import (
-    OCRAttempt, OCRAuditEvent, OCRInboxItem, OCRPageResult, OCRReviewJob,
-    OCRReviewRow,
+    OCRAttempt, OCRAuditEvent, OCRInboxItem, OCRLabelReviewRun,
+    OCRLabelSuggestion, OCRPageResult, OCRReviewJob, OCRReviewRow,
 )
 from ..ocr_page_contract import MAX_PAGE_MARKDOWN_BYTES, OCR_PAGE_RESULT_FORMAT
 from ..ocr_contract import OCRResultRow
 from ..services import pdf
+from ..services import ocr_label_review
+from ..services import ocr_label_library
+from ..services.ocr_label_levels import (
+    apply_label_level_suggestions,
+    apply_label_text_suggestions,
+    auto_level_markdown,
+    extract_label_rows,
+    parse_financial_number,
+    verify_level_totals,
+)
 from ..services.ocr_review import review_counts
 
 router = APIRouter(prefix="/ocr-inbox")
@@ -297,6 +309,37 @@ class MarkdownReviewActionIn(BaseModel):
     markdown: str | None = None
 
 
+class AutoLabelLevelsIn(BaseModel):
+    revision: int = Field(ge=1)
+    markdown: str
+
+
+class LabelReviewTargetIn(BaseModel):
+    table: int = Field(ge=1)
+    row: int = Field(ge=1)
+
+
+class StartLabelReviewIn(BaseModel):
+    revision: int = Field(ge=1)
+    targets: list[LabelReviewTargetIn] = Field(min_length=1, max_length=20)
+
+
+class LabelSuggestionDecisionIn(BaseModel):
+    decision: str
+    user_edited_level: int | None = Field(default=None, ge=-1, le=3)
+
+
+class ApplyLabelSuggestionsIn(BaseModel):
+    revision: int = Field(ge=1)
+    page_content_sha256: str = Field(min_length=64, max_length=64)
+    suggestion_ids: list[int] = Field(min_length=1, max_length=50)
+
+
+class QuickCorrectIn(BaseModel):
+    revision: int = Field(ge=1)
+    statement_type: str = Field(min_length=2, max_length=64)
+
+
 def _get_review(db: Session, review_id: int) -> OCRReviewJob:
     review = db.query(OCRReviewJob).filter_by(id=review_id).first()
     if not review:
@@ -321,6 +364,18 @@ def _serialize_page(page: OCRPageResult, *, include_markdown: bool = False) -> d
         "byte_size": page.byte_size,
         "content_sha256": page.content_sha256,
         "has_correction": page.reviewed_markdown is not None,
+        "label_check": {
+            "status": page.label_check_status,
+            "label_count": (page.label_check_summary or {}).get("label_count", 0),
+            "known_count": (page.label_check_summary or {}).get("known_count", 0),
+            "candidate_count": (page.label_check_summary or {}).get(
+                "candidate_count", 0,
+            ),
+            "error": page.label_check_error,
+            "checked_at": (
+                page.label_checked_at.isoformat() if page.label_checked_at else None
+            ),
+        },
     }
     if include_markdown:
         data.update({
@@ -353,7 +408,8 @@ def _serialize_review(review: OCRReviewJob) -> dict:
         "merged_markdown_sha256": review.attempt.result_sha256,
         "events": [{
             "id": event.id, "row_id": event.row_id, "action": event.action,
-            "revision": event.revision, "before": event.before_data,
+            "actor": event.actor, "revision": event.revision,
+            "before": event.before_data,
             "after": event.after_data,
             "created_at": event.created_at.isoformat() if event.created_at else None,
         } for event in review.events],
@@ -462,6 +518,413 @@ def _mutate_page(
     db.commit()
     db.refresh(review)
     return _serialize_review(review)
+
+
+@router.post("/reviews/{review_id}/label-level-preview/pages/{page_number}")
+def preview_review_page_label_levels(
+    review_id: int, page_number: int, payload: AutoLabelLevelsIn,
+    db: Session = Depends(get_db),
+):
+    review = _get_review(db, review_id)
+    _get_review_page(db, review, page_number)
+    if payload.revision != review.revision:
+        raise HTTPException(409, "Review changed; refresh before detecting label levels")
+    if review.status in {"verified", "published"}:
+        raise HTTPException(409, "Verified reviews must be reopened before editing")
+    if len(payload.markdown.encode("utf-8")) > MAX_PAGE_MARKDOWN_BYTES:
+        raise HTTPException(422, "Corrected Markdown exceeds the 1 MiB page limit")
+    result = auto_level_markdown(payload.markdown)
+    if not result["tables"]:
+        raise HTTPException(422, "No table was found on this page")
+    return result
+
+
+@router.post("/reviews/{review_id}/level-total-preview/pages/{page_number}")
+def preview_review_page_level_totals(
+    review_id: int, page_number: int, payload: AutoLabelLevelsIn,
+    db: Session = Depends(get_db),
+):
+    review = _get_review(db, review_id)
+    _get_review_page(db, review, page_number)
+    if payload.revision != review.revision:
+        raise HTTPException(409, "Review changed; refresh before verifying level totals")
+    if len(payload.markdown.encode("utf-8")) > MAX_PAGE_MARKDOWN_BYTES:
+        raise HTTPException(422, "Corrected Markdown exceeds the 1 MiB page limit")
+    result = verify_level_totals(payload.markdown)
+    if not result["tables"]:
+        raise HTTPException(422, "No table was found on this page")
+    return result
+
+
+def _obsidian_label_library():
+    try:
+        return ocr_label_library.get_label_library(
+            settings.obsidian_vault_path,
+            settings.obsidian_label_library_path,
+        )
+    except ocr_label_library.LabelLibraryError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+@router.post("/reviews/{review_id}/pages/{page_number}/quick-correct-preview")
+def preview_review_page_quick_correct(
+    review_id: int,
+    page_number: int,
+    payload: QuickCorrectIn,
+    db: Session = Depends(get_db),
+):
+    """Return non-mutating Obsidian Quick Correct suggestions for one page."""
+    review = _get_review(db, review_id)
+    page = _get_review_page(db, review, page_number)
+    if payload.revision != review.revision:
+        raise HTTPException(409, "Review changed; refresh before Quick Correct")
+    markdown = ocr_label_review.page_markdown(page)
+    try:
+        result = _obsidian_label_library().suggest(payload.statement_type, markdown)
+    except ocr_label_library.LabelLibraryError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    result.update({
+        "review_id": review.id,
+        "page": page_number,
+        "revision": review.revision,
+        "page_content_sha256": ocr_label_review.content_sha256(markdown),
+    })
+    return result
+
+
+@router.post("/reviews/{review_id}/pages/{page_number}/quick-correct-library")
+def seed_review_page_quick_correct_library(
+    review_id: int,
+    page_number: int,
+    payload: QuickCorrectIn,
+    db: Session = Depends(get_db),
+):
+    """Write one explicitly user-selected verified page to the label library."""
+    review = _get_review(db, review_id)
+    page = _get_review_page(db, review, page_number)
+    if payload.revision != review.revision:
+        raise HTTPException(409, "Review changed; refresh before saving labels")
+    if review.status not in {"verified", "published"}:
+        raise HTTPException(
+            409, "Verify the full review before saving labels to Quick Correct",
+        )
+    markdown = ocr_label_review.page_markdown(page)
+    try:
+        result = _obsidian_label_library().record_verified_page(
+            payload.statement_type,
+            markdown,
+            review.inbox_item.checksum_sha256,
+        )
+    except ocr_label_library.LabelLibraryError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    review.events.append(OCRAuditEvent(
+        action="quick_correct_library_seeded",
+        actor="local-user",
+        revision=review.revision,
+        after_data={
+            "page": page_number,
+            "statement_type": payload.statement_type.strip().lower(),
+            **result,
+        },
+    ))
+    db.commit()
+    return result | {"review_id": review.id, "page": page_number}
+
+
+@router.post("/reviews/{review_id}/pages/{page_number}/label-review-runs")
+def start_label_review_run(
+    review_id: int,
+    page_number: int,
+    payload: StartLabelReviewIn,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    review = _get_review(db, review_id)
+    page = _get_review_page(db, review, page_number)
+    if payload.revision != review.revision:
+        raise HTTPException(409, "Review changed; refresh before asking Ollama")
+    if review.status in {"verified", "published"}:
+        raise HTTPException(409, "Verified reviews must be reopened before editing")
+    requested_rows = [target.model_dump() for target in payload.targets]
+    coordinates = [(target["table"], target["row"]) for target in requested_rows]
+    if len(set(coordinates)) != len(coordinates):
+        raise HTTPException(422, "Mark each label only once before asking Ollama")
+    markdown = ocr_label_review.page_markdown(page)
+    page_hash = ocr_label_review.content_sha256(markdown)
+    active = (
+        db.query(OCRLabelReviewRun)
+        .filter_by(
+            review_id=review.id,
+            page_number=page_number,
+            page_content_sha256=page_hash,
+        )
+        .filter(OCRLabelReviewRun.status.in_(("queued", "running")))
+        .first()
+    )
+    if active:
+        return ocr_label_review.serialize_run(active)
+    run = OCRLabelReviewRun(
+        review=review,
+        page_number=page_number,
+        base_revision=review.revision,
+        page_content_sha256=page_hash,
+        skill_name=ocr_label_review.SKILL_NAME,
+        skill_version=ocr_label_review.SKILL_VERSION,
+        requested_rows=requested_rows,
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    background_tasks.add_task(
+        ocr_label_review.run_label_review, db.get_bind(), run.id,
+    )
+    return ocr_label_review.serialize_run(run)
+
+
+@router.get("/reviews/{review_id}/pages/{page_number}/label-review-runs/latest")
+def latest_label_review_run(
+    review_id: int,
+    page_number: int,
+    db: Session = Depends(get_db),
+):
+    review = _get_review(db, review_id)
+    _get_review_page(db, review, page_number)
+    run = (
+        db.query(OCRLabelReviewRun)
+        .filter_by(review_id=review.id, page_number=page_number)
+        .order_by(OCRLabelReviewRun.id.desc())
+        .first()
+    )
+    return {"run": ocr_label_review.serialize_run(run) if run else None}
+
+
+@router.get(
+    "/reviews/{review_id}/pages/{page_number}/label-review-runs/{run_id}",
+)
+def get_label_review_run(
+    review_id: int,
+    page_number: int,
+    run_id: int,
+    db: Session = Depends(get_db),
+):
+    run = (
+        db.query(OCRLabelReviewRun)
+        .filter_by(id=run_id, review_id=review_id, page_number=page_number)
+        .first()
+    )
+    if not run:
+        raise HTTPException(404, "Ollama label review run not found")
+    return ocr_label_review.serialize_run(run)
+
+
+@router.post("/label-suggestions/{suggestion_id}/decision")
+def decide_label_suggestion(
+    suggestion_id: int,
+    payload: LabelSuggestionDecisionIn,
+    db: Session = Depends(get_db),
+):
+    suggestion = db.get(OCRLabelSuggestion, suggestion_id)
+    if not suggestion:
+        raise HTTPException(404, "Ollama label suggestion not found")
+    review = suggestion.run.review
+    page = _get_review_page(db, review, suggestion.run.page_number)
+    if suggestion.applied_revision is not None:
+        raise HTTPException(409, "This Ollama suggestion has already been applied")
+    if review.status in {"verified", "published"}:
+        raise HTTPException(409, "Verified reviews must be reopened before editing")
+    if (
+        review.revision != suggestion.run.base_revision
+        or ocr_label_review.content_sha256(
+            ocr_label_review.page_markdown(page)
+        ) != suggestion.run.page_content_sha256
+    ):
+        suggestion.decision = "stale"
+        db.commit()
+        raise HTTPException(409, "This suggestion is stale; ask Ollama to review again")
+    if payload.decision not in {"accepted", "rejected", "edited"}:
+        raise HTTPException(422, "Decision must be accepted, rejected, or edited")
+    if suggestion.suggested_label is not None and payload.decision == "edited":
+        raise HTTPException(
+            422, "Edit the label cell directly, or accept/reject Ollama",
+        )
+    if payload.decision == "edited" and payload.user_edited_level is None:
+        raise HTTPException(422, "An edited suggestion requires a label level")
+    if (
+        payload.decision == "edited"
+        and payload.user_edited_level == -1
+        and any(
+            parse_financial_number(str(value)) is not None
+            or str(value).strip() in {"-", "–", "—"}
+            for value in (suggestion.evidence or {}).get("values", [])
+        )
+    ):
+        raise HTTPException(422, "L is only for a text-only row")
+    suggestion.decision = payload.decision
+    suggestion.user_edited_level = (
+        payload.user_edited_level if payload.decision == "edited" else None
+    )
+    db.commit()
+    db.refresh(suggestion.run)
+    return ocr_label_review.serialize_run(suggestion.run)
+
+
+@router.post("/reviews/{review_id}/pages/{page_number}/apply-label-suggestions")
+def apply_review_page_label_suggestions(
+    review_id: int,
+    page_number: int,
+    payload: ApplyLabelSuggestionsIn,
+    db: Session = Depends(get_db),
+):
+    review = _get_review(db, review_id)
+    page = _get_review_page(db, review, page_number)
+    if payload.revision != review.revision:
+        raise HTTPException(409, "Review changed; refresh before applying suggestions")
+    if review.status in {"verified", "published"}:
+        raise HTTPException(409, "Verified reviews must be reopened before editing")
+    markdown = ocr_label_review.page_markdown(page)
+    current_hash = ocr_label_review.content_sha256(markdown)
+    if current_hash != payload.page_content_sha256:
+        raise HTTPException(409, "Page changed; ask Ollama to review again")
+    if len(set(payload.suggestion_ids)) != len(payload.suggestion_ids):
+        raise HTTPException(422, "Suggestion IDs must be unique")
+
+    suggestions = (
+        db.query(OCRLabelSuggestion)
+        .join(OCRLabelReviewRun)
+        .filter(
+            OCRLabelSuggestion.id.in_(payload.suggestion_ids),
+            OCRLabelReviewRun.review_id == review.id,
+            OCRLabelReviewRun.page_number == page_number,
+        )
+        .all()
+    )
+    if len(suggestions) != len(payload.suggestion_ids):
+        raise HTTPException(404, "One or more Ollama suggestions were not found")
+    if any(
+        suggestion.run.page_content_sha256 != current_hash
+        or suggestion.decision not in {"accepted", "edited"}
+        or suggestion.applied_revision is not None
+        for suggestion in suggestions
+    ):
+        raise HTTPException(
+            409, "Only current, accepted, unapplied suggestions can be applied",
+        )
+
+    level_changes = [{
+        "table": suggestion.table_number,
+        "row": suggestion.row_number,
+        "level": (
+            suggestion.user_edited_level
+            if suggestion.decision == "edited"
+            else suggestion.suggested_level
+        ),
+    } for suggestion in suggestions if suggestion.suggested_label is None]
+    text_changes = [{
+        "table": suggestion.table_number,
+        "row": suggestion.row_number,
+        "current_label": suggestion.current_label,
+        "label": suggestion.suggested_label,
+    } for suggestion in suggestions if suggestion.suggested_label is not None]
+    try:
+        corrected = (
+            apply_label_level_suggestions(markdown, level_changes)
+            if level_changes else markdown
+        )
+        if text_changes:
+            corrected = apply_label_text_suggestions(corrected, text_changes)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    before = _serialize_page(page, include_markdown=True)
+    page.review_status = "corrected"
+    page.reviewed_markdown = corrected
+    review.status = "reviewing"
+    review.revision += 1
+    for suggestion in suggestions:
+        suggestion.applied_revision = review.revision
+    applied_ids = {suggestion.id for suggestion in suggestions}
+    applied_run = suggestions[0].run
+    other_suggestions = (
+        db.query(OCRLabelSuggestion)
+        .join(OCRLabelReviewRun)
+        .filter(
+            OCRLabelReviewRun.review_id == review.id,
+            OCRLabelSuggestion.applied_revision.is_(None),
+            OCRLabelSuggestion.id.notin_(applied_ids),
+        )
+        .all()
+    )
+    remaining_page_labels = {
+        candidate_page.page_number: {
+            (label["table"], label["row"]): label
+            for label in extract_label_rows(
+                ocr_label_review.page_markdown(candidate_page),
+            )
+        }
+        for candidate_page in review.attempt.pages
+    }
+    remaining_page_hashes = {
+        candidate_page.page_number: ocr_label_review.content_sha256(
+            ocr_label_review.page_markdown(candidate_page),
+        )
+        for candidate_page in review.attempt.pages
+    }
+    active_runs = (
+        db.query(OCRLabelReviewRun)
+        .filter(
+            OCRLabelReviewRun.review_id == review.id,
+            OCRLabelReviewRun.status.in_(("queued", "running")),
+        )
+        .all()
+    )
+    for active_run in active_runs:
+        current_run_hash = remaining_page_hashes.get(active_run.page_number)
+        if active_run.page_content_sha256 == current_run_hash:
+            active_run.base_revision = review.revision
+    for suggestion in other_suggestions:
+        remaining = remaining_page_labels.get(
+            suggestion.run.page_number, {},
+        ).get(
+            (suggestion.table_number, suggestion.row_number),
+        )
+        if (
+            remaining
+            and ocr_label_review.label_cell_sha256(
+                remaining["label"], remaining["level"],
+            ) == suggestion.label_cell_hash
+        ):
+            # Applying one accepted label must not invalidate untouched labels
+            # elsewhere in the same Ollama document review.
+            suggestion.run.base_revision = review.revision
+            suggestion.run.page_content_sha256 = remaining_page_hashes[
+                suggestion.run.page_number
+            ]
+        else:
+            suggestion.decision = "stale"
+    verification = verify_level_totals(corrected)
+    review.events.append(OCRAuditEvent(
+        action="ollama_label_suggestions_applied",
+        actor="local-user",
+        revision=review.revision,
+        before_data=before,
+        after_data={
+            "page": page_number,
+            "suggestion_ids": sorted(applied_ids),
+            "verification": {
+                "matched": verification["matched"],
+                "mismatched": verification["mismatched"],
+                "unverifiable": len(verification["unverifiable"]),
+            },
+        },
+    ))
+    db.commit()
+    db.refresh(review)
+    return {
+        "review": _serialize_review(review),
+        "page": _serialize_page(page, include_markdown=True),
+        "verification": verification,
+        "label_review_run": ocr_label_review.serialize_run(applied_run),
+    }
 
 
 @router.post("/reviews/{review_id}/pages/{page_number}/{action}")
@@ -580,6 +1043,31 @@ def verify_review(review_id: int, payload: ReviewActionIn, db: Session = Depends
         ):
             raise HTTPException(
                 409, "Every OCR Markdown page must be resolved before verification"
+            )
+        unresolved_suggestions = (
+            db.query(OCRLabelSuggestion)
+            .join(OCRLabelReviewRun)
+            .filter(
+                OCRLabelReviewRun.review_id == review.id,
+                OCRLabelSuggestion.applied_revision.is_(None),
+                OCRLabelSuggestion.decision.in_(("pending", "accepted", "edited")),
+            )
+            .all()
+        )
+        current_page_hashes = {
+            page.page_number: ocr_label_review.content_sha256(
+                ocr_label_review.page_markdown(page),
+            )
+            for page in review.attempt.pages
+        }
+        if any(
+            suggestion.run.page_content_sha256
+            == current_page_hashes.get(suggestion.run.page_number)
+            for suggestion in unresolved_suggestions
+        ):
+            raise HTTPException(
+                409,
+                "Resolve or reject current Ollama label suggestions before verification",
             )
     else:
         if not review.rows or any(row.status == "pending" for row in review.rows):

@@ -1,4 +1,5 @@
 import json
+import threading
 from io import BytesIO
 
 import pytest
@@ -16,6 +17,8 @@ from app.routes.sync import (
     coordinator,
 )
 from app.ocr_page_contract import OCR_PAGE_RESULT_FORMAT
+from app.services import ocr_label_review
+from app.services import ocr_label_library
 
 
 def _pdf_bytes():
@@ -48,8 +51,17 @@ def client(tmp_path, monkeypatch):
 
     app.dependency_overrides[get_db] = override
     monkeypatch.setattr(ocr_inbox.settings, "upload_dir", str(tmp_path))
+    monkeypatch.setattr(ocr_inbox.settings, "obsidian_vault_path", str(tmp_path / "vault"))
+    monkeypatch.setattr(
+        ocr_inbox.settings,
+        "obsidian_label_library_path",
+        "Financial Analyze/Label Library",
+    )
     monkeypatch.setattr(ocr_inbox.pdf, "page_count", lambda _path: 2)
     monkeypatch.setattr(sync, "SessionLocal", Session)
+    monkeypatch.setattr(
+        sync.settings, "enable_automatic_ocr_label_review", False,
+    )
     coordinator.jobs.clear()
     coordinator.workers.clear()
     yield TestClient(app)
@@ -124,6 +136,36 @@ def receive_job(ws):
         end = json.loads(frame["text"])
         assert end == {"type": "job_end", "jobId": job["jobId"]}
         return job, bytes(payload)
+
+
+def create_markdown_review(client, markdown: str):
+    item = upload(client).json()["items"][0]
+    with client.websocket_connect("/ws/ocr") as ws:
+        pair_page_worker(ws)
+        client.post(f"/api/ocr-inbox/{item['id']}/run")
+        job, _ = receive_job(ws)
+        for page_number, page_markdown in (
+            (1, markdown),
+            (2, "# Page 2\n\nNo table"),
+        ):
+            ws.send_json({
+                "type": "page_result",
+                "jobId": job["jobId"],
+                "schemaVersion": 2,
+                "page": page_number,
+                "pageCount": 2,
+                "markdown": page_markdown,
+            })
+            assert ws.receive_json()["status"] == "stored"
+        ws.send_json({
+            "type": "result_end",
+            "jobId": job["jobId"],
+            "schemaVersion": 2,
+            "pageCount": 2,
+        })
+        review_id = ws.receive_json()["reviewId"]
+    review = client.get(f"/api/ocr-inbox/reviews/{review_id}").json()
+    return item, review
 
 
 def result_rows():
@@ -261,7 +303,20 @@ def test_inbox_dispatch_review_and_publish(client):
         assert filing["status"] == "verified"
 
 
-def test_page_markdown_worker_stores_acks_and_finalizes_pages(client):
+def test_page_markdown_worker_stores_acks_and_finalizes_pages(client, monkeypatch):
+    automatic_review_started = threading.Event()
+    automatic_review_ids = []
+
+    def automatic_review(_bind, review_id):
+        automatic_review_ids.append(review_id)
+        automatic_review_started.set()
+
+    monkeypatch.setattr(
+        sync.settings, "enable_automatic_ocr_label_review", True,
+    )
+    monkeypatch.setattr(
+        sync, "run_auto_document_label_review", automatic_review,
+    )
     item = upload(client).json()["items"][0]
     with client.websocket_connect("/ws/ocr") as ws:
         pair_page_worker(ws)
@@ -334,6 +389,8 @@ def test_page_markdown_worker_stores_acks_and_finalizes_pages(client):
         assert final_ack["type"] == "result_ack"
         assert final_ack["status"] == "ready_for_review"
         assert final_ack["pageCount"] == 2
+        assert automatic_review_started.wait(2)
+        assert automatic_review_ids == [final_ack["reviewId"]]
 
         current = client.get(f"/api/ocr-inbox/{item['id']}").json()
         assert current["status"] == "ready_for_review"
@@ -352,6 +409,33 @@ def test_page_markdown_worker_stores_acks_and_finalizes_pages(client):
         assert page_one["effective_markdown"] == page_one["raw_markdown"]
         assert page_one["has_previous"] is False
         assert page_one["has_next"] is True
+
+        preview_markdown = """| Label | Value |
+| --- | ---: |
+| Total assets | 100 |
+| Cash | 40 |
+| Inventory | 60 |"""
+        preview = client.post(
+            f"/api/ocr-inbox/reviews/{review_id}/label-level-preview/pages/1",
+            json={"revision": review["revision"], "markdown": preview_markdown},
+        )
+        assert preview.status_code == 200
+        assert preview.json()["relationships"] == 1
+        assert "ocr-label-level:0;source:auto" in preview.json()["markdown"]
+        level_totals = client.post(
+            f"/api/ocr-inbox/reviews/{review_id}/level-total-preview/pages/1",
+            json={
+                "revision": review["revision"],
+                "markdown": preview.json()["markdown"],
+            },
+        )
+        assert level_totals.status_code == 200
+        assert level_totals.json()["matched"] == 1
+        assert level_totals.json()["mismatched"] == 0
+        # Detection is a preview; it does not save or advance the review revision.
+        unchanged = client.get(f"/api/ocr-inbox/reviews/{review_id}/pages/1").json()
+        assert unchanged["effective_markdown"] == "# Trang 1\n\nTổng tài sản"
+        assert unchanged["revision"] == review["revision"]
 
         review = client.post(
             f"/api/ocr-inbox/reviews/{review_id}/pages/1/approve",
@@ -388,6 +472,302 @@ def test_page_markdown_worker_stores_acks_and_finalizes_pages(client):
         publish = client.post(f"/api/ocr-inbox/{item['id']}/publish")
         assert publish.status_code == 409
         assert "structurally extracted" in publish.json()["detail"]
+
+
+def test_ollama_label_suggestions_require_user_decision_and_atomic_apply(
+    client, monkeypatch,
+):
+    markdown = """| Label | Current |
+| --- | ---: |
+| TỔNG TÀI SẢN CỔ | 100 |
+| Cash | 40 |
+| Inventory | 60 |"""
+    _item, review = create_markdown_review(client, markdown)
+
+    monkeypatch.setattr(
+        ocr_label_review.ai,
+        "ollama_label_complete",
+        lambda *_args, **_kwargs: json.dumps({
+            "corrected_label": "TỔNG TÀI SẢN CÓ",
+            "confidence": "high",
+        }),
+    )
+    started = client.post(
+        f"/api/ocr-inbox/reviews/{review['id']}/pages/1/label-review-runs",
+        json={"revision": review["revision"], "targets": [{"table": 1, "row": 2}]},
+    )
+    assert started.status_code == 200
+    run_id = started.json()["id"]
+    run = client.get(
+        f"/api/ocr-inbox/reviews/{review['id']}/pages/1/"
+        f"label-review-runs/{run_id}",
+    ).json()
+    assert run["status"] == "completed"
+    assert len(run["suggestions"]) == 1
+    suggestion = run["suggestions"][0]
+    assert suggestion["suggestion_kind"] == "label_text"
+    assert suggestion["suggested_label"] == "TỔNG TÀI SẢN CÓ"
+    assert suggestion["explanation"] == ""
+
+    # Ollama stores a proposal only. The OCR source stays unchanged.
+    before_apply = client.get(
+        f"/api/ocr-inbox/reviews/{review['id']}/pages/1",
+    ).json()
+    assert "TỔNG TÀI SẢN CỔ" in before_apply["effective_markdown"]
+
+    decided = client.post(
+        f"/api/ocr-inbox/label-suggestions/{suggestion['id']}/decision",
+        json={"decision": "accepted"},
+    )
+    assert decided.status_code == 200
+    applied = client.post(
+        f"/api/ocr-inbox/reviews/{review['id']}/pages/1/"
+        "apply-label-suggestions",
+        json={
+            "revision": review["revision"],
+            "page_content_sha256": run["page_content_sha256"],
+            "suggestion_ids": [suggestion["id"]],
+        },
+    )
+    assert applied.status_code == 200
+    result = applied.json()
+    assert "TỔNG TÀI SẢN CÓ" in result["page"]["effective_markdown"]
+    assert "TỔNG TÀI SẢN CỔ" not in result["page"]["effective_markdown"]
+    assert result["review"]["revision"] == review["revision"] + 1
+    assert result["verification"]["matched"] == 1
+    assert result["review"]["events"][-1]["action"] == (
+        "ollama_label_suggestions_applied"
+    )
+
+
+def test_applying_one_ollama_label_keeps_other_suggestions_current(
+    client, monkeypatch,
+):
+    markdown = """| Label | Current |
+| --- | ---: |
+| TỔNG TÀI SẢN CỔ | 100 |
+| NƠ PHAI TRA | 60 |"""
+    _item, review = create_markdown_review(client, markdown)
+    corrections = {
+        "TỔNG TÀI SẢN CỔ": "TỔNG TÀI SẢN CÓ",
+        "NƠ PHAI TRA": "NỢ PHẢI TRẢ",
+    }
+
+    monkeypatch.setattr(
+        ocr_label_review.ai,
+        "ollama_label_complete",
+        lambda _system, label, **_kwargs: json.dumps({
+            "corrected_label": corrections[label],
+            "confidence": "high",
+        }),
+    )
+    started = client.post(
+        f"/api/ocr-inbox/reviews/{review['id']}/pages/1/label-review-runs",
+        json={
+            "revision": review["revision"],
+            "targets": [{"table": 1, "row": 2}, {"table": 1, "row": 3}],
+        },
+    )
+    run = client.get(
+        f"/api/ocr-inbox/reviews/{review['id']}/pages/1/"
+        f"label-review-runs/{started.json()['id']}",
+    ).json()
+    first = next(
+        item for item in run["suggestions"]
+        if item["current_label"] == "TỔNG TÀI SẢN CỔ"
+    )
+    second = next(
+        item for item in run["suggestions"]
+        if item["current_label"] == "NƠ PHAI TRA"
+    )
+
+    assert client.post(
+        f"/api/ocr-inbox/label-suggestions/{first['id']}/decision",
+        json={"decision": "accepted"},
+    ).status_code == 200
+    first_apply = client.post(
+        f"/api/ocr-inbox/reviews/{review['id']}/pages/1/"
+        "apply-label-suggestions",
+        json={
+            "revision": review["revision"],
+            "page_content_sha256": run["page_content_sha256"],
+            "suggestion_ids": [first["id"]],
+        },
+    )
+    assert first_apply.status_code == 200
+    first_result = first_apply.json()
+    rebased_run = first_result["label_review_run"]
+    remaining = next(
+        item for item in rebased_run["suggestions"] if item["id"] == second["id"]
+    )
+    assert remaining["decision"] == "pending"
+    assert remaining["applied_revision"] is None
+
+    assert client.post(
+        f"/api/ocr-inbox/label-suggestions/{second['id']}/decision",
+        json={"decision": "accepted"},
+    ).status_code == 200
+    second_apply = client.post(
+        f"/api/ocr-inbox/reviews/{review['id']}/pages/1/"
+        "apply-label-suggestions",
+        json={
+            "revision": first_result["review"]["revision"],
+            "page_content_sha256": rebased_run["page_content_sha256"],
+            "suggestion_ids": [second["id"]],
+        },
+    )
+    assert second_apply.status_code == 200
+    final_markdown = second_apply.json()["page"]["effective_markdown"]
+    assert "TỔNG TÀI SẢN CÓ" in final_markdown
+    assert "NỢ PHẢI TRẢ" in final_markdown
+
+
+def test_ollama_sends_each_user_marked_label_even_without_auto_candidate(
+    client, monkeypatch,
+):
+    markdown = """| Label | Current |
+| --- | ---: |
+| Section<!--ocr-label-level:L--> | - |"""
+    _item, review = create_markdown_review(client, markdown)
+    calls = []
+
+    def complete(*args, **kwargs):
+        calls.append((args, kwargs))
+        return '{"corrected_label":"Section","confidence":"high"}'
+
+    monkeypatch.setattr(
+        ocr_label_review.ai, "ollama_label_complete", complete,
+    )
+    started = client.post(
+        f"/api/ocr-inbox/reviews/{review['id']}/pages/1/label-review-runs",
+        json={"revision": review["revision"], "targets": [{"table": 1, "row": 2}]},
+    )
+    assert started.status_code == 200
+    run = client.get(
+        f"/api/ocr-inbox/reviews/{review['id']}/pages/1/"
+        f"label-review-runs/{started.json()['id']}",
+    ).json()
+    assert len(calls) == 1
+    assert run["status"] == "completed"
+    assert run["tool_call_count"] == 1
+    assert run["processed_count"] == 1
+    assert run["total_count"] == 1
+    assert run["suggestions"] == []
+
+
+def test_ollama_processes_marked_labels_one_request_at_a_time(client, monkeypatch):
+    markdown = """| Label | Current |
+| --- | ---: |
+| TOTAL ASSETS | 100 |
+| Cash | 40 |
+| Inventory | 60 |"""
+    _item, review = create_markdown_review(client, markdown)
+    sent_labels = []
+    system_prompts = []
+
+    def complete(system, message, **_kwargs):
+        system_prompts.append(system)
+        sent_labels.append(message)
+        return json.dumps({
+            "corrected_label": message,
+            "confidence": "high",
+        })
+
+    monkeypatch.setattr(
+        ocr_label_review.ai, "ollama_label_complete", complete,
+    )
+    started = client.post(
+        f"/api/ocr-inbox/reviews/{review['id']}/pages/1/label-review-runs",
+        json={
+            "revision": review["revision"],
+            "targets": [{"table": 1, "row": 3}, {"table": 1, "row": 2}],
+        },
+    )
+    assert started.status_code == 200
+    run = client.get(
+        f"/api/ocr-inbox/reviews/{review['id']}/pages/1/"
+        f"label-review-runs/{started.json()['id']}",
+    ).json()
+    assert sent_labels == ["Cash", "TOTAL ASSETS"]
+    assert system_prompts == [ocr_label_review.SYSTEM_PROMPT] * 2
+    assert all("financial values" in prompt.lower() for prompt in system_prompts)
+    assert all("whole label" in prompt.lower() for prompt in system_prompts)
+    assert all("balance sheet" in prompt.lower() for prompt in system_prompts)
+    assert all("cash-flow statement" in prompt.lower() for prompt in system_prompts)
+    assert all("never add, remove, or reorder words" in prompt.lower() for prompt in system_prompts)
+    assert run["status"] == "completed"
+    assert run["tool_call_count"] == 2
+    assert run["processed_count"] == 2
+
+
+def test_ollama_label_response_rejects_explanations_and_extra_fields():
+    with pytest.raises(ValueError, match="only corrected_label and confidence"):
+        ocr_label_review._validated_label_correction(
+            json.dumps({
+                "corrected_label": "TỔNG TÀI SẢN CÓ",
+                "confidence": "high",
+                "explanation": "Extra text is not allowed",
+            }),
+            "TỔNG TÀI SẢN CỔ",
+        )
+
+
+def test_quick_correct_preview_reads_the_obsidian_label_library(client):
+    markdown = """| Label | Current |
+| --- | ---: |
+| TOTAL ASSETS | 100 |
+| Cash | 40 |
+| Inventory | 60 |"""
+    item, review = create_markdown_review(client, markdown)
+    library = ocr_label_library.get_label_library(
+        ocr_inbox.settings.obsidian_vault_path,
+        ocr_inbox.settings.obsidian_label_library_path,
+    )
+    for document_hash in ("a" * 64, "b" * 64, "c" * 64):
+        library.record_verified_page("balance_sheet", markdown, document_hash)
+
+    response = client.post(
+        f"/api/ocr-inbox/reviews/{review['id']}/pages/1/quick-correct-preview",
+        json={"revision": review["revision"], "statement_type": "balance_sheet"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    cash = next(item for item in payload["suggestions"] if item["current_label"] == "Cash")
+    assert cash["source"] == "quick_correct"
+    assert cash["confidence"] == "strong"
+    assert cash["suggested_level"] == 1
+
+
+def test_verified_page_can_seed_the_obsidian_quick_correct_library(client):
+    markdown = """| Label | Current |
+| --- | ---: |
+| TOTAL ASSETS | 100 |
+| Cash | 40 |
+| Inventory | 60 |"""
+    _item, review = create_markdown_review(client, markdown)
+    resolved = client.post(
+        f"/api/ocr-inbox/reviews/{review['id']}/pages/1/approve",
+        json={"revision": review["revision"]},
+    ).json()
+    resolved = client.post(
+        f"/api/ocr-inbox/reviews/{review['id']}/pages/2/approve",
+        json={"revision": resolved["revision"]},
+    ).json()
+    verified = client.post(
+        f"/api/ocr-inbox/reviews/{review['id']}/verify",
+        json={"revision": resolved["revision"]},
+    )
+    assert verified.status_code == 200
+
+    seeded = client.post(
+        f"/api/ocr-inbox/reviews/{review['id']}/pages/1/quick-correct-library",
+        json={
+            "revision": verified.json()["revision"],
+            "statement_type": "balance_sheet",
+        },
+    )
+    assert seeded.status_code == 200
+    assert seeded.json()["notes_updated"] == 3
 
 
 def test_invalid_worker_contract_fails_without_automatic_retry(client):

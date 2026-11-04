@@ -81,12 +81,34 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# NOTE: no Ollama/Hermes startup here on purpose. The brain is Hermes Agent
-# (NousResearch's agentic CLI - HERMES_BRAIN.md), not Ollama; Ollama only
-# serves the Qwen3 model that Hermes Agent calls. Neither Hermes Agent nor
-# the MCP server nor the website-chat wiring exist yet (PLAN.md Stage 6,
-# unbuilt) - so there's no consumer for Ollama today. Add a startup block
-# here once Stage 6 lands.
+# Hermes is managed as its own gateway service because it owns long-running
+# sessions, memory, and MCP connections. Helix does not silently start or stop
+# that user-level service, but reports clearly when it is unavailable.
+#
+# For local development, reuse the authenticated loopback key already stored
+# by Hermes when HERMES_API_KEY was not explicitly supplied. This avoids
+# maintaining a second plaintext copy in backend/.env while still allowing an
+# environment override for deployments and tests.
+if [ -z "${HERMES_API_KEY:-}" ] && command -v hermes >/dev/null 2>&1; then
+  HERMES_LOCAL_KEY="$(hermes config get gateway.api_server.key 2>/dev/null || true)"
+  if [ -n "$HERMES_LOCAL_KEY" ] && [ "$HERMES_LOCAL_KEY" != "null" ]; then
+    export HERMES_API_KEY="$HERMES_LOCAL_KEY"
+  fi
+  unset HERMES_LOCAL_KEY
+fi
+
+HERMES_PORT="${HERMES_PORT:-8642}"
+HERMES_API_URL="${HERMES_API_URL:-http://127.0.0.1:$HERMES_PORT}"
+HERMES_HEALTH_ARGS=(-s -o /dev/null -m 2)
+if [ -n "${HERMES_API_KEY:-}" ]; then
+  HERMES_HEALTH_ARGS+=(-H "Authorization: Bearer $HERMES_API_KEY")
+fi
+if curl "${HERMES_HEALTH_ARGS[@]}" "$HERMES_API_URL/v1/models"; then
+  echo "-- Hermes Agent gateway is running on :$HERMES_PORT --"
+else
+  echo "-- Hermes Agent is unavailable or unauthenticated — AI review needs: hermes gateway start --"
+fi
+unset HERMES_HEALTH_ARGS
 
 # ── SearXNG (self-hosted search, backs /api/news/search) ──────────────
 # Skip if something's already listening on 8888 — the user may have started
@@ -136,7 +158,8 @@ for i in $(seq 1 50); do
   fi
 done
 
-URL="http://localhost:$FRONTEND_PORT/Financial%20Analyze.html"
+UI_VERSION="20260723-hermes-label-review"
+URL="http://localhost:$FRONTEND_PORT/Financial%20Analyze.html?v=$UI_VERSION"
 echo
 echo "== Running =="
 echo "  Backend:  http://localhost:$BACKEND_PORT  (docs: /docs)"

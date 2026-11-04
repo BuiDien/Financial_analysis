@@ -1,6 +1,6 @@
 # Master Plan - Financial Analysis System
 
-**Updated:** 2026-07-12
+**Updated:** 2026-07-18
 **Product direction:** VN-first financial analysis, with global macro news as context.
 **Trust rule:** market feeds are researched/unverified; OCR figures are drafts; only reconciled
 statement values may be used for investment analysis.
@@ -23,7 +23,7 @@ steps remain in `docs/plans/`; design contracts remain in `docs/design/` and `do
 | Canonical document schema | Not built | Current `Filing` model is a prototype and conflicts with the target API contract |
 | TT200 OCR structuring | Not built | No trusted line-item placement yet |
 | Reconciliation | Not built | Existing plan/spec are ready, but no runtime gate exists yet |
-| Hermes Agent | Not integrated | Frontend can call a raw local model, but MCP tools, skills, memory, and agent API are absent |
+| Hermes Agent | Partially integrated | UI and FastAPI use the real agent API; news MCP is registered. Gateway enablement, financial MCP tools, VN skills, and vault reports remain |
 | Authentication | Not built | Backend must remain on a trusted machine/network until this is fixed |
 
 ## Decisions
@@ -111,7 +111,8 @@ unverified statement values.
 
 Goal: local agent analysis over verified data and cited research.
 
-- [ ] Run the Hermes Agent API with the chosen local model; do not call Ollama directly from the UI.
+- [x] Route UI chat through the FastAPI adapter to the Hermes Agent API; do not call a raw model directly.
+- [ ] Enable and run the Hermes gateway API with the chosen local model for acceptance testing.
 - [ ] Implement/register financial MCP tools for statements, ratios, comparisons, prices, and vault I/O.
 - [ ] Register news/search tools and VN analysis skills.
 - [ ] Require provenance labels: `verified statement`, `unverified market feed`, or `researched URL`.

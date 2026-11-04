@@ -22,6 +22,55 @@ Swagger is available at `http://localhost:8000/docs`. Run checks with:
 .venv/bin/python -m ruff check app tests
 ```
 
+## Hermes Agent
+
+AI chat defaults to the full Hermes Agent gateway, not a raw Ollama/MLX model endpoint. Configure
+Hermes in `~/.hermes/.env`, start it, then put the matching key in `backend/.env`:
+
+```bash
+# ~/.hermes/.env
+API_SERVER_ENABLED=true
+API_SERVER_KEY=change-me-local-dev
+
+hermes gateway run
+```
+
+For a persistent background service, run `hermes gateway install` once, followed by
+`hermes gateway start`.
+
+```dotenv
+# backend/.env
+AI_PROVIDER=hermes
+HERMES_API_URL=http://127.0.0.1:8642
+HERMES_API_KEY=change-me-local-dev
+HERMES_MODEL=mlx-community/gemma-4-26B-A4B-it-OptiQ-4bit
+```
+
+Use `GET /api/ai/health` to verify the complete `browser -> FastAPI -> Hermes` path. The API key
+is never stored in browser settings. Cloud AI remains an explicit opt-in provider.
+
+OCR label correction is separate from general AI chat. It sends one user-marked
+label directly to local Ollama using `gemma4:12b`, with thinking disabled and a
+strict JSON response. Install and start it before using **Ask Ollama**:
+
+```bash
+ollama pull gemma4:12b
+ollama serve
+```
+
+The defaults use `http://127.0.0.1:11434`, a 60-second timeout, and a 4096-token
+context. Override them with `OLLAMA_API_URL`, `OLLAMA_OCR_MODEL`,
+`OLLAMA_TIMEOUT_SECONDS`, and `OLLAMA_OCR_NUM_CTX`. There is intentionally no
+output-token cap. Ollama only creates a suggestion; the user's **Accept** action
+applies it.
+
+For page-based worker results, automatic label review is enabled by default.
+Each page is saved first and checked against the Obsidian library. After the
+worker sends `result_end`, unknown labels are reviewed by Ollama in the
+background, one label at a time. The worker does not wait for Ollama. Set
+`ENABLE_AUTOMATIC_OCR_LABEL_REVIEW=false` to disable this or change
+`AUTOMATIC_OCR_LABEL_LIMIT` to control the maximum labels per document.
+
 The complete app can be started from `Financial_analyze/` with `./scripts/run.sh`.
 
 ## Implemented Areas
@@ -33,7 +82,9 @@ The complete app can be started from `Financial_analyze/` with `./scripts/run.sh
 - OCR Inbox: unlabeled PDF upload, durable worker attempts/retries, persistent source-backed row review,
   audit history, deferred labels, and guarded filing publication.
 - News: CafeF/global feeds, SearXNG search, public-URL article extraction, daily digest parsing.
-- Portfolio prototype: one local portfolio and holdings CRUD.
+- Local portfolio ledger: audited transactions, FIFO lots, multi-currency valuation,
+  TWR snapshots, durable CSV imports/jobs, and generated exports. Aggregate holdings
+  are derived projections; the old holdings POST endpoint is compatibility-only.
 
 ## Safety Defaults
 

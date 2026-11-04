@@ -15,14 +15,14 @@ const PAGE_CONTEXT = {
   dashboard: 'The user is viewing a markets dashboard with major indices (S&P 500 +0.42%, NASDAQ +0.89%, DOW -0.18%, VIX 14.23 -3.21%, 10Y yield 4.21%, BTC $98,234), a watchlist (NVDA +2.84%, AAPL +0.56%, TSLA -2.18%), and a sector heatmap (Tech leading +1.42%, Energy lagging -1.23%).',
   home: 'The user is on the Home watch board — a real-time tracker they have personalized with indices, gold and other commodities, rates, crypto, and individual stocks. Help them interpret moves and decide what to monitor.',
   detail: 'The user is viewing the asset detail page for NVIDIA (NVDA) at $142.36, +2.84% today. Market cap $3.49T, P/E 67.4. They\'re looking at a 1-month candlestick chart.',
-  portfolio: 'The user is viewing their portfolio: $248,731 total value, +1.32% today (+$3,247), +23.81% all-time. Top holdings: NVDA (14%), AAPL (10%), MSFT (10%), GOOGL (9%). Bonds (TLT) are down 8%.',
+  portfolio: 'The user is viewing their portfolio. Use only the live portfolio context supplied with this request; never invent holdings or performance.',
   screener: 'The user is using the stock screener to filter equities by market cap, P/E ratio, dividend yield, and sector.',
   statements: 'The user is analyzing financial statements (income, balance sheet, cash flow, ratios) for NVDA. FY25: Revenue $130B (+114% YoY), Net Income $73B (+145%), FCF $61B. Margins: gross 75%, op 62%, net 56%. ROE 119%. P/E 48x. They can compare line items 5 years back and benchmark ratios against sector peers.',
   news: 'The user is reading market news. Top stories include Fed rate signals, NVIDIA Q3 earnings (data center +94%), Tesla delivery miss, and Apple AI partnership.',
   alerts: 'The user is on the Alerts page, where they configure price, technical (RSI), percentage-move, and volume alerts on tickers. Help them set sensible alert thresholds.'
 };
 
-const AIPanel = ({ page, onClose }) => {
+const AIPanel = ({ page, portfolio, onClose }) => {
   const [messages, setMessages] = React.useState([
   {
     role: 'assistant',
@@ -43,18 +43,15 @@ const AIPanel = ({ page, onClose }) => {
   const [fullscreen, setFullscreen] = React.useState(false);
   const isHermes = aiCfg.aiProvider === 'hermes';
 
-  // Re-read settings when the panel opens / page changes, and ping Hermes.
+  // Re-read settings when the panel opens / page changes, and ask the backend
+  // whether the full Hermes Agent gateway is ready.
   React.useEffect(() => {
     const cfg = readProvider();
     setAiCfg(cfg);
     if (cfg.aiProvider === 'hermes') {
-      const base = (cfg.hermesEndpoint || 'http://localhost:11434').replace(/\/$/, '');
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 2000);
-      fetch(`${base}/api/tags`, { signal: ctrl.signal }).
-      then((r) => setHermesUp(r.ok)).
-      catch(() => fetch(`${base}/v1/models`, { signal: ctrl.signal }).then((r) => setHermesUp(r.ok)).catch(() => setHermesUp(false))).
-      finally(() => clearTimeout(t));
+      window.HelixAPI.aiHealth().
+      then(() => setHermesUp(true)).
+      catch(() => setHermesUp(false));
     }
   }, [page]);
 
@@ -80,8 +77,21 @@ const AIPanel = ({ page, onClose }) => {
       };
       let aiTone = 'concise';
       try { aiTone = JSON.parse(localStorage.getItem('helix_settings_v1') || '{}').aiTone || 'concise'; } catch {}
-      const prompt = `You are Helix, a sharp financial market assistant inside an analysis app. Current view: ${PAGE_CONTEXT[page] || ''}\n\nUser asks: "${q}"\n\n${toneMap[aiTone] || toneMap.concise} Use **bold** for key figures and *italic* for ticker symbols. Be direct, no fluff. Don't add disclaimers about not being a financial advisor — the user knows. Do not use emoji.`;
-      const reply = await window.HelixAPI.complete(prompt, { page, context: { view: PAGE_CONTEXT[page] || '' } });
+      const currentPortfolio = window.__livePortfolioContext || portfolio;
+      const portfolioContext = page === 'portfolio' && currentPortfolio ? JSON.stringify({
+        currency: currentPortfolio.display_currency || currentPortfolio.displayCurrency || 'USD', totalValue: currentPortfolio.total_value ?? currentPortfolio.totalValue,
+        dayChange: currentPortfolio.today_change ?? currentPortfolio.dayChange, totalGain: currentPortfolio.total_gain ?? currentPortfolio.totalGain,
+        holdings: (currentPortfolio.holdings || []).slice(0, 20).map(h => ({ ticker: h.ticker || h.sym, weight: h.weight, gainPct: h.gain_pct ?? h.gainPct })),
+        demo: window.__livePortfolioContext ? false : currentPortfolio.demo !== false,
+      }) : '';
+      const view = `${PAGE_CONTEXT[page] || ''}${portfolioContext ? ` Live portfolio data: ${portfolioContext}` : ''}`;
+      const responseStyle = `${toneMap[aiTone] || toneMap.concise} Use **bold** for key figures and *italic* for ticker symbols. Be direct, no fluff. Don't add disclaimers about not being a financial advisor — the user knows. Do not use emoji.`;
+      const conversation = [...messages, { role: 'user', content: q }];
+      const reply = await window.HelixAPI.complete(q, {
+        page,
+        context: { view, responseStyle },
+        messages: conversation,
+      });
       setMessages((m) => [...m, { role: 'assistant', content: reply }]);
     } catch (e) {
       setMessages((m) => [...m, { role: 'assistant', content: 'Connection issue. Try again.' }]);
@@ -244,7 +254,7 @@ function getInitialMessage(page) {
     dashboard: "Markets opened mixed but tech is leading. **NASDAQ +0.89%** on strong AI/semi names. Fed minutes Wednesday could shift sentiment — *VIX* at 14 is complacent. Want me to dig into anything specific?",
     home: "This is your live watch board. **Gold** is holding near $2,683, *VIX* is calm at 14, and 10Y yields sit at 4.21%. Tell me which instrument to break down, or ask me to suggest alert levels.",
     detail: "*NVDA* up **2.84%** to **$142.36** on continued data-center momentum. RSI at 64 — approaching but not yet overbought. Earnings in 12 days. Ask me anything about it.",
-    portfolio: "You're up **+1.32% today** ($3,247), led by *NVDA* and *META*. Heads up: tech concentration is at **40%** of portfolio — worth considering. Bonds (*TLT*) are dragging.",
+    portfolio: "I can review your live holdings, performance, cash, and concentration. What would you like to examine?",
     screener: "Tell me what you're hunting for — quality, value, momentum, dividend, defensive — and I'll suggest filters.",
     statements: "*NVDA* FY25 is extraordinary: revenue **$130B (+114%)**, net income **$73B (+145%)**, FCF **$61B**. Op margin **62.5%** — best-in-class. The catch: P/E **48×**, ~50% premium to sector. Want me to flag risks or compare to peers?",
     news: "Three stories actually matter today: **Fed rate posture**, **NVIDIA's data-center beat**, and **Tesla delivery miss**. Want me to break any of those down?",

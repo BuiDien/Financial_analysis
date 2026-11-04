@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
+from ..config import get_settings
 from ..models.ocr import (
     OCRAttempt, OCRAuditEvent, OCRInboxItem, OCRPageResult, OCRReviewJob,
 )
@@ -10,6 +11,7 @@ from ..ocr_page_contract import (
     MAX_DOCUMENT_MARKDOWN_BYTES, OCR_PAGE_RESULT_FORMAT, OCR_PAGE_SCHEMA_VERSION,
     OCRPageContractError, validate_page_message, validate_result_end,
 )
+from .ocr_auto_label_review import check_page_labels
 
 
 class OCRPageConflictError(OCRPageContractError):
@@ -59,6 +61,10 @@ def store_page_result(
     )
     attempt.status = "receiving_pages"
     attempt.error = None
+    if get_settings().enable_automatic_ocr_label_review:
+        check_page_labels(page)
+    else:
+        page.label_check_status = "disabled"
     return page, "stored"
 
 

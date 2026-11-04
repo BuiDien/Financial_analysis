@@ -13,6 +13,18 @@
 
 const HELIX_DEFAULT_API = 'http://localhost:8000';
 
+const apiErrorDetail = payload => {
+  const detail = payload?.detail;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    return detail.map(issue => {
+      const field = Array.isArray(issue?.loc) ? issue.loc.slice(1).join('.') : '';
+      return field ? `${field}: ${issue.msg || 'invalid value'}` : (issue?.msg || 'invalid request');
+    }).join('; ');
+  }
+  return detail && typeof detail === 'object' ? JSON.stringify(detail) : '';
+};
+
 const HelixAPI = {
   base: localStorage.getItem('helix_api_url') || HELIX_DEFAULT_API,
   live: false,          // set true after a successful /health ping
@@ -49,7 +61,7 @@ const HelixAPI = {
     const res = await fetch(`${this.base}${path}`);
     if (!res.ok) {
       let detail = `${res.status} ${path}`;
-      try { detail = (await res.json()).detail || detail; } catch {}
+      try { detail = apiErrorDetail(await res.json()) || detail; } catch {}
       throw new Error(detail);
     }
     return res.json();
@@ -63,7 +75,7 @@ const HelixAPI = {
     });
     if (!res.ok) {
       let detail = `${res.status} ${path}`;
-      try { detail = (await res.json()).detail || detail; } catch {}
+      try { detail = apiErrorDetail(await res.json()) || detail; } catch {}
       throw new Error(detail);
     }
     return res.json();
@@ -80,7 +92,25 @@ const HelixAPI = {
   ratios(ticker)                   { return this._get(`/api/ratios/${ticker}`); },
 
   // ── Portfolio ─────────────────────────────────────────────
-  portfolio()                      { return this._get('/api/portfolio'); },
+  portfolio(currency)              { return this._get('/api/portfolio' + (currency ? `?currency=${encodeURIComponent(currency)}` : '')); },
+  portfolioPerformance(range = '1y') { return this._get(`/api/portfolio/performance?range=${encodeURIComponent(range)}`); },
+  portfolioTransactions(params = {}) { return this._get('/api/portfolio/transactions?' + new URLSearchParams(params)); },
+  addTransaction(tx)               { return this._send('POST', '/api/portfolio/transactions', tx); },
+  replaceTransaction(id, tx)       { return this._send('PATCH', `/api/portfolio/transactions/${id}`, tx); },
+  voidTransaction(id)              { return this._send('DELETE', `/api/portfolio/transactions/${id}`); },
+  setPortfolioCurrency(display_currency) { return this._send('PATCH', '/api/portfolio/preferences', { display_currency }); },
+  portfolioJob(id)                 { return this._get(`/api/portfolio/jobs/${id}`); },
+  portfolioTransactionsExportUrl(){ return `${this.base}/api/portfolio/transactions/export`; },
+  portfolioStatementUrl()         { return `${this.base}/api/portfolio/statement`; },
+  async portfolioImportPreview(file) {
+    const fd = new FormData(); fd.append('file', file);
+    const res = await fetch(`${this.base}/api/portfolio/imports/preview`, { method: 'POST', body: fd });
+    if (!res.ok) throw new Error((await res.json()).detail || 'Import preview failed');
+    return res.json();
+  },
+  portfolioImportValidate(id, mapping) { return this._send('POST', `/api/portfolio/imports/${id}/validate`, { mapping }); },
+  portfolioImportCommit(id)        { return this._send('POST', `/api/portfolio/imports/${id}/commit`); },
+  portfolioImportErrorsUrl(id)     { return `${this.base}/api/portfolio/imports/${id}/errors`; },
   addHolding(h)                    { return this._send('POST', '/api/portfolio/holdings', h); },
   removeHolding(id)                { return this._send('DELETE', `/api/portfolio/holdings/${id}`); },
 
@@ -110,7 +140,7 @@ const HelixAPI = {
 
   // ── News ──────────────────────────────────────────────────
   news(limit = 30)                 { return this._get(`/api/news?limit=${limit}`); },
-  newsSearch(q, count = 5)         { return this._get(`/api/news/search?q=${encodeURIComponent(q)}&count=${count}`); },
+  newsSearch(q, count = 5, timeRange = 'week') { return this._get(`/api/news/search?q=${encodeURIComponent(q)}&count=${count}&time_range=${encodeURIComponent(timeRange)}`); },
   newsArticle(url)                 { return this._get(`/api/news/article?url=${encodeURIComponent(url)}`); },
   newsDailySummary()               { return this._get('/api/news/summary'); },
 
@@ -155,6 +185,34 @@ const HelixAPI = {
   ocrInboxLabels(id, labels)       { return this._send('PATCH', `/api/ocr-inbox/${id}/labels`, labels); },
   ocrInboxPublish(id)              { return this._send('POST', `/api/ocr-inbox/${id}/publish`); },
   ocrReview(id)                    { return this._get(`/api/ocr-inbox/reviews/${id}`); },
+  ocrReviewPage(reviewId, page)    { return this._get(`/api/ocr-inbox/reviews/${reviewId}/pages/${page}`); },
+  ocrReviewAutoLevels(reviewId, page, revision, markdown) {
+    return this._send('POST', `/api/ocr-inbox/reviews/${reviewId}/label-level-preview/pages/${page}`, { revision, markdown });
+  },
+  ocrReviewVerifyLevelTotals(reviewId, page, revision, markdown) {
+    return this._send('POST', `/api/ocr-inbox/reviews/${reviewId}/level-total-preview/pages/${page}`, { revision, markdown });
+  },
+  ocrHermesLabelReviewStart(reviewId, page, revision, targets) {
+    return this._send('POST', `/api/ocr-inbox/reviews/${reviewId}/pages/${page}/label-review-runs`, { revision, targets });
+  },
+  ocrHermesLabelReviewLatest(reviewId, page) {
+    return this._get(`/api/ocr-inbox/reviews/${reviewId}/pages/${page}/label-review-runs/latest`);
+  },
+  ocrHermesLabelReviewRun(reviewId, page, runId) {
+    return this._get(`/api/ocr-inbox/reviews/${reviewId}/pages/${page}/label-review-runs/${runId}`);
+  },
+  ocrHermesLabelSuggestionDecision(suggestionId, decision, userEditedLevel = null) {
+    return this._send('POST', `/api/ocr-inbox/label-suggestions/${suggestionId}/decision`, { decision, user_edited_level: userEditedLevel });
+  },
+  ocrHermesLabelSuggestionsApply(reviewId, page, revision, pageContentSha256, suggestionIds) {
+    return this._send('POST', `/api/ocr-inbox/reviews/${reviewId}/pages/${page}/apply-label-suggestions`, { revision, page_content_sha256: pageContentSha256, suggestion_ids: suggestionIds });
+  },
+  ocrReviewPageAction(reviewId, page, action, revision, markdown = null) {
+    return this._send('POST', `/api/ocr-inbox/reviews/${reviewId}/pages/${page}/${action}`, { revision, markdown });
+  },
+  ocrReviewMarkdownUrl(reviewId, source = 'effective') {
+    return `${this.base}/api/ocr-inbox/reviews/${reviewId}/markdown?source=${encodeURIComponent(source)}`;
+  },
   ocrReviewAction(reviewId, rowId, action, revision, data, reason) {
     return this._send('POST', `/api/ocr-inbox/reviews/${reviewId}/rows/${rowId}/${action}`, { revision, data, reason });
   },
@@ -169,67 +227,34 @@ const HelixAPI = {
 
   // ── AI chat (sidebar) ─────────────────────────────────────
   // messages: [{role, content}], page: 'dashboard' | ... , pageContext: {}
-  async aiChat(page, pageContext, messages) {
-    const out = await this._send('POST', '/api/ai/chat', { page, page_context: pageContext, messages });
+  async aiChat(page, pageContext, messages, provider = 'hermes') {
+    const out = await this._send('POST', '/api/ai/chat', { provider, page, page_context: pageContext, messages });
     return out.answer;
   },
 
-  // Read the user's saved AI settings (provider, hermes endpoint, etc.)
+  aiHealth()                       { return this._get('/api/ai/health'); },
+
+  // Read the user's saved provider preference.
   _aiSettings() {
     try { return JSON.parse(localStorage.getItem('helix_settings_v1') || '{}'); }
     catch { return {}; }
   },
 
-  // Call a locally-running Hermes agent (Ollama / LM Studio / llama.cpp).
-  // Tries the Ollama /api/generate shape first, then the OpenAI-compatible
-  // /v1/chat/completions shape that LM Studio + llama.cpp expose.
-  async hermesComplete(prompt, settings) {
-    const base = (settings.hermesEndpoint || 'http://localhost:11434').replace(/\/$/, '');
-    const model = settings.hermesModel === 'custom' ? (settings.hermesModelCustom || 'hermes3') : (settings.hermesModel || 'hermes3');
-    const temperature = settings.hermesTemperature ?? 0.4;
-    const system = settings.hermesPersona || 'You are Hermes, a precise financial analysis agent. Be concise, numerical, and direct.';
-
-    // 1) Ollama native
-    try {
-      const res = await fetch(`${base}/api/generate`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, prompt, system, stream: false, options: { temperature } }),
-      });
-      if (res.ok) { const j = await res.json(); if (j.response) return j.response; }
-    } catch (e) { /* try next */ }
-
-    // 2) OpenAI-compatible (LM Studio, llama.cpp server, vLLM)
-    const res = await fetch(`${base}/v1/chat/completions`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model, temperature,
-        messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
-      }),
-    });
-    if (!res.ok) throw new Error('Hermes endpoint unreachable');
-    const j = await res.json();
-    return j.choices?.[0]?.message?.content || '';
-  },
-
-  // Unified completion helper.
-  // Provider order: local Hermes (if selected) → Python backend (if live) → window.claude.
-  async complete(prompt, { page = 'dashboard', context = {} } = {}) {
+  // Unified completion helper. Hermes always flows through the Python backend,
+  // which owns the API key and talks to the full agent (skills + MCP), not raw Ollama.
+  async complete(prompt, { page = 'dashboard', context = {}, messages = null } = {}) {
     const settings = this._aiSettings();
-    if (settings.aiProvider === 'hermes') {
-      try {
-        return await this.hermesComplete(prompt, settings);
-      } catch (e) {
-        // If the user demanded on-device only, surface the failure instead of leaking to cloud
-        if (settings.hermesKeepLocal) {
-          return 'The local Hermes agent is unreachable. Start it (e.g. `ollama run hermes3`) or turn off "Keep everything on-device" in Settings → Hermes Agent.';
-        }
-        /* otherwise fall through to cloud */
-      }
-    }
+    const provider = settings.aiProvider === 'claude' ? 'cloud' : 'hermes';
+    const chatMessages = messages || [{ role: 'user', content: prompt }];
     if (this.live) {
       try {
-        return await this.aiChat(page, context, [{ role: 'user', content: prompt }]);
-      } catch (e) { /* fall through to claude */ }
+        return await this.aiChat(page, context, chatMessages, provider);
+      } catch (e) {
+        if (provider === 'hermes') return `Hermes Agent is unavailable. ${e.message || e}`;
+      }
+    }
+    if (provider === 'hermes') {
+      return 'Hermes Agent requires the Helix backend. Start FastAPI, then start Hermes with `hermes gateway run`.';
     }
     return window.claude.complete(prompt);
   },

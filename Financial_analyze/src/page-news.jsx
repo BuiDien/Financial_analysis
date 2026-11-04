@@ -7,6 +7,7 @@ const PageNews = ({ data }) => {
   const [results, setResults] = React.useState([]);
   const [searchError, setSearchError] = React.useState(null);
   const [researching, setResearching] = React.useState(false);
+  const [timeRange, setTimeRange] = React.useState('week');
   const [story, setStory] = React.useState(null);
   const [digest, setDigest] = React.useState(null);
   const [digestExpanded, setDigestExpanded] = React.useState(false);
@@ -32,7 +33,7 @@ const PageNews = ({ data }) => {
 
     let hits;
     try {
-      hits = await window.HelixAPI.newsSearch(topic, 5);
+      hits = await window.HelixAPI.newsSearch(topic, 8, timeRange);
       setResults(hits);
     } catch (e) {
       setSearchError('Search unavailable — start ./scripts/run_searxng.sh');
@@ -41,7 +42,7 @@ const PageNews = ({ data }) => {
     }
 
     try {
-      const context = hits.map(h => `- ${h.title}: ${h.content}`).join('\n');
+      const context = hits.map(h => `- ${h.title}${h.published ? ` (${h.published})` : ''}${h.source ? ` [${h.source}]` : ''}: ${h.content}`).join('\n');
       const prompt = `You are a financial news analyst agent. Focus ONLY on this subject: "${topic}".\n\nFrom the search results below, synthesize a focused briefing on "${topic}". Use this exact format:\n\n**Why it matters:** [one sharp sentence]\n\n**Key developments:**\n- [point with specifics]\n- [point]\n- [point]\n\n**What to watch:** [1-2 forward-looking items]\n\n**Affected tickers:** [comma-separated symbols]\n\nBe concise and numerical. Use **bold** for figures, *italic* for tickers. No disclaimers, no emoji.\n\nSEARCH RESULTS:\n${context}`;
       const reply = await window.HelixAPI.complete(prompt, { page: 'news', context: { subject: topic } });
       setBriefing(reply);
@@ -83,6 +84,18 @@ const PageNews = ({ data }) => {
                 style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', padding: '11px 0', fontSize: 14, color: 'var(--text)', fontFamily: 'inherit' }}
               />
             </span>
+            <select
+              value={timeRange}
+              onChange={e => setTimeRange(e.target.value)}
+              disabled={researching}
+              aria-label="News freshness"
+              className="search"
+              style={{ width: 112, cursor: 'pointer' }}
+            >
+              <option value="day">24 hours</option>
+              <option value="week">7 days</option>
+              <option value="month">30 days</option>
+            </select>
             <button className="btn btn-primary" onClick={() => research()} disabled={researching || !subject.trim()}>
               <Icon name="search" size={13} /> {researching ? 'Researching…' : 'Research'}
             </button>
@@ -106,6 +119,11 @@ const PageNews = ({ data }) => {
               {results.map((r, i) => (
                 <div key={i} style={{ padding: '6px 0', borderBottom: i < results.length - 1 ? '1px solid var(--border)' : 'none' }}>
                   <a href={r.url} target="_blank" rel="noreferrer" style={{ fontSize: 13, color: 'var(--accent)', textDecoration: 'none' }}>{r.title}</a>
+                  {(r.source || r.published) && (
+                    <div style={{ marginTop: 2, fontSize: 10, color: 'var(--text-subtle)', fontFamily: 'var(--font-mono)' }}>
+                      {[r.source, r.published].filter(Boolean).join(' · ')}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
