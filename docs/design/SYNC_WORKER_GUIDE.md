@@ -1,6 +1,6 @@
 # Sync Worker Guide — Page-Markdown Server Contract
 
-Status: server ready; worker implementation is the next deployment step.
+Status: server ready. The reference worker is the local Mac OCR worker: run `Financial_analyze/scripts/setup_ocr_mac.sh` once, then `Financial_analyze/scripts/start_ocr_mac.sh` and enter the code shown on the Sync page. The laptop (WSL/vLLM) worker is retired.
 
 This is the concise integration guide for connecting a worker to the server implemented in
 `backend/app/routes/sync.py`. See `OCR_PROTOCOL.md` for validation rules and server review APIs.
@@ -30,7 +30,8 @@ Send:
 ```
 
 Receive `pair_required`, send the pairing code with its `pairId`, then require this selection in the
-welcome message:
+welcome message. A worker connecting from loopback (same machine as Core) gets `welcome` directly
+after `hello`, with no `pair_required`/`pair` step:
 
 ```json
 {

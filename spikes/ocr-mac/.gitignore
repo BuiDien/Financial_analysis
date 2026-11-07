@@ -1,0 +1,7 @@
+# Local-only spike artifacts
+helix-copy.db
+pages/
+.venv/
+models/
+.minicpm-ocr/
+runs/

@@ -1,5 +1,7 @@
 # OCR Worker Upgrade — Page Markdown v2
 
+> Note (2026-11-05): the local Mac OCR worker (`Financial_analyze/scripts/ocr_worker.py`, started via `start_ocr_mac.sh`) implements this protocol; the WSL/vLLM laptop worker is retired. Content below is kept as the protocol reference.
+
 Date: 2026-07-18  
 Target: real WSL/vLLM OCR worker and repository reference worker  
 Server requirement: dual-format page-Markdown server deployed first  

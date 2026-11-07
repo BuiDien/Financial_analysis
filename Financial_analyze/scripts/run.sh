@@ -66,6 +66,7 @@ stop_port_listeners "$FRONTEND_PORT" "frontend"
 
 PIDS=()
 STARTED_SEARXNG=0
+STARTED_OCR=0
 cleanup() {
   echo
   echo "-- Shutting down --"
@@ -75,6 +76,12 @@ cleanup() {
     kill -TERM -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
   done
   sleep 0.3
+  if [ "$STARTED_OCR" = "1" ]; then
+    # start_ocr_mac.sh defers its own trap while the worker runs in the
+    # foreground, so stop the worker and its MLX server directly.
+    pkill -TERM -f "$ROOT/scripts/ocr_worker.py" 2>/dev/null || true
+    pkill -TERM -f "$ROOT/scripts/serve_mlx.py" 2>/dev/null || true
+  fi
   if [ "$STARTED_SEARXNG" = "1" ]; then
     pkill -f "searx.webapp" 2>/dev/null || true
   fi
@@ -133,12 +140,12 @@ fi
 # (BACKEND_PORT=... .venv/bin/uvicorn app.main:app --reload) during active
 # backend development.
 echo "-- Starting backend on :$BACKEND_PORT --"
-(cd "$BACKEND" && ".venv/bin/uvicorn" app.main:app --host 0.0.0.0 --port "$BACKEND_PORT") &
+(cd "$BACKEND" && ".venv/bin/uvicorn" app.main:app --host 127.0.0.1 --port "$BACKEND_PORT") &
 PIDS+=("$!")
 
 # ── Frontend (static file server — no build step, Babel-in-browser) ───
 echo "-- Serving frontend on :$FRONTEND_PORT --"
-(cd "$ROOT" && python3 -m http.server "$FRONTEND_PORT" >/tmp/helix_frontend.log 2>&1) &
+(cd "$ROOT" && python3 -m http.server --bind 127.0.0.1 "$FRONTEND_PORT" >/tmp/helix_frontend.log 2>&1) &
 PIDS+=("$!")
 
 # Wait for the backend to actually answer before opening the browser — a
@@ -158,6 +165,22 @@ for i in $(seq 1 50); do
   fi
 done
 
+# ── OCR worker (same Mac, loopback → no pairing code) ─────────────────
+# Skip with OCR_WORKER=0. Needs ./scripts/setup_ocr_mac.sh once.
+OCR_LOG="$ROOT/models/ocr/logs/worker.log"
+if [ "${OCR_WORKER:-1}" = "0" ]; then
+  echo "-- OCR worker skipped (OCR_WORKER=0) --"
+elif [ -x "$ROOT/.venv-ocr-sdk/bin/python" ] && [ -x "$ROOT/.venv-ocr-mlx/bin/python" ]; then
+  mkdir -p "$(dirname "$OCR_LOG")"
+  echo "-- Starting OCR worker (model load ~1-2 min; log: $OCR_LOG) --"
+  PYTHONUNBUFFERED=1 "$ROOT/scripts/start_ocr_mac.sh" --connect "ws://127.0.0.1:$BACKEND_PORT/ws/ocr" \
+    </dev/null >"$OCR_LOG" 2>&1 &
+  PIDS+=("$!")
+  STARTED_OCR=1
+else
+  echo "-- OCR worker not set up (run ./scripts/setup_ocr_mac.sh) — OCR Inbox jobs will wait --"
+fi
+
 UI_VERSION="20260723-hermes-label-review"
 URL="http://localhost:$FRONTEND_PORT/Financial%20Analyze.html?v=$UI_VERSION"
 echo
@@ -168,5 +191,5 @@ if command -v open >/dev/null 2>&1; then
   open "$URL"
 fi
 echo
-echo "Ctrl-C to stop both."
+echo "Ctrl-C to stop everything."
 wait

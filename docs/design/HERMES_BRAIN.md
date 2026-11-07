@@ -9,7 +9,7 @@ from the Core, 3. point the website chat at its **API server**.
 Repo: github.com/NousResearch/hermes-agent · docs: hermes-agent.nousresearch.com/docs
 
 ## Locked decisions (2026-06-22)
-- Brain = **Hermes Agent**, model **Qwen3 35B** (Ollama), on the **Mac (M2 Max 64GB)**. GPU laptop = OCR only.
+- Brain = **Hermes Agent**, model **Qwen3 35B** (Ollama), on the **Mac (M2 Max 64GB)**. OCR runs as a separate local worker on the same Mac.
 - **Tools via MCP** (Hermes Agent is MCP-native) — the Core runs an MCP server. *(supersedes the old
   "Path 1 Python tool-calling, MCP later" — MCP is now the path.)*
 - **Skills** live in `~/.hermes/skills/`, agentskills.io standard (`SKILL.md` + frontmatter). VN skills
@@ -33,7 +33,7 @@ Mac (M2 Max, 64GB)
   Core (FastAPI) ── MCP server (financial tools) ───┘ serves UI + SQLite + OCR pipeline
         ▲ HelixAPI (data + chat proxy)
   Website
-GPU laptop (RTX 4070): OCR system  ◄── Core OCR port
+Local Mac OCR worker (MLX): OCR system  ◄── Core OCR port
 ```
 Boundaries: UI↔Core (`API_CONTRACT.md`) · Core↔OCR (`OCR_PROTOCOL.md`) · Hermes↔Core-tools (MCP) ·
 Website↔Hermes (API server). Brain + Core both on the Mac.

@@ -17,6 +17,7 @@ from .routes import (
     sync,
     scan,
     ocr_inbox,
+    history,
 )
 
 settings = get_settings()
@@ -65,6 +66,8 @@ def health():
 
 
 # Register routers
+# history before market: market defines /history/{ticker}, which would shadow /history/companies
+app.include_router(history.router, prefix="/api", tags=["history"])
 app.include_router(market.router, prefix="/api", tags=["market"])
 app.include_router(fundamentals.router, prefix="/api", tags=["fundamentals"])
 app.include_router(portfolio.router, prefix="/api", tags=["portfolio"])

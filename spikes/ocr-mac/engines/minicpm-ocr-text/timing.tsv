@@ -1,0 +1,2 @@
+page	prompt	seconds	prompt_tokens	gen_tokens	gen_tps	peak_gb
+q1-2026_p04	Text Recognition:	10.3	2839	718	150.2	3.87

@@ -11,6 +11,9 @@ the coordinator hands back a pairId (worker doesn't need the code up front):
   server → worker : {"type": "pair_required", "pairId": "a1b2c3d4"}
   worker → server : {"type": "pair", "pairId": "a1b2c3d4", "code": "ABC-23"}
   server → worker : {"type": "welcome", "workerId": "..."}    (or {"type":"deny"}, retry "pair")
+
+A worker connecting from loopback (same machine) skips pair_required/pair:
+Core replies to hello with welcome directly.
   server → worker : {"type": "job", "jobId": "...", "filingId": 12,
                      "filename": "NVDA 10-K.pdf", "bytes": 2118144}
   server → worker : <binary frame> ... <binary frame>     (the PDF, chunked)
@@ -113,6 +116,16 @@ def _gen_code() -> str:
     alpha = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
     s = "".join(secrets.choice(alpha) for _ in range(6))
     return f"{s[:3]}-{s[3:]}"
+
+
+def _is_loopback_peer(host: str | None) -> bool:
+    """A worker on this machine (127.0.0.1 / ::1 / ::ffff:127.0.0.1) needs no pairing code."""
+    try:
+        address = ipaddress.ip_address(host or "")
+    except ValueError:
+        return False
+    mapped = getattr(address, "ipv4_mapped", None)
+    return address.is_loopback or bool(mapped and mapped.is_loopback)
 
 
 _NON_LAN_INTERFACE_PREFIXES = (
@@ -463,11 +476,16 @@ async def ocr_worker(ws: WebSocket):
             await ws.close()
             return
 
-        pair_id = secrets.token_hex(4)
-        await ws.send_json({"type": "pair_required", "pairId": pair_id})
-
         worker_name = hello.get("name", "Worker")
-        for attempt in range(MAX_PAIR_ATTEMPTS):
+        # Same-machine worker: the OS already proves it is local, so skip the
+        # code and go straight to welcome. Remote workers still pair.
+        local_peer = _is_loopback_peer(ws.client.host if ws.client else None)
+        if local_peer:
+            logger.info("OCR worker %s is local; skipping pairing code", peer)
+        else:
+            pair_id = secrets.token_hex(4)
+            await ws.send_json({"type": "pair_required", "pairId": pair_id})
+        for attempt in range(0 if local_peer else MAX_PAIR_ATTEMPTS):
             reply = await ws.receive_json()
             if (
                 reply.get("type") == "pair"

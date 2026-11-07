@@ -1,0 +1,5 @@
+<think>
+
+</think>
+
+<otsl><ecel><fcel>Tử 01/01/2026 đến 30/09/2026 Triệu đồng<fcel>Tử 01/01/2025 đến 30/09/2025 Triệu đồng<nl><fcel>Lợi nhuận sau thuế (thước về ngân hàng, không bao gồm lợi ích cổ đông không kiểm soát)<fcel>23.784.072<fcel>18.016.369<nl><fcel>Bình quân gia quyền của số cổ phiếu phổ thông đang lưu hành (cổ phiếu)<fcel>9.280.953.191<fcel>9.263.249.895<nl><fcel>Lãi cơ bản trên mới cổ phiếu (đồng/cổ phiếu)<fcel>2.563<fcel>1.945<nl><fcel>22.3 Cổ phiếu:<ecel><ecel><nl><ecel><fcel>30/09/2026<fcel>31/12/2025<nl><fcel>Số lượng cổ phiếu đang ký phát hành<ecel><ecel><nl><fcel>Số lượng cổ phiếu đã bán ra công chúng<fcel>10.068.749.885<fcel>8.054.999.909<nl><fcel>- Cổ phiếu phổ thông<fcel>10.068.749.885<fcel>8.054.999.909<nl><fcel>Số lượng cổ phiếu được mua lại<fcel>-<fcel>-<nl><fcel>- Cổ phiếu phổ thông<fcel>-<fcel>-<nl><fcel>- Cổ phiếu ưu đãi<fcel>-<fcel>-<nl><fcel>Số lượng cổ phiếu đang lưu hành<fcel>10.068.749.885<fcel>8.054.999.909<nl><fcel>- Cổ phiếu phổ thông<fcel>10.068.749.885<fcel>8.054.999.909<nl><fcel>- Cổ phiếu ưu đãi<fcel>-<fcel>-<nl></otsl>

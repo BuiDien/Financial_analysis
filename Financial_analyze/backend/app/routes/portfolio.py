@@ -271,7 +271,7 @@ def get_portfolio(
     position_value = Decimal("0")
     today_change = Decimal("0")
     for row in positions:
-        item, freshness = engine.quote(db, row.ticker)
+        item, freshness = engine.quote(db, row.ticker, row.currency)
         if not item:
             missing.append({"kind": "quote", "key": row.ticker})
             price = value_native = value_display = None

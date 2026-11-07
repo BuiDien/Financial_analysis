@@ -118,7 +118,7 @@ const App = () => {
       dayChange: pf.today_change || 0, dayChangePct: pf.today_change_pct || 0,
       cash: pf.cash_value || 0, displayCurrency: pf.display_currency || 'USD', demo: false,
       holdings: pf.holdings.map(h => ({
-        sym: h.ticker, shares: h.shares, avgCost: h.avg_cost ?? (h.cost_basis / (h.shares || 1)),
+        sym: h.ticker, currency: h.currency, shares: h.shares, avgCost: h.avg_cost ?? (h.cost_basis / (h.shares || 1)),
         price: h.price, value: h.value, gain: h.gain, gainPct: h.gain_pct,
         weight: h.weight ?? (pf.total_value ? (h.value / pf.total_value) * 100 : 0),
       })),

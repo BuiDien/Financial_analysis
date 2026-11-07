@@ -1,0 +1,10 @@
+page	prompt	seconds	prompt_tokens	gen_tokens	gen_tps	peak_gb
+q1-2026_p01	Table Recognition:	5.9	2839	510	150.6	3.87
+q1-2026_p03	Table Recognition:	10.4	2839	1211	150.6	3.87
+q1-2026_p04	Table Recognition:	7.0	2839	700	150.9	3.87
+q1-2026_p05	Table Recognition:	5.7	2839	494	151.0	3.87
+q1-2026_p06	Table Recognition:	10.3	2811	1192	151.0	3.87
+q1-2026_p07	Table Recognition:	11.1	2839	1304	150.6	3.87
+q1-2026_p08	Table Recognition:	5.0	2839	396	150.7	3.87
+q3-2025_p03	Table Recognition:	11.1	2839	1313	150.7	3.87
+q4-2025_p03	Table Recognition:	11.1	2839	1314	150.6	3.87

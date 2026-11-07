@@ -138,8 +138,8 @@ def receive_job(ws):
         return job, bytes(payload)
 
 
-def create_markdown_review(client, markdown: str):
-    item = upload(client).json()["items"][0]
+def create_markdown_review(client, markdown: str, allow_duplicate=False):
+    item = upload(client, allow_duplicate=allow_duplicate).json()["items"][0]
     with client.websocket_connect("/ws/ocr") as ws:
         pair_page_worker(ws)
         client.post(f"/api/ocr-inbox/{item['id']}/run")
@@ -887,3 +887,60 @@ def test_review_reject_requires_reason_and_revision_conflicts(client):
             json={"revision": review["revision"]},
         )
         assert stale.status_code == 409
+
+
+def test_review_pages_report_likely_total_misreads(client):
+    markdown = (
+        "<table><tr><td>Bất động sản đầu tư</td><td>213.258</td><td>222.313</td></tr>"
+        "<tr><td>Nguyên giá</td><td>250.155</td><td>255.126</td></tr>"
+        "<tr><td>Hao mòn</td><td>(36.897)</td><td>(32.313)</td></tr></table>"
+    )
+    _item, review = create_markdown_review(client, markdown)
+
+    listed = {page["page"]: page["total_check"] for page in review["pages"]}
+    assert listed[2] == {"checked": 0, "mismatched": 0, "likely_misreads": []}
+    [flag] = listed[1]["likely_misreads"]
+    assert flag["parent"] == "222.313" and flag["difference"] == "(500)"
+
+    page = client.get(f"/api/ocr-inbox/reviews/{review['id']}/pages/1").json()
+    assert page["total_check"] == listed[1]
+
+    fixed = markdown.replace("222.313", "222.813")
+    response = client.post(
+        f"/api/ocr-inbox/reviews/{review['id']}/pages/1/correct",
+        json={"revision": review["revision"], "markdown": fixed},
+    )
+    assert response.status_code == 200
+    page = client.get(f"/api/ocr-inbox/reviews/{review['id']}/pages/1").json()
+    assert page["total_check"]["likely_misreads"] == []
+
+
+_BASE_LABELS = {
+    "company": "MB Bank", "ticker": "MBB", "filing_type": "BCTC",
+    "period": "Q3 2026", "currency": "VND", "unit": "million",
+}
+
+
+def test_labels_accept_scope_year_period(client):
+    item = upload(client).json()["items"][0]
+    res = client.patch(
+        f"/api/ocr-inbox/{item['id']}/labels",
+        json=_BASE_LABELS | {"scope": "consolidated", "fiscal_year": 2026, "period_code": "Q3"},
+    )
+    assert res.status_code == 200
+    labels = res.json()["labels"]
+    assert labels["scope"] == "consolidated"
+    assert labels["fiscal_year"] == 2026
+    assert labels["period_code"] == "Q3"
+    # Old-style payload keeps the stored values.
+    res = client.patch(f"/api/ocr-inbox/{item['id']}/labels", json=_BASE_LABELS)
+    assert res.status_code == 200
+    assert res.json()["labels"]["period_code"] == "Q3"
+
+
+def test_labels_reject_bad_period_code(client):
+    item = upload(client).json()["items"][0]
+    url = f"/api/ocr-inbox/{item['id']}/labels"
+    assert client.patch(url, json=_BASE_LABELS | {"period_code": "Q5"}).status_code == 422
+    assert client.patch(url, json=_BASE_LABELS | {"scope": "group"}).status_code == 422
+    assert client.patch(url, json=_BASE_LABELS | {"fiscal_year": 1999}).status_code == 422

@@ -63,6 +63,38 @@ const LIVE_TICKER = {
   HPG: 'VN:HPG', VCB: 'VN:VCB', VIC: 'VN:VIC', MWG: 'VN:MWG',
 };
 
+// Tickers the user added by typing them (anything outside the catalog above),
+// e.g. MBB → { name, cls: 'Vietnam', live: 'VN:MBB' }. Stored locally and merged
+// into INSTRUMENTS / LIVE_TICKER at load so the rest of the page treats them
+// exactly like catalog entries.
+const HOME_CUSTOM_KEY = 'helix_home_custom_v1';
+const loadCustomInstruments = () => {
+  try {
+    const s = JSON.parse(localStorage.getItem(HOME_CUSTOM_KEY));
+    return s && typeof s === 'object' ? s : {};
+  } catch { return {}; }
+};
+const registerInstrument = (sym, inst) => {
+  INSTRUMENTS[sym] = inst;
+  if (inst.live) LIVE_TICKER[sym] = inst.live;
+};
+Object.entries(loadCustomInstruments()).forEach(([sym, inst]) => {
+  if (!INSTRUMENTS[sym] && inst && typeof inst.base === 'number') registerInstrument(sym, inst);
+});
+const saveCustomInstrument = (sym, inst) => {
+  registerInstrument(sym, inst);
+  try {
+    const all = loadCustomInstruments();
+    all[sym] = inst;
+    localStorage.setItem(HOME_CUSTOM_KEY, JSON.stringify(all));
+  } catch {}
+};
+// Markets a typed ticker can be looked up on, in the order offered.
+const CUSTOM_MARKETS = [
+  { key: 'vn', label: 'Vietnam stock', cls: 'Vietnam', live: sym => `VN:${sym}`, unit: undefined },
+  { key: 'us', label: 'US stock', cls: 'Stock', live: sym => sym, unit: '$' },
+];
+
 const DEFAULT_WATCH = ['XAU', 'SPX', 'NDX', 'US10Y', 'NVDA', 'BTC', 'WTI', 'VIX'];
 
 // Display currencies with approximate FX rates vs USD (1 USD = rate units).
@@ -228,8 +260,10 @@ const PageHome = ({ setActiveAsset, setPage }) => {
               if (closed && cur?.series) {
                 // Market closed and we already have its chart: freeze it.
                 // Same closing price would just repaint a flat shift — no
-                // series slide, no gen bump, no redraw. Only note the state.
-                next[r.sym] = { ...cur, state: 'CLOSED' };
+                // series slide, no gen bump, no redraw. Still take the quote's
+                // price and day change: a history-seeded tile otherwise keeps
+                // the last-hour drift as its "today" change.
+                next[r.sym] = { ...cur, price: r.q.price, chg: r.q.change_pct ?? cur.chg, state: 'CLOSED' };
                 continue;
               }
               // Append the real price, sliding a 12-point (1-hour) window. No
@@ -431,6 +465,29 @@ const PageHome = ({ setActiveAsset, setPage }) => {
 
 const AddInstrumentDialog = ({ current, onAdd, onClose }) => {
   const [q, setQ] = React.useState('');
+  const [lookingUp, setLookingUp] = React.useState(null);
+  const [lookupError, setLookupError] = React.useState('');
+  const typed = q.trim().toUpperCase();
+  const canLookUp = /^[A-Z0-9.\-]{1,12}$/.test(typed) && !INSTRUMENTS[typed];
+  React.useEffect(() => { setLookupError(''); }, [q]);
+
+  // Verify the ticker against the live backend before adding it, so the board
+  // never shows a symbol that has no real price behind it.
+  const lookUp = async market => {
+    if (!window.HelixAPI?.live) { setLookupError('Start the backend to add new tickers — prices come from the live feed.'); return; }
+    setLookingUp(market.key);
+    setLookupError('');
+    try {
+      const quote = await window.HelixAPI.quote(market.live(typed));
+      if (!quote || typeof quote.price !== 'number') throw new Error('no price');
+      saveCustomInstrument(typed, { name: `${typed} (${market.label})`, cls: market.cls, base: quote.price, dp: 2, unit: market.unit, live: market.live(typed) });
+      onAdd(typed);
+    } catch (e) {
+      setLookupError(`No ${market.label.toLowerCase()} quote found for ${typed}.`);
+    } finally {
+      setLookingUp(null);
+    }
+  };
   const groups = {};
   Object.entries(INSTRUMENTS).forEach(([sym, inst]) => {
     if (current.includes(sym)) return;
@@ -446,11 +503,26 @@ const AddInstrumentDialog = ({ current, onAdd, onClose }) => {
             <h3 className="serif" style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>Add to watch board</h3>
             <button className="icon-btn" onClick={onClose}><Icon name="close" size={12} /></button>
           </div>
-          <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search index, gold, stock…"
+          <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search, or type any ticker (e.g. MBB)…"
             style={{ width: '100%', padding: '9px 11px', fontSize: 13, fontFamily: 'inherit', background: 'var(--bg-sunken)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text)', outline: 'none' }} />
         </div>
         <div style={{ overflowY: 'auto', padding: 12 }}>
-          {Object.keys(groups).length === 0 && <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No matches</div>}
+          {canLookUp && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.08em', padding: '4px 6px' }}>Add ticker {typed}</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                {CUSTOM_MARKETS.map(market => (
+                  <button key={market.key} disabled={!!lookingUp} onClick={() => lookUp(market)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 6, cursor: lookingUp ? 'wait' : 'pointer', border: '1px solid var(--accent)', background: 'var(--bg-sunken)', textAlign: 'left', fontFamily: 'inherit', color: 'var(--text)' }}>
+                    <span className="ticker" style={{ fontSize: 12, minWidth: 44 }}>{typed}</span>
+                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{lookingUp === market.key ? 'Checking price…' : market.label}</span>
+                  </button>
+                ))}
+              </div>
+              {lookupError && <div role="alert" style={{ padding: '6px', fontSize: 12, color: 'var(--neg)' }}>{lookupError}</div>}
+            </div>
+          )}
+          {Object.keys(groups).length === 0 && !canLookUp && <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No matches</div>}
           {Object.entries(groups).map(([cls, items]) => (
             <div key={cls} style={{ marginBottom: 12 }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.08em', padding: '4px 6px' }}>{cls}</div>
@@ -482,3 +554,4 @@ if (!document.getElementById('home-style')) {
 }
 
 window.PageHome = PageHome;
+window.HOME_LIVE_TICKER = LIVE_TICKER;   // shared with the detail page (VCB → VN:VCB)

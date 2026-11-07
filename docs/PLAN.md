@@ -80,9 +80,9 @@ prototype and canonical endpoints cannot be confused.
 
 Goal: PDF to unverified, auditable statement rows.
 
-- [ ] Implement real page rendering and PaddleOCR-VL invocation on the GPU worker.
+- [ ] Run the Mac OCR worker (MiniCPM-OCR-1.0 on MLX + layout SDK) — see the 2026-11-05 design (`docs/superpowers/specs/2026-11-05-mac-ocr-worker-design.md`).
 - [x] Define and validate the worker result schema; reject oversized/malformed result frames.
-- [ ] Implement TT200 statement classification and `Ma so` placement.
+- [ ] Implement TT200 statement classification and `Ma so` placement — statement kind/periods/lines now extracted into a deduplicated company history (`docs/superpowers/specs/2026-11-06-company-history-design.md`); Mã số used when printed. Tick after the owner's acceptance run.
 - [x] Persist confidence, page provenance, raw text, current value, and previous value for every review row.
 - [ ] Add retries, timeouts, disconnect recovery, and durable job state outside process memory.
 

@@ -1,0 +1,13 @@
+<think>
+
+</think>
+
+<otsl><fcel>IV- Thồng tín bổ sung cho các khoản mục trình bày trong Báo cáo kết quả hoạt động<lcel><lcel><nl><fcel>1. Thu nhập lãi thuần<fcel>Tử 01/01/2026
+đến 30/09/2026
+Triệu đồng<fcel>Tử 01/01/2025
+đến 30/09/2025
+Triệu đồng<nl><fcel>Thu nhập lãi và các khoản thu nhập tương tự<ecel><ecel><nl><fcel>Thu nhập lãi tiền gửi<fcel>5.360.425<fcel>1.823.048<nl><fcel>Thu nhập lãi cho vay<fcel>80.350.512<fcel>49.741.011<nl><fcel>Thu lãi từ đầu tư chứng khoán nợ<fcel>11.976.645<fcel>9.127.955<nl><fcel>Thu phí từ nghiệp vụ bảo lãnh<fcel>1.946.357<fcel>1.340.877<nl><fcel>Thu lãi từ nghiệp vụ mua bán nợ<fcel>208.214<fcel>132.567<nl><fcel>Thu các hoạt động tín dụng khác<fcel>939.375<fcel>789.877<nl><ecel><fcel>100.781.528<fcel>62.955.335<nl><fcel>Chi phí lãi và các chi phí tương tự<ecel><ecel><nl><fcel>Chi lãi tiền gửi<fcel>(35.204.301)<fcel>(17.814.255)<nl><fcel>Chi lãi tiền vay<fcel>(4.396.245)<fcel>(1.671.236)<nl><fcel>Chi lãi phát hành giấy tờ có giá<fcel>(11.381.578)<fcel>(6.217.132)<nl><fcel>Chi các hoạt động tín dụng khác<fcel>(156.659)<fcel>(197.887)<nl><ecel><fcel>(51.138.783)<fcel>(25.900.510)<nl><fcel>Thu nhập từ lãi thuần<fcel>49.642.745<fcel>37.054.825<nl><fcel>2. Lãi thuần từ hoạt động dịch vụ:<lcel><lcel><nl><ecel><fcel>Tử 01/01/2026
+đến 30/09/2026
+Triệu đồng<fcel>Tử 01/01/2025
+đến 30/09/2025
+Triệu đồng<nl><fcel>Thu nhập từ hoạt động dịch vụ<ecel><ecel><nl><fcel>Thu từ dịch vụ thanh toán và ngân quỹ<fcel>3.795.929<fcel>2.929.017<nl><fcel>Thu từ dịch vụ tư vấn<fcel>404.710<fcel>612.419<nl><fcel>Thu từ kinh doanh và dịch vụ bảo hiểm<fcel>7.422.617<fcel>6.589.983<nl><fcel>Thu từ dịch vụ đại lý nhận ủy thác<fcel>70.721<fcel>21.967<nl><fcel>Thu từ xử lý nợ, thẩm định giá và khai thác tài sản<fcel>109.941<fcel>381.600<nl><fcel>Thu từ hoạt động mới giới chứng khoán<fcel>532.536<fcel>694.926<nl><fcel>Thu các dịch vụ khác<fcel>2.038.171<fcel>1.230.124<nl><ecel><fcel>14.374.625<fcel>12.460.036<nl><fcel>Chi phí hoạt động dịch vụ<ecel><ecel><nl><fcel>Chi về dịch vụ thanh toán và ngân quỹ<fcel>(2.037.977)<fcel>(1.844.553)<nl><fcel>Chi về nghiệp vụ ủy thác và đại lý<fcel>(16.996)<fcel>(17.714)<nl><fcel>Chi về dịch vụ tư vấn<fcel>-<fcel>-<nl><fcel>Chi phí hoa hồng mới giới<fcel>(1.491.461)<fcel>(1.178.628)<nl><fcel>Chi về hoạt động kinh doanh bảo hiểm<fcel>(5.264.209)<fcel>(4.392.831)<nl><fcel>Chi về xử lý nợ, thẩm định giá và khai thác tài sản<fcel>(153.823)<fcel>(253.417)<nl><fcel>Chi về hoạt động mới giới chứng khoán<fcel>(135.200)<fcel>(164.650)<nl><fcel>Chi các dịch vụ khác<fcel>(82.778)<fcel>(130.729)<nl><ecel><fcel>9.182.444)<fcel>(7.982.522)<nl><fcel>Lãi thuần từ hoạt động dịch vụ<fcel>5.192.181<fcel>4.477.514<nl></otsl>

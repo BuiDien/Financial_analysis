@@ -75,8 +75,14 @@ const HelixAPI = {
     });
     if (!res.ok) {
       let detail = `${res.status} ${path}`;
-      try { detail = apiErrorDetail(await res.json()) || detail; } catch {}
-      throw new Error(detail);
+      let payload = null;
+      try { payload = await res.json(); } catch {}
+      // Structured 409s ({message, blocking}) read as their message; the raw detail stays on the error.
+      if (payload) detail = (typeof payload.detail === 'object' && !Array.isArray(payload.detail) && payload.detail?.message) || apiErrorDetail(payload) || detail;
+      const err = new Error(detail);
+      err.status = res.status;
+      err.detail = payload?.detail;
+      throw err;
     }
     return res.json();
   },
@@ -218,6 +224,22 @@ const HelixAPI = {
   },
   ocrReviewAdd(reviewId, revision, data) { return this._send('POST', `/api/ocr-inbox/reviews/${reviewId}/rows`, { revision, data }); },
   ocrReviewVerify(reviewId, revision) { return this._send('POST', `/api/ocr-inbox/reviews/${reviewId}/verify`, { revision }); },
+
+  // ── Company history (facts from verified OCR statements) ─────
+  // answers: { revision, tables, lines, accepted_misreads, resolutions } (HistoryAnswersIn).
+  historyPreview(reviewId, answers) { return this._send('POST', `/api/ocr-inbox/reviews/${reviewId}/history-preview`, answers); },
+  historyWrite(reviewId, answers)  { return this._send('POST', `/api/ocr-inbox/reviews/${reviewId}/history`, answers); },
+  historyRemove(itemId)            { return this._send('DELETE', `/api/ocr-inbox/${itemId}/history`); },
+  // body: { statement_kind, fact_key, chosen_fact_id }
+  historyResolve(ticker, scope, body) { return this._send('POST', `/api/history/${encodeURIComponent(ticker)}/${encodeURIComponent(scope)}/resolutions`, body); },
+  historyCompanies()               { return this._get('/api/history/companies'); },
+  historyLines(ticker, scope)      { return this._get(`/api/history/${encodeURIComponent(ticker)}/${encodeURIComponent(scope)}/lines`); },
+  historySeries(ticker, scope, { lines = [], grain = 'quarter', from, to } = {}) {
+    const params = new URLSearchParams({ lines: (Array.isArray(lines) ? lines : [lines]).join(','), grain });
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    return this._get(`/api/history/${encodeURIComponent(ticker)}/${encodeURIComponent(scope)}/series?${params}`);
+  },
 
   // ── VN Market Scanner (broad scan tier) ───────────────────
   // Drives backend/app/routes/scan.py. Results are third-party (vnstock)

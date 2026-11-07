@@ -108,26 +108,44 @@ def fx_rate(
     }
 
 
-def quote(db: Session, ticker: str) -> tuple[dict | None, dict]:
+# vnstock/VCI quotes HOSE/HNX stocks in nghìn đồng; the ledger stores đồng.
+VN_PRICE_SCALE = Decimal("1000")
+
+
+def market_symbol(ticker: str, currency: str | None) -> tuple[str, Decimal]:
+    """Map a ledger ticker to the market-data symbol and its price scale.
+
+    A plain VND ticker (VCB, MBB) is a Vietnamese listing: Yahoo has no data
+    for it, so it routes to vnstock via the "VN:" prefix and its prices are
+    scaled from nghìn đồng to đồng. Everything else goes to Yahoo unchanged.
+    """
+    symbol = ticker.strip().upper()
+    if symbol.startswith(market.VN_PREFIX):
+        return symbol, VN_PRICE_SCALE
+    plain = not any(ch in symbol for ch in ".=^-")
+    if (currency or "").upper() == "VND" and plain:
+        return f"{market.VN_PREFIX}{symbol}", VN_PRICE_SCALE
+    return symbol, Decimal("1")
+
+
+def quote(db: Session, ticker: str, currency: str | None = None) -> tuple[dict | None, dict]:
+    """Today's price for a ledger ticker, in the ledger's currency units."""
+    symbol, scale = market_symbol(ticker, currency)
+    provider = "vnstock" if symbol.startswith(market.VN_PREFIX) else "yfinance"
     today = date.today()
-    cached = (
-        db.query(MarketDataPoint)
-        .filter_by(kind="quote", key=ticker, date=today)
-        .first()
-    )
-    if cached:
-        return {"ticker": ticker, "price": float(cached.value)}, {
-            "provider": cached.provider,
-            "as_of": today.isoformat(),
-            "stale": False,
-        }
+    # Live first: market.get_quote already caches for 120s, and only a live
+    # quote carries today's change. The stored point is the offline fallback.
     try:
-        item = market.get_quote(ticker)
+        item = dict(market.get_quote(symbol))
         if item.get("price") is None:
             raise ValueError("missing price")
+        for field in ("price", "previous_close", "change"):
+            if item.get(field) is not None:
+                item[field] = float(dec(item[field]) * scale)
+        item["ticker"] = ticker
         _cache_point(db, "quote", ticker, today, dec(item["price"]))
         return item, {
-            "provider": "yfinance",
+            "provider": provider,
             "as_of": datetime.fromtimestamp(item.get("ts", 0), timezone.utc).isoformat()
             if item.get("ts")
             else today.isoformat(),
@@ -146,7 +164,7 @@ def quote(db: Session, ticker: str) -> tuple[dict | None, dict]:
                 "as_of": fallback.date.isoformat(),
                 "stale": True,
             }
-        return None, {"provider": "yfinance", "as_of": None, "stale": True}
+        return None, {"provider": provider, "as_of": None, "stale": True}
 
 
 def validate_transaction(
@@ -316,7 +334,7 @@ def rebuild(db: Session, portfolio_id: int) -> None:
     rebuild_snapshots(db, portfolio)
 
 
-def _history_series(symbol: str) -> dict[date, Decimal]:
+def _history_series(symbol: str, scale: Decimal = Decimal("1")) -> dict[date, Decimal]:
     try:
         rows = market.get_history(symbol, period="max", interval="1d")
     except Exception:
@@ -324,7 +342,7 @@ def _history_series(symbol: str) -> dict[date, Decimal]:
     out = {}
     for row in rows:
         try:
-            out[date.fromisoformat(str(row["date"])[:10])] = dec(row["close"])
+            out[date.fromisoformat(str(row["date"])[:10])] = dec(row["close"]) * scale
         except (KeyError, ValueError, TypeError):
             continue
     return out
@@ -363,7 +381,11 @@ def rebuild_snapshots(db: Session, portfolio: Portfolio) -> None:
     start, end = txs[0].effective_at.date(), date.today()
     tickers = sorted({tx.ticker for tx in txs if tx.ticker})
     currencies = sorted({tx.currency for tx in txs})
-    prices = {ticker: _history_series(ticker) for ticker in tickers}
+    ticker_currency = {tx.ticker: tx.currency for tx in txs if tx.ticker}
+    prices = {
+        ticker: _history_series(*market_symbol(ticker, ticker_currency[ticker]))
+        for ticker in tickers
+    }
     rates = {
         currency: _fx_series(currency, portfolio.display_currency)
         for currency in currencies

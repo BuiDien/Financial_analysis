@@ -76,4 +76,4 @@ mcp/               MCP server for Hermes Agent (calc/data/obsidian tools) [TODO 
 
 ## Open (data tier) — still to decide
 - **Multi-period statements:** one `statements` row = one period. Comparison (kỳ này/kỳ trước) — store
-  prev as a column on line_items (current) vs separate period rows. Affects analysis later.
+  prev as a column on line_items (current) vs separate period rows. Affects analysis later. **Decided 2026-11-06:** separate period rows (one `statement_facts` row per line × period, duplicates across documents kept as sources and plotted once) — see `docs/superpowers/specs/2026-11-06-company-history-design.md`.

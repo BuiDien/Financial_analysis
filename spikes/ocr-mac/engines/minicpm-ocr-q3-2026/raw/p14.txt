@@ -1,0 +1,5 @@
+<think>
+
+</think>
+
+<otsl><fcel>Nhóm no'<fcel>Phân loại no' theo phương pháp định lượng<fcel>Tỷ lệ dự phòng<nl><fcel>1<fcel>Nợ đủ tiêu chuẩn<fcel>0%<nl><fcel>2<fcel>Nợ cần chú ý<fcel>5%<nl><fcel>3<fcel>Nợ dưới tiêu chuẩn<fcel>20%<nl><fcel>4<fcel>Nợ nghi ngộ<fcel>50%<nl></otsl>

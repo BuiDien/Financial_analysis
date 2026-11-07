@@ -35,20 +35,20 @@ This principle runs through the whole design:
 
 ## Architecture
 
-Two machines, one trust boundary.
+One machine, one trust boundary (Core and the local OCR worker run on the same Mac).
 
 ```
-Mac (M2 Max, 64GB)                                   GPU laptop (RTX 4070, 8GB)
-┌ Presentation — web dashboard + AI sidebar          ┌ OCR engine ──────────────┐
-│ Core (FastAPI) — serve UI · ingest · SQLite        │ PP-DocLayout +            │
-│   · MCP tool server · market scanner               │ PaddleOCR-VL              │
-│   ├─ Ollama → Hermes Agent (Qwen3 35B)  [brain]    └──────────▲────────────────┘
-│   └─ OCR port ─────────────────────────────────────────────────┘
+Mac (M2 Max, 64GB)
+┌ Presentation — web dashboard + AI sidebar
+│ Core (FastAPI) — serve UI · ingest · SQLite
+│   · MCP tool server · market scanner
+│   ├─ Ollama → Hermes Agent (Qwen3 35B)  [brain]
+│   └─ OCR port ◄──► local OCR worker (MiniCPM-OCR-1.0 on MLX + layout SDK)
 │ Data — SQLite + Obsidian vault + uploads/
-└──────────────────────────────────────────────────────┘
+└──────────────────────────────────────────────────────
 ```
 
-- **Laptop reads pixels → rows (untrusted).** **Mac structures + verifies (trust lives here).** The two-machine boundary *is* the trust boundary.
+- **The OCR worker produces page Markdown per page (untrusted).** **Core structures + verifies (trust lives here).** The worker/Core protocol boundary *is* the trust boundary. The worker runs fully locally on the Mac: run `Financial_analyze/scripts/setup_ocr_mac.sh` once; after that `Financial_analyze/scripts/run.sh` starts Core and the OCR worker together (log: `Financial_analyze/models/ocr/logs/worker.log`, skip with `OCR_WORKER=0`). A worker on the same Mac connects over 127.0.0.1 with no pairing code; Core and the frontend listen on 127.0.0.1 only.
 - **OCR Inbox** accepts unlabeled PDFs before they become filings, persists worker attempts, and requires
   source-backed row review before labeled data can be published.
 - **Three tiers** — presentation, business logic, data — with dependencies flowing strictly downward.
@@ -62,7 +62,7 @@ Mac (M2 Max, 64GB)                                   GPU laptop (RTX 4070, 8GB)
 | Presentation | Mac (served by Core) | Web dashboard (React-in-browser), AI sidebar |
 | Business logic | Mac | Python, FastAPI, SQLAlchemy |
 | Market data | Mac | vnstock (VN equities), yfinance (gold/US) |
-| OCR engine | Laptop (RTX 4070) | PP-DocLayout + PaddleOCR-VL |
+| OCR engine | Mac (local worker) | MiniCPM-OCR-1.0 on MLX + layout SDK |
 | AI brain | Mac (M2 Max) | Hermes Agent + Qwen3 35B via Ollama |
 | Data | Mac | SQLite + Obsidian vault + filesystem |
 

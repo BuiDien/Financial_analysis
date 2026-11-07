@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     sync_advertised_host: str = ""
     obsidian_vault_path: str = ""
     obsidian_label_library_path: str = "Financial Analyze/Label Library"
+    obsidian_line_catalog_path: str = "Financial Analyze/Line Catalog"
     anthropic_api_key: str = ""
     enable_cloud_ai: bool = False
     allow_unverified_filing_ai: bool = False

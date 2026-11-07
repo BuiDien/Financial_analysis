@@ -2,14 +2,15 @@ import hashlib
 import io
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 from fastapi import (
     APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile,
 )
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
@@ -21,6 +22,8 @@ from ..models.ocr import (
 )
 from ..ocr_page_contract import MAX_PAGE_MARKDOWN_BYTES, OCR_PAGE_RESULT_FORMAT
 from ..ocr_contract import OCRResultRow
+from ..services import history_store
+from ..services import history_lines
 from ..services import pdf
 from ..services import ocr_label_review
 from ..services import ocr_label_library
@@ -33,6 +36,7 @@ from ..services.ocr_label_levels import (
     verify_level_totals,
 )
 from ..services.ocr_review import review_counts
+from ..services.ocr_total_checks import page_total_check
 
 router = APIRouter(prefix="/ocr-inbox")
 settings = get_settings()
@@ -64,6 +68,8 @@ def _serialize_item(item: OCRInboxItem) -> dict:
             "company": item.company, "ticker": item.ticker,
             "filing_type": item.filing_type, "period": item.period,
             "currency": item.currency, "unit": item.unit,
+            "scope": item.scope, "fiscal_year": item.fiscal_year,
+            "period_code": item.period_code,
         },
         "published_filing_id": item.published_filing_id,
         "attempt": None if not attempt else {
@@ -252,6 +258,7 @@ def delete_inbox_item(item_id: int, db: Session = Depends(get_db)):
     if item.status in {"queued", "processing"}:
         raise HTTPException(409, "Cancel or finish OCR before deleting this item")
     path = Path(item.storage_path)
+    history_store.delete_item_facts(db, item)
     db.delete(item)
     db.commit()
     path.unlink(missing_ok=True)
@@ -265,6 +272,9 @@ class LabelsIn(BaseModel):
     period: str = Field(min_length=1, max_length=80)
     currency: str = Field(min_length=1, max_length=12)
     unit: str = Field(min_length=1, max_length=40)
+    scope: Literal["consolidated", "separate"] | None = None
+    fiscal_year: int | None = Field(default=None, ge=2000, le=2100)
+    period_code: Literal["Q1", "Q2", "Q3", "Q4", "H1", "FY"] | None = None
 
 
 @router.patch("/{item_id}/labels")
@@ -272,6 +282,8 @@ def update_labels(item_id: int, labels: LabelsIn, db: Session = Depends(get_db))
     item = _get_item(db, item_id)
     if item.status == "published":
         raise HTTPException(409, "Published labels require a new review revision")
+    if history_store.is_in_history(db, item):
+        raise HTTPException(409, "Remove this document from history first")
     ticker = labels.ticker.strip().upper()
     if not TICKER_RE.fullmatch(ticker):
         raise HTTPException(422, "Ticker contains unsupported characters")
@@ -281,6 +293,10 @@ def update_labels(item_id: int, labels: LabelsIn, db: Session = Depends(get_db))
     item.period = labels.period.strip()
     item.currency = labels.currency.strip().upper()
     item.unit = labels.unit.strip()
+    # New history labels are optional: only overwrite what the caller sent.
+    for name in ("scope", "fiscal_year", "period_code"):
+        if name in labels.model_fields_set:
+            setattr(item, name, getattr(labels, name))
     review = _latest_review(item)
     if (
         item.status == "verified"
@@ -357,6 +373,9 @@ def _serialize_row(row: OCRReviewRow) -> dict:
 
 
 def _serialize_page(page: OCRPageResult, *, include_markdown: bool = False) -> dict:
+    effective = (
+        page.reviewed_markdown if page.reviewed_markdown is not None else page.raw_markdown
+    )
     data = {
         "id": page.id,
         "page": page.page_number,
@@ -376,16 +395,14 @@ def _serialize_page(page: OCRPageResult, *, include_markdown: bool = False) -> d
                 page.label_checked_at.isoformat() if page.label_checked_at else None
             ),
         },
+        # Computed on read from the current text, so it follows every correction.
+        "total_check": page_total_check(effective),
     }
     if include_markdown:
         data.update({
             "raw_markdown": page.raw_markdown,
             "reviewed_markdown": page.reviewed_markdown,
-            "effective_markdown": (
-                page.reviewed_markdown
-                if page.reviewed_markdown is not None
-                else page.raw_markdown
-            ),
+            "effective_markdown": effective,
         })
     return data
 
@@ -1092,6 +1109,121 @@ def verify_review(review_id: int, payload: ReviewActionIn, db: Session = Depends
     db.commit()
     db.refresh(review)
     return _serialize_review(review)
+
+
+class HistoryColumnIn(BaseModel):
+    column: int = Field(ge=0)
+    skip: bool = False
+    period_type: Literal["instant", "quarter", "ytd", "year"] | None = None
+    period_start: date | None = None
+    period_end: date | None = None
+
+    @model_validator(mode="after")
+    def _check_period(self):
+        if self.skip:
+            return self
+        if self.period_type is None or self.period_end is None:
+            raise ValueError("period_type and period_end are required unless skip is true")
+        if self.period_type == "instant":
+            if self.period_start is not None:
+                raise ValueError("an instant period has no start date")
+        elif self.period_start is None or self.period_start > self.period_end:
+            raise ValueError("period_start is required and must not be after period_end")
+        return self
+
+
+class HistoryTableIn(BaseModel):
+    page: int = Field(ge=1)
+    table: int = Field(ge=1)
+    kind: Literal["balance", "income", "cashflow", "skip"] | None = None
+    unit_multiplier: Literal[1, 1_000, 1_000_000, 1_000_000_000] | None = None
+    columns: list[HistoryColumnIn] = Field(default_factory=list)
+
+
+class HistoryLineIn(BaseModel):
+    page: int = Field(ge=1)
+    table: int = Field(ge=1)
+    row: int = Field(ge=1)
+    line_key: str | None = Field(default=None, max_length=80)
+    new_line_name: str | None = Field(default=None, max_length=200)
+
+    @model_validator(mode="after")
+    def _one_answer(self):
+        if bool(self.line_key) == bool((self.new_line_name or "").strip()):
+            raise ValueError("give exactly one of line_key or new_line_name")
+        return self
+
+
+class HistoryMisreadIn(BaseModel):
+    page: int = Field(ge=1)
+    content_sha256: str = Field(min_length=64, max_length=64)
+    table: int = Field(ge=1)
+    parent_row: int = Field(ge=1)
+    column_label: str = Field(max_length=500)
+
+
+class HistoryResolutionIn(BaseModel):
+    fact_key: str = Field(min_length=1, max_length=255)
+    chosen: Literal["incoming"] | int
+
+
+class HistoryAnswersIn(BaseModel):
+    revision: int = Field(ge=1)
+    tables: list[HistoryTableIn] = Field(default_factory=list)
+    lines: list[HistoryLineIn] = Field(default_factory=list)
+    accepted_misreads: list[HistoryMisreadIn] = Field(default_factory=list)
+    resolutions: list[HistoryResolutionIn] = Field(default_factory=list)
+
+
+def _history_review(db: Session, review_id: int, payload: HistoryAnswersIn):
+    review = _get_review(db, review_id)
+    if payload.revision != review.revision:
+        raise HTTPException(409, "Review changed; refresh before adding to history")
+    if _latest_review(review.inbox_item) is not review:
+        raise HTTPException(409, "A newer OCR review exists for this document; use that one")
+    answers =payload.model_dump(mode="json", exclude={"revision"})
+    return review, answers
+
+
+def _history_catalog():
+    try:
+        return history_store.default_catalog()
+    except history_lines.LabelLibraryError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+@router.post("/reviews/{review_id}/history-preview")
+def preview_history(
+    review_id: int, payload: HistoryAnswersIn, db: Session = Depends(get_db),
+):
+    review, answers = _history_review(db, review_id, payload)
+    try:
+        return history_store.history_preview(db, review, answers, catalog=_history_catalog())
+    except history_lines.LabelLibraryError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.post("/reviews/{review_id}/history")
+def write_history(
+    review_id: int, payload: HistoryAnswersIn, db: Session = Depends(get_db),
+):
+    review, answers = _history_review(db, review_id, payload)
+    try:
+        return history_store.history_write(db, review, answers, catalog=_history_catalog())
+    except history_store.HistoryBlocked as exc:
+        raise HTTPException(409, {
+            "message": "Answer the open questions before adding to history",
+            "blocking": exc.blocking,
+        }) from exc
+    except (history_store.HistoryError, history_lines.LabelLibraryError) as exc:
+        db.rollback()
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.delete("/{item_id}/history")
+def remove_from_history(item_id: int, db: Session = Depends(get_db)):
+    item = _get_item(db, item_id)
+    return {"superseded": history_store.history_remove(db, item)}
 
 
 @router.post("/{item_id}/publish")

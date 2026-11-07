@@ -1,0 +1,156 @@
+[33mConnectivity check to the model hoster has been skipped because `PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK` is enabled.[0m
+/Users/dien/Work/Project/Financial_analyze/spikes/ocr-mac/.minicpm-ocr/lib/python3.12/site-packages/fitz/__init__.py:17: FutureWarning: The `fitz` API is deprecated and will be removed in future. Use `import pymupdf` instead.
+  warnings.warn(
+/Users/dien/Work/Project/Financial_analyze/spikes/ocr-mac/.minicpm-ocr/lib/python3.12/site-packages/fitz/__init__.py:17: FutureWarning: The `fitz` API is deprecated and will be removed in future. Use `import pymupdf` instead.
+  warnings.warn(
+/Users/dien/Work/Project/Financial_analyze/spikes/ocr-mac/.minicpm-ocr/lib/python3.12/site-packages/fitz/__init__.py:17: FutureWarning: The `fitz` API is deprecated and will be removed in future. Use `import pymupdf` instead.
+  warnings.warn(
+/Users/dien/Work/Project/Financial_analyze/spikes/ocr-mac/.minicpm-ocr/lib/python3.12/site-packages/fitz/__init__.py:17: FutureWarning: The `fitz` API is deprecated and will be removed in future. Use `import pymupdf` instead.
+  warnings.warn(
+/Users/dien/Work/Project/Financial_analyze/spikes/ocr-mac/.minicpm-ocr/lib/python3.12/site-packages/fitz/__init__.py:17: FutureWarning: The `fitz` API is deprecated and will be removed in future. Use `import pymupdf` instead.
+  warnings.warn(
+{
+  "command": "parse",
+  "input": "/Users/dien/Work/Project/Financial_analyze/docs/archive/MBB_Baocaotaichinh_Q3_2026_Hopnhat.pdf",
+  "output_md": "/Users/dien/Work/Project/Financial_analyze/spikes/ocr-mac/engines/minicpm-sdk-q3-2026/doc.md",
+  "pages": 61,
+  "run_dir": "/Users/dien/Work/Project/Financial_analyze/spikes/ocr-mac/runs/minicpmvocr_parse_MBB_Baocaotaichinh_Q3_2026_Hopnhat_20261105_082616",
+  "layout_summary": {
+    "overlapped": true,
+    "overlap_layout": true,
+    "save_crops": false,
+    "layout_workers": 1,
+    "total_wall_sec": 593.53,
+    "layout_wall_sec": 86.51,
+    "boot": {
+      "boot_sec": 3.452,
+      "layout_start_sec": 1.223,
+      "engine_start_sec": 0.014,
+      "enumerate_pages_sec": 2.141,
+      "render_sec": 2.093882,
+      "render_workers": -1
+    }
+  },
+  "infer_summary": {
+    "counts": {
+      "planned": 61,
+      "ok": 61,
+      "failed": 0,
+      "blocks": 624,
+      "vlm_blocks": 603,
+      "failed_blocks": 0,
+      "pages_with_failed_blocks": 0
+    },
+    "timing_sec": {
+      "mean": 542.680324,
+      "median": 539.292453,
+      "p90": 576.904146
+    },
+    "stage_sec_total": {
+      "layout": 86.510468,
+      "extract_prep": 0.095662,
+      "extract_infer": 591.621539,
+      "post_process": 0.141467,
+      "queue_wait": 244547.370501
+    },
+    "extract": {
+      "ocr_calls": 603,
+      "chars": 162293
+    },
+    "metric_definition": {
+      "pipeline_mode": "oneshot_file",
+      "page_metric": [
+        "page_total_wall_sec",
+        "layout_stage_sec",
+        "extract_prep_sec",
+        "extract_infer_sec",
+        "post_process_sec",
+        "queue_wait_sec"
+      ],
+      "crop_metric": [
+        "label",
+        "duration_sec",
+        "status",
+        "queue_wait_sec"
+      ],
+      "ae_metric": [
+        "image_encode_time_sec",
+        "prefill_time_sec",
+        "decode_time_sec",
+        "decode_speed_tps",
+        "output_token_count"
+      ],
+      "tts_metric": [
+        "raw_candidate_count",
+        "n_candidates",
+        "best_index",
+        "rm_used",
+        "rm_error",
+        "greedy_sec",
+        "sample_sec",
+        "rm_sec",
+        "rm_wait_sec",
+        "rm_call_sec",
+        "rm_stage_sec",
+        "rm_batch_size",
+        "rm_batch_items"
+      ],
+      "adaptive_metric": [
+        "rounds_used",
+        "stop_reason",
+        "exhausted",
+        "best_score",
+        "rm_calls",
+        "round_log"
+      ]
+    },
+    "layout_phase": {
+      "pages": 61,
+      "layout_wall_sec": 86.513,
+      "page_work_sec": 86.51,
+      "producer_overhead_sec": 0.002,
+      "phase_totals": {
+        "image_load_sec": 0.11,
+        "upright_sec": 3.749,
+        "detect_sec": 82.34,
+        "crop_sec": 0.212,
+        "png_save_sec": 0.0,
+        "page_save_sec": 0.0,
+        "write_sec": 0.072
+      }
+    },
+    "pipelined": {
+      "overlap_layout": true,
+      "save_crops": false,
+      "layout_workers": 1,
+      "total_wall_sec": 593.53,
+      "layout_wall_sec": 86.51,
+      "boot": {
+        "boot_sec": 3.452,
+        "layout_start_sec": 1.223,
+        "engine_start_sec": 0.014,
+        "enumerate_pages_sec": 2.141,
+        "render_sec": 2.093882,
+        "render_workers": -1
+      }
+    }
+  }
+}
+      597.31 real       106.54 user         3.35 sys
+          2003976192  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              343843  page reclaims
+                  15  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                1207  messages sent
+                1040  messages received
+                   0  signals received
+                9637  voluntary context switches
+              110140  involuntary context switches
+       1060406696362  instructions retired
+        319097558861  cycles elapsed
+          1870252648  peak memory footprint

@@ -1,0 +1,13 @@
+<think>
+
+</think>
+
+<otsl><fcel>4. Chứng khoán kinh doanh<lcel><lcel><nl><fcel>Dầu tư vào chứng khoán kinh doanh chi tiết như sau:<lcel><lcel><nl><ecel><fcel>30/09/2026
+Triệu đồng<fcel>31/12/2025
+Triệu đồng<nl><fcel>Chứng khoán Nợ<ecel><ecel><nl><fcel>Đã niêm yết<fcel>1.182.410<fcel>1.214.514<nl><fcel>Chưa niêm yết<fcel>39.875.807<fcel>3.161.180<nl><fcel>Chứng khoán Vốn<ecel><ecel><nl><fcel>Đã niêm yết<fcel>265.510<fcel>290.593<nl><fcel>Chưa niêm yết<fcel>170.980<fcel>26.335<nl><ecel><fcel>41.494.707<fcel>4.692.622<nl><fcel>Dư phòng giảm giá chứng khoán kinh doanh<fcel>(51.022)<fcel>(39.393)<nl><ecel><fcel>41.443.685<fcel>4.653.229<nl><fcel>5. Cho vay khách hàng<lcel><lcel><nl><ecel><fcel>30/09/2026
+Triệu đồng<fcel>31/12/2025
+Triệu đồng<nl><fcel>Dư nợ cho vay<ecel><ecel><nl><fcel>Cho vay các TCKT, cá nhân trong nước<fcel>1.254.837.656<fcel>1.054.801.750<nl><fcel>Cho vay chiết khấu công cụ chuyển nhượng và các giấy tờ có giá<fcel>2.769.882<fcel>3.007.877<nl><fcel>Các khoản trả thay khách hàng<fcel>167.436<fcel>115.795<nl><fcel>Cho vay bằng vốn tài trợ, ủy thắc đầu tư<fcel>3.182<fcel>21.314<nl><fcel>Cho vay các TCKT, cá nhân nước ngoài<fcel>13.654.668<fcel>11.032.049<nl><ecel><fcel>1.271.432.824<fcel>1.068.978.785<nl><fcel>Các khoản cho vay margin chứng khoán và ứng trước khách hàng tại MBS<fcel>16.695.619<fcel>15.040.585<nl><ecel><fcel>1.288.128.443<fcel>1.084.019.370<nl><fcel>- Phân tích chất lượng nợ cho vay:<lcel><lcel><nl><ecel><fcel>30/09/2026
+Triệu đồng<fcel>31/12/2025
+Triệu đồng<nl><fcel>Dư nợ cho vay<ecel><ecel><nl><fcel>Nợ đủ tiêu chuẩn<fcel>1.249.640.585<fcel>1.059.781.834<nl><fcel>+ Trong đó các khoản cho vay tại MBS<fcel>16.695.619<fcel>15.040.585<nl><fcel>Nợ cần chú ý<fcel>17.013.532<fcel>10.210.040<nl><fcel>Nợ dưới tiêu chuẩn<fcel>7.230.947<fcel>3.276.216<nl><fcel>Nợ nghigly<fcel>4.778.315<fcel>4.330.016<nl><fcel>Nợ có khả năng mất vốn<fcel>9.465.064<fcel>6.421.264<nl><ecel><fcel>1.288.128.443<fcel>1.084.019.370<nl><fcel>- Phân tích dư nợ theo thời gian:<lcel><lcel><nl><ecel><fcel>30/09/2026
+Triệu đồng<fcel>31/12/2025
+Triệu đồng<nl><fcel>Dư nợ cho vay<ecel><ecel><nl><fcel>Nợ ngắn hạn<fcel>621.326.189<fcel>587.136.924<nl><fcel>Nợ trung hạn<fcel>175.109.533<fcel>127.883.727<nl><fcel>Nợ dài hạn<fcel>474.997.102<fcel>353.958.134<nl><ecel><fcel>1.271.432.824<fcel>1.068.978.785<nl><fcel>Các khoản cho vay margin chứng khoán và ứng trước khách hàng tại MBS<fcel>16.695.619<fcel>15.040.585<nl><ecel><fcel>1.288.128.443<fcel>1.084.019.370<nl></otsl>

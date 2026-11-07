@@ -1,0 +1,56 @@
+[
+  {
+    "key": "q1-2026_p01",
+    "pdf": "/Users/dien/Work/Project/Financial_analyze/Financial_analyze/backend/uploads/ocr-inbox/a3c479139d9d476d9abb2a5ec2b1c813_20260428---mbb---bctc-rieng-le-q1.2026.pdf",
+    "page": 1,
+    "status": "approved"
+  },
+  {
+    "key": "q1-2026_p03",
+    "pdf": "/Users/dien/Work/Project/Financial_analyze/Financial_analyze/backend/uploads/ocr-inbox/a3c479139d9d476d9abb2a5ec2b1c813_20260428---mbb---bctc-rieng-le-q1.2026.pdf",
+    "page": 3,
+    "status": "corrected"
+  },
+  {
+    "key": "q1-2026_p04",
+    "pdf": "/Users/dien/Work/Project/Financial_analyze/Financial_analyze/backend/uploads/ocr-inbox/a3c479139d9d476d9abb2a5ec2b1c813_20260428---mbb---bctc-rieng-le-q1.2026.pdf",
+    "page": 4,
+    "status": "corrected"
+  },
+  {
+    "key": "q1-2026_p05",
+    "pdf": "/Users/dien/Work/Project/Financial_analyze/Financial_analyze/backend/uploads/ocr-inbox/a3c479139d9d476d9abb2a5ec2b1c813_20260428---mbb---bctc-rieng-le-q1.2026.pdf",
+    "page": 5,
+    "status": "corrected"
+  },
+  {
+    "key": "q1-2026_p06",
+    "pdf": "/Users/dien/Work/Project/Financial_analyze/Financial_analyze/backend/uploads/ocr-inbox/a3c479139d9d476d9abb2a5ec2b1c813_20260428---mbb---bctc-rieng-le-q1.2026.pdf",
+    "page": 6,
+    "status": "corrected"
+  },
+  {
+    "key": "q1-2026_p07",
+    "pdf": "/Users/dien/Work/Project/Financial_analyze/Financial_analyze/backend/uploads/ocr-inbox/a3c479139d9d476d9abb2a5ec2b1c813_20260428---mbb---bctc-rieng-le-q1.2026.pdf",
+    "page": 7,
+    "status": "corrected"
+  },
+  {
+    "key": "q1-2026_p08",
+    "pdf": "/Users/dien/Work/Project/Financial_analyze/Financial_analyze/backend/uploads/ocr-inbox/a3c479139d9d476d9abb2a5ec2b1c813_20260428---mbb---bctc-rieng-le-q1.2026.pdf",
+    "page": 8,
+    "status": "corrected"
+  },
+  {
+    "key": "q3-2025_p03",
+    "pdf": "/Users/dien/Work/Project/Financial_analyze/Financial_analyze/backend/uploads/ocr-inbox/11e896bb55ed4bd5b8796ea9b984163d_20251026---mbb---bctc-hop-nhat-q3.2025-viet.pdf",
+    "page": 3,
+    "status": "corrected"
+  },
+  {
+    "key": "q4-2025_p03",
+    "pdf": "/Users/dien/Work/Project/Financial_analyze/Financial_analyze/backend/uploads/ocr-inbox/11152a4a8a864ecea7697c9169716bc5_20260128---mbb---bao-cao-tai-chinh-hop-nhat-quy-4-2025.pdf",
+    "page": 3,
+    "status": "corrected"
+  }
+]

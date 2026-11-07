@@ -2,7 +2,7 @@
 // Loaded global: window.LightweightCharts (see CDN script in the HTML head).
 //
 // Props:
-//   data     : [{ open, high, low, close, volume }]  (ascending, oldest→newest)
+//   data     : [{ time?, open, high, low, close, volume }]  (ascending; time = unix seconds)
 //   type     : 'candle' | 'area'
 //   height   : px (default 360)
 //   volume   : bool — show a volume histogram pane (default true)
@@ -135,7 +135,11 @@ const LWChart = ({ data, type = 'candle', height = 360, volume = true, range = '
   React.useEffect(() => {
     const main = mainSeriesRef.current;
     if (!main || !data || !data.length) return;
-    const times = synthTimes(data.length, range);
+    // Real bars carry `time` (unix seconds); use them when strictly ascending,
+    // otherwise fall back to synthetic spacing.
+    const real = data.map(d => d.time);
+    const realOk = real.every((t, i) => Number.isFinite(t) && (i === 0 || t > real[i - 1]));
+    const times = realOk ? real : synthTimes(data.length, range);
     const pos = cssVar('--pos', '#15803D');
     const neg = cssVar('--neg', '#B91C1C');
 

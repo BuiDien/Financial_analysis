@@ -1,0 +1,130 @@
+[33mConnectivity check to the model hoster has been skipped because `PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK` is enabled.[0m
+/Users/dien/Work/Project/Financial_analyze/spikes/ocr-mac/.minicpm-ocr/lib/python3.12/site-packages/fitz/__init__.py:17: FutureWarning: The `fitz` API is deprecated and will be removed in future. Use `import pymupdf` instead.
+  warnings.warn(
+{
+  "command": "parse",
+  "input": "/Users/dien/Work/Project/Financial_analyze/spikes/ocr-mac/pages/q4-2025_p03.png",
+  "output_md": "/Users/dien/Work/Project/Financial_analyze/spikes/ocr-mac/engines/minicpm-sdk/q4-2025_p03.md",
+  "pages": 1,
+  "run_dir": "/Users/dien/Work/Project/Financial_analyze/spikes/ocr-mac/runs/minicpmvocr_parse_q4-2025_p03_20261105_082543",
+  "layout_summary": {
+    "overlapped": true,
+    "overlap_layout": true,
+    "save_crops": false,
+    "layout_workers": 1,
+    "total_wall_sec": 14.99,
+    "layout_wall_sec": 1.74,
+    "boot": {
+      "boot_sec": 1.361,
+      "layout_start_sec": 1.227,
+      "engine_start_sec": 0.014,
+      "enumerate_pages_sec": 0.044,
+      "render_sec": 0.0,
+      "render_workers": 1
+    }
+  },
+  "infer_summary": {
+    "counts": {
+      "planned": 1,
+      "ok": 1,
+      "failed": 0,
+      "blocks": 5,
+      "vlm_blocks": 5,
+      "failed_blocks": 0,
+      "pages_with_failed_blocks": 0
+    },
+    "timing_sec": {
+      "mean": 13.251292,
+      "median": 13.251292,
+      "p90": 13.251292
+    },
+    "stage_sec_total": {
+      "layout": 1.740347,
+      "extract_prep": 0.002656,
+      "extract_infer": 13.242975,
+      "post_process": 0.003303,
+      "queue_wait": 48.698453
+    },
+    "extract": {
+      "ocr_calls": 5,
+      "chars": 4006
+    },
+    "metric_definition": {
+      "pipeline_mode": "oneshot_file",
+      "page_metric": [
+        "page_total_wall_sec",
+        "layout_stage_sec",
+        "extract_prep_sec",
+        "extract_infer_sec",
+        "post_process_sec",
+        "queue_wait_sec"
+      ],
+      "crop_metric": [
+        "label",
+        "duration_sec",
+        "status",
+        "queue_wait_sec"
+      ],
+      "ae_metric": [
+        "image_encode_time_sec",
+        "prefill_time_sec",
+        "decode_time_sec",
+        "decode_speed_tps",
+        "output_token_count"
+      ],
+      "tts_metric": [
+        "raw_candidate_count",
+        "n_candidates",
+        "best_index",
+        "rm_used",
+        "rm_error",
+        "greedy_sec",
+        "sample_sec",
+        "rm_sec",
+        "rm_wait_sec",
+        "rm_call_sec",
+        "rm_stage_sec",
+        "rm_batch_size",
+        "rm_batch_items"
+      ],
+      "adaptive_metric": [
+        "rounds_used",
+        "stop_reason",
+        "exhausted",
+        "best_score",
+        "rm_calls",
+        "round_log"
+      ]
+    },
+    "layout_phase": {
+      "pages": 1,
+      "layout_wall_sec": 1.741,
+      "page_work_sec": 1.74,
+      "producer_overhead_sec": 0.0,
+      "phase_totals": {
+        "image_load_sec": 0.031,
+        "upright_sec": 0.065,
+        "detect_sec": 1.637,
+        "crop_sec": 0.006,
+        "png_save_sec": 0.0,
+        "page_save_sec": 0.0,
+        "write_sec": 0.001
+      }
+    },
+    "pipelined": {
+      "overlap_layout": true,
+      "save_crops": false,
+      "layout_workers": 1,
+      "total_wall_sec": 14.99,
+      "layout_wall_sec": 1.74,
+      "boot": {
+        "boot_sec": 1.361,
+        "layout_start_sec": 1.227,
+        "engine_start_sec": 0.014,
+        "enumerate_pages_sec": 0.044,
+        "render_sec": 0.0,
+        "render_workers": 1
+      }
+    }
+  }
+}

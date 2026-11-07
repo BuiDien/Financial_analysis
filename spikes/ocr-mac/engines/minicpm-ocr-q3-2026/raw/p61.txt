@@ -1,0 +1,11 @@
+<think>
+
+</think>
+
+<otsl><ecel><fcel>30/09/2026<fcel>31/12/2025<nl><fcel>USD<fcel>25.980,00<fcel>26.290,00<nl><fcel>EUR<fcel>29.604,00<fcel>30.945,00<nl><fcel>GBP<fcel>34.545,00<fcel>35.443,00<nl><fcel>JPY<fcel>166,31<fcel>168,88<nl><fcel>CHF<fcel>31.172,00<fcel>33.195,00<nl><fcel>AUD<fcel>18.122,00<fcel>17.641,00<nl><fcel>CAD<fcel>18.365,50<fcel>19.250,50<nl><fcel>SGD<fcel>20.365,00<fcel>20.505,50<nl><fcel>THB<fcel>782,00<fcel>841,86<nl><fcel>SEK<fcel>2.651,49<fcel>2.879,53<nl><fcel>Người lập:<fcel>Người kiểm soat:<fcel>Người phê duyệt:<nl><fcel>Bà Lê Thị HUYEN Trang Giám
+đoc Trung tâm
+Kế toán<fcel>Bà Dặng Thúy Dung
+Kế toán trưởng<fcel>Bà Nguyễn Thị Thanh Nga
+Giám đốc Tài chính<fcel>Ông Pham Nhuê Anh
+Tổng Giám đốc<nl><fcel>Hà Nội, Việt Nam
+Ngày 20 tháng 10 năm 2026<lcel><lcel><lcel><nl></otsl>

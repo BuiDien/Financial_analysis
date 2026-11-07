@@ -293,3 +293,49 @@ def test_100k_transaction_projection_and_cached_chart_gate(db):
     elapsed = time.perf_counter() - before
     assert snapshots
     assert elapsed < 0.5
+
+
+def test_vnd_holding_is_priced_from_vnstock_in_dong(portfolio_client, monkeypatch):
+    """A VND ticker like VCB is a HOSE listing: Yahoo has no data for it, and
+    vnstock quotes it in nghìn đồng. The ledger is in đồng, so 53.6 → 53,600."""
+    asked = {"quote": [], "history": []}
+    today = date.today()
+
+    def fake_quote(ticker):
+        asked["quote"].append(ticker)
+        if ticker == "USDVND=X":
+            return {"ticker": ticker, "price": 25000, "currency": "VND", "ts": 0}
+        if ticker != "VN:VCB":
+            raise ValueError("Yahoo has no HOSE data")
+        return {"ticker": ticker, "price": 53.6, "previous_close": 54.2,
+                "change": -0.6, "change_pct": -1.107, "currency": "VND", "ts": 0}
+
+    def fake_history(symbol, **kwargs):
+        asked["history"].append(symbol)
+        if symbol == "USDVND=X":
+            return [{"date": str(today - timedelta(days=1)), "close": 25000},
+                    {"date": str(today), "close": 25000}]
+        if symbol != "VN:VCB":
+            return []
+        return [{"date": str(today - timedelta(days=1)), "close": 54.2},
+                {"date": str(today), "close": 53.6}]
+
+    monkeypatch.setattr(portfolio_engine.market, "get_quote", fake_quote)
+    monkeypatch.setattr(portfolio_engine.market, "get_history", fake_history)
+
+    assert add(portfolio_client, ticker="VCB", quantity=200, unit_price=53600,
+               currency="VND").status_code == 201
+    body = portfolio_client.get("/api/portfolio").json()
+    assert body["holdings"], body
+    holding = body["holdings"][0]
+    assert "VN:VCB" in asked["quote"]
+    assert "VN:VCB" in asked["history"]
+    assert holding["price"] == pytest.approx(53600)
+    assert holding["value_native"] == pytest.approx(200 * 53600)
+    assert not [m for m in body.get("missing", []) if m.get("kind") == "quote"]
+    # VCB fell 0.6 nghìn đồng = 600 đồng/share; the second load of the day
+    # must still report it (a cached price alone has no day change).
+    again = portfolio_client.get("/api/portfolio").json()
+    assert again["holdings"][0]["price"] == pytest.approx(53600)
+    assert body["today_change"] != 0
+    assert again["today_change"] == pytest.approx(body["today_change"])

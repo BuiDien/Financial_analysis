@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    CheckConstraint, Column, Integer, String, DateTime, ForeignKey, JSON, Text,
+    BigInteger, CheckConstraint, Column, Date, Integer, String, DateTime, ForeignKey, JSON, Text,
     UniqueConstraint, func,
 )
 from sqlalchemy.orm import relationship
@@ -25,6 +25,9 @@ class OCRInboxItem(Base):
     period = Column(String(80), nullable=True)
     currency = Column(String(12), nullable=True)
     unit = Column(String(40), nullable=True)
+    scope = Column(String(16), nullable=True)
+    fiscal_year = Column(Integer, nullable=True)
+    period_code = Column(String(4), nullable=True)
 
     published_filing_id = Column(Integer, ForeignKey("filings.id"), nullable=True, unique=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -277,3 +280,49 @@ class OCRLabelSuggestion(Base):
     )
 
     run = relationship("OCRLabelReviewRun", back_populates="suggestions")
+
+
+class StatementFact(Base):
+    __tablename__ = "statement_facts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    inbox_item_id = Column(Integer, ForeignKey("ocr_inbox_items.id", ondelete="CASCADE"), nullable=False, index=True)
+    review_id = Column(Integer, nullable=True)
+    review_revision = Column(Integer, nullable=True)
+    ticker = Column(String(20), nullable=False)
+    scope = Column(String(16), nullable=False)
+    statement_kind = Column(String(16), nullable=False)  # balance|income|cashflow
+    line_key = Column(String(80), nullable=False)
+    fact_key = Column(String(255), nullable=False, index=True)
+    period_type = Column(String(16), nullable=False)  # instant|quarter|ytd|year
+    period_start = Column(Date, nullable=True)
+    period_end = Column(Date, nullable=False)
+    value = Column(BigInteger, nullable=False)  # integer dong
+    origin = Column(String(16), nullable=False)  # printed|calculated
+    page_number = Column(Integer, nullable=True)
+    table_number = Column(Integer, nullable=True)
+    row_number = Column(Integer, nullable=True)
+    column_number = Column(Integer, nullable=True)
+    row_label = Column(Text, nullable=True)
+    raw_text = Column(Text, nullable=True)
+    raw_unit = Column(String(40), nullable=True)
+    inputs = Column(JSON, nullable=True)
+    status = Column(String(16), nullable=False, default="active", index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class FactResolution(Base):
+    __tablename__ = "fact_resolutions"
+    __table_args__ = (
+        UniqueConstraint("ticker", "scope", "statement_kind", "fact_key", name="uq_fact_resolution_key"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    ticker = Column(String(20), nullable=False)
+    scope = Column(String(16), nullable=False)
+    statement_kind = Column(String(16), nullable=False)
+    fact_key = Column(String(255), nullable=False)
+    chosen_fact_id = Column(Integer, ForeignKey("statement_facts.id"), nullable=True)
+    chosen_value = Column(BigInteger, nullable=False)
+    note = Column(Text, nullable=True)
+    resolved_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

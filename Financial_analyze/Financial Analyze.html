@@ -114,7 +114,9 @@
   /* App layout */
   .app {
     display: grid;
-    grid-template-columns: 220px 1fr;
+    /* minmax(0, …): a plain 1fr never shrinks below its content's min width, so the
+       scrolling header ticker stretched the page past the screen when the AI panel closed. */
+    grid-template-columns: 220px minmax(0, 1fr);
     grid-template-rows: 56px 1fr;
     grid-template-areas:
       "sidebar header"
@@ -124,7 +126,7 @@
   }
 
   .app[data-ai="open"] {
-    grid-template-columns: 220px 1fr 360px;
+    grid-template-columns: 220px minmax(0, 1fr) 360px;
     grid-template-areas:
       "sidebar header header"
       "sidebar main ai";
@@ -683,6 +685,7 @@
   .wl-row:hover .wl-remove { opacity: 1 !important; }
   .wl-remove:hover { background: var(--neg-bg) !important; color: var(--neg) !important; }
 </style>
+<link rel="stylesheet" href="src/lucian-ui.css?v=20261106-labels-2" />
 </head>
 <body>
 <template id="__bundler_thumbnail">
@@ -771,33 +774,34 @@
 <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
 
 <script type="text/babel" src="tweaks-panel.jsx"></script>
-<script type="text/babel" src="src/api-client.jsx?v=20260730-hermes-marked-label-queue"></script>
+<script type="text/babel" src="src/api-client.jsx?v=20261106-company-history"></script>
 <script type="text/babel" src="src/icons.jsx"></script>
 <script type="text/babel" src="src/ui-kit.jsx"></script>
+<script type="text/babel" src="src/lucian-ui.jsx?v=20261106-labels-2"></script>
 <script type="text/babel" src="src/shortcuts.jsx"></script>
 <script type="text/babel" src="src/shortcuts-ui.jsx"></script>
 <script type="text/babel" src="src/primitives.jsx"></script>
 <script type="text/babel" src="src/charts.jsx"></script>
-<script type="text/babel" src="src/lwchart.jsx"></script>
+<script type="text/babel" src="src/lwchart.jsx?v=20261107-real-time"></script>
 <script type="text/babel" src="src/watchlist-store.jsx"></script>
 <script type="text/babel" src="src/sidebar.jsx"></script>
 <script type="text/babel" src="src/header.jsx"></script>
 <script type="text/babel" src="src/ai-panel.jsx"></script>
 <script type="text/babel" src="src/page-dashboard.jsx"></script>
-<script type="text/babel" src="src/page-home.jsx"></script>
-<script type="text/babel" src="src/page-detail.jsx"></script>
+<script type="text/babel" src="src/page-home.jsx?v=20261107-live-map"></script>
+<script type="text/babel" src="src/page-detail.jsx?v=20261107-native-ccy"></script>
 <script type="text/babel" src="src/page-portfolio.jsx"></script>
 <script type="text/babel" src="src/page-screener.jsx"></script>
 <script type="text/babel" src="src/page-news.jsx"></script>
-<script type="text/babel" src="src/page-statements.jsx"></script>
+<script type="text/babel" src="src/page-statements.jsx?v=20261106-company-history-6"></script>
 <script type="text/babel" src="src/page-settings.jsx"></script>
 <script type="text/babel" src="src/page-alerts.jsx"></script>
 <script type="text/babel" src="src/page-sync.jsx"></script>
-<script type="text/babel" src="src/page-ocr-inbox.jsx?v=20260730-hermes-right-click-ask"></script>
+<script type="text/babel" src="src/page-ocr-inbox.jsx?v=20261106-labels-2"></script>
 <script type="text/babel" src="src/page-filings.jsx"></script>
 <script type="text/babel" src="src/page-reader.jsx"></script>
 <script type="text/babel" src="src/ocr-tool.jsx"></script>
-<script type="text/babel" src="src/app.jsx"></script>
+<script type="text/babel" src="src/app.jsx?v=20261107-holding-ccy"></script>
 
 </body>
 </html>

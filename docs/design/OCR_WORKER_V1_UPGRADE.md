@@ -1,5 +1,7 @@
 # OCR Worker Upgrade: Protocol v1 + Result Schema v1
 
+> Note (2026-11-05): retired. The WSL/vLLM laptop worker described here is replaced by the local Mac OCR worker (`Financial_analyze/scripts/start_ocr_mac.sh`). Content below is kept as history.
+
 > Legacy only. New workers must follow
 > [`OCR_WORKER_PAGE_MARKDOWN_V2_UPGRADE.md`](OCR_WORKER_PAGE_MARKDOWN_V2_UPGRADE.md).
 > The page-Markdown v2 path removes the `code/id/bbox` requirement from raw OCR transport.

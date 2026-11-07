@@ -24,3 +24,5 @@ helix.db
 # Redundant export archive (the unzipped folder is committed)
 *.zip
 .thumbnail
+
+Financial_analyze/models/

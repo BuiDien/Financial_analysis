@@ -87,6 +87,11 @@ def _upgrade_legacy_ocr_schema():
     """Idempotently add page-result columns to pre-migration local databases."""
     names = set(inspect(engine).get_table_names())
     additions_by_table = {
+        "ocr_inbox_items": {
+            "scope": "VARCHAR(16)",
+            "fiscal_year": "INTEGER",
+            "period_code": "VARCHAR(4)",
+        },
         "ocr_attempts": {
             "result_format": "VARCHAR(40) NOT NULL DEFAULT 'structured_rows_v1'",
             "expected_pages": "INTEGER",

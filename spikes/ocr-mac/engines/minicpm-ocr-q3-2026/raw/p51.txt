@@ -1,0 +1,5 @@
+<think>
+
+</think>
+
+<otsl><fcel>Chí tiêu<fcel>30/09/2026<fcel>31/12/2025<nl><fcel>Bảo lãnh vay vốn<fcel>2.232.092<fcel>1.684.717<nl><fcel>Các cam kết giao dịch hồi doái<fcel>741.843.792<fcel>618.888.427<nl><fcel>- Cam kết mua ngoại tệ<fcel>2.193.395<fcel>9.738.358<nl><fcel>- Cam kết bán ngoại tệ<fcel>1.778.466<fcel>8.752.345<nl><fcel>- Cam kết mua giao dịch hoán đổi tiền tệ<fcel>366.554.847<fcel>299.830.234<nl><fcel>- Cam kết bán giao dịch hoán đổi tiền tệ<fcel>371.317.084<fcel>300.567.490<nl><fcel>Cam kết trong nghiệp vụ LC<fcel>80.667.381<fcel>59.728.018<nl><fcel>Bảo lãnh khác<fcel>238.231.032<fcel>190.317.517<nl><fcel>Cam kết khác<fcel>114.669.741<fcel>127.878.633<nl></otsl>
