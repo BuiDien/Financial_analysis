@@ -106,6 +106,7 @@ const PageSettings = ({ theme, setTheme, density, setDensity, accent, setAccent,
   { id: 'ai', label: 'Hermes Agent', icon: 'sparkle' },
   { id: 'shortcuts', label: 'Shortcuts', icon: 'settings' },
   { id: 'backend', label: 'Backend & API', icon: 'settings' },
+  { id: 'email', label: 'Email import', icon: 'download' },
   { id: 'data', label: 'Data & Privacy', icon: 'alerts' }];
 
 
@@ -342,6 +343,8 @@ const PageSettings = ({ theme, setTheme, density, setDensity, accent, setAccent,
             </SettingsCard>
           }
 
+          {section === 'email' && <GmailImportCard />}
+
           {section === 'data' &&
           <>
               <SettingsCard title="Local data" subtitle="Everything Helix stores in this browser">
@@ -424,6 +427,154 @@ const PlanModal = ({ current, onClose, onSelect }) =>
       </div>
     </div>
   </div>;
+
+// Gmail import — the app password is sent to the local server once, stored in
+// macOS Keychain, and never returned. The page only learns "password saved".
+const GMAIL_INTERVALS = [15, 30, 60, 180, 720, 1440];
+const gmailIntervalLabel = (m) => m < 60 ? `${m} min` : m === 1440 ? 'Daily' : `${m / 60} h`;
+const gmailWhen = (iso) => {
+  if (!iso) return 'never';
+  const d = new Date(iso.endsWith('Z') || /[+-]\d\d:\d\d$/.test(iso) ? iso : iso + 'Z');
+  return d.toLocaleString();
+};
+
+const GmailImportCard = () => {
+  const live = window.HelixAPI?.live;
+  const [cfg, setCfg] = React.useState(null);
+  const [address, setAddress] = React.useState('');
+  const [query, setQuery] = React.useState('');
+  const [password, setPassword] = React.useState('');
+  const [replacing, setReplacing] = React.useState(false);
+  const [busy, setBusy] = React.useState('');
+  const [result, setResult] = React.useState(null); // {kind: ok|error, text}
+  const [reports, setReports] = React.useState([]);
+
+  const apply = (c) => { setCfg(c); setAddress(c.address || ''); setQuery(c.query || ''); };
+  const loadReports = async () => { try { setReports((await window.HelixAPI.gmailReports(20)).reports); } catch {} };
+  React.useEffect(() => {
+    if (!live) return;
+    window.HelixAPI.gmailSettings().then(apply).catch((e) => setResult({ kind: 'error', text: e.message }));
+    loadReports();
+  }, [live]);
+
+  const run = async (label, fn) => {
+    setBusy(label); setResult(null);
+    try { await fn(); } catch (e) { setResult({ kind: 'error', text: e.message || String(e) }); }
+    setBusy('');
+  };
+
+  const save = () => run('save', async () => {
+    const body = { address, query };
+    if (password.trim()) body.password = password;
+    const c = await window.HelixAPI.saveGmailSettings(body);
+    apply(c); setPassword(''); setReplacing(false);
+    setResult({ kind: 'ok', text: body.password ? 'Saved. App password stored in macOS Keychain.' : 'Saved.' });
+  });
+  const test = () => run('test', async () => {
+    const r = await window.HelixAPI.testGmail();
+    setResult({ kind: 'ok', text: `Login OK · ${r.matches} matching email${r.matches === 1 ? '' : 's'} found` });
+  });
+  const check = () => run('check', async () => {
+    const { summary: s, settings } = await window.HelixAPI.checkGmail();
+    apply(settings); await loadReports();
+    setResult({ kind: 'ok', text: s.new ? `Downloaded ${s.downloaded} new report${s.downloaded === 1 ? '' : 's'}${s.errors ? ` · ${s.errors} failed` : ''}` : `No new reports (${s.matches} matching, all already pulled)` });
+  });
+  const removePw = () => run('remove', async () => {
+    if (!(await window.askConfirm({ title: 'Remove app password', message: 'Remove the Gmail app password from Keychain? Auto-check will turn off.', confirmText: 'Remove', danger: true }))) return;
+    apply(await window.HelixAPI.removeGmailPassword());
+    setResult({ kind: 'ok', text: 'App password removed.' });
+  });
+  const patch = (body) => run('save', async () => apply(await window.HelixAPI.saveGmailSettings(body)));
+
+  if (!live) {
+    return <SettingsCard title="Gmail import" subtitle="Pull broker trade reports from your inbox">
+      <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Start the backend to configure Gmail import.</div>
+    </SettingsCard>;
+  }
+  if (!cfg) return <SettingsCard title="Gmail import" subtitle="Loading…" />;
+
+  const dirty = address !== (cfg.address || '') || query !== (cfg.query || '') || password.trim();
+  const statusOk = cfg.last_status === 'ok';
+  const summary = cfg.last_summary;
+
+  return <>
+    <SettingsCard title="Gmail import" subtitle="Pull broker trade reports (e.g. SSI “Thông báo kết quả giao dịch”) from your inbox">
+      <Field label="Gmail address">
+        <input className="set-input" type="email" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="you@gmail.com" autoComplete="off" />
+      </Field>
+
+      <Field label="App password" hint="16-letter code from myaccount.google.com/apppasswords">
+        {cfg.password_saved && !replacing ?
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <div className="set-input" style={{ flex: 1, color: 'var(--pos)', cursor: 'default' }}>✓ Saved in macOS Keychain</div>
+            <button className="btn" onClick={() => setReplacing(true)}>Replace</button>
+            <button className="btn" onClick={removePw} disabled={!!busy} style={{ color: 'var(--neg)', borderColor: 'var(--neg-soft)' }}>Remove</button>
+          </div> :
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input className="set-input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="xxxx xxxx xxxx xxxx" autoComplete="new-password" style={{ flex: 1 }} />
+            {replacing && <button className="btn" onClick={() => { setReplacing(false); setPassword(''); }}>Cancel</button>}
+          </div>}
+      </Field>
+
+      <Field label="Search filter" hint="Gmail search syntax, same as the Gmail search box">
+        <input className="set-input" value={query} onChange={(e) => setQuery(e.target.value)} style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }} />
+        {query !== cfg.default_query &&
+          <button className="btn" style={{ marginTop: 6, fontSize: 11 }} onClick={() => setQuery(cfg.default_query)}>Reset to SSI default</button>}
+      </Field>
+
+      <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+        <button className="btn btn-primary" onClick={save} disabled={!dirty || !!busy}>{busy === 'save' ? 'Saving…' : 'Save'}</button>
+        <button className="btn" onClick={test} disabled={!cfg.password_saved || !cfg.address || dirty || !!busy}>{busy === 'test' ? 'Testing…' : 'Test connection'}</button>
+        <button className="btn" onClick={check} disabled={!cfg.password_saved || !cfg.address || dirty || !!busy}>{busy === 'check' ? 'Checking…' : 'Check now'}</button>
+      </div>
+
+      {result &&
+        <div style={{ padding: 12, borderRadius: 8, fontSize: 12, lineHeight: 1.5,
+          background: result.kind === 'ok' ? 'var(--pos-bg)' : 'var(--neg-bg)',
+          border: `1px solid ${result.kind === 'ok' ? 'var(--pos-soft)' : 'var(--neg-soft)'}`,
+          color: result.kind === 'ok' ? 'var(--pos)' : 'var(--neg)' }}>{result.text}</div>}
+
+      <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: 12, background: 'var(--bg-sunken)', borderRadius: 6, lineHeight: 1.5 }}>
+        Read-only: Helix never sends, deletes, or marks mail as read. The app password stays on this Mac (Keychain) and is never shown again or sent to the browser.
+      </div>
+    </SettingsCard>
+
+    <SettingsCard title="Auto-check" subtitle="The server checks Gmail in the background while it is running">
+      <Toggle label="Check Gmail automatically" hint={cfg.password_saved && cfg.address ? 'New reports are downloaded once; repeats are skipped' : 'Save address and app password first'}
+        value={cfg.enabled} onChange={(v) => patch({ enabled: v })} />
+      <Field label="Every">
+        <select className="set-input" value={cfg.interval_minutes} onChange={(e) => patch({ interval_minutes: Number(e.target.value) })}>
+          {GMAIL_INTERVALS.map((m) => <option key={m} value={m}>{gmailIntervalLabel(m)}</option>)}
+        </select>
+      </Field>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: !cfg.last_status ? 'var(--text-subtle)' : statusOk ? 'var(--pos)' : 'var(--neg)' }}></span>
+        <span style={{ color: 'var(--text-muted)' }}>
+          Last check: {gmailWhen(cfg.last_checked_at)}
+          {statusOk && summary && ` · ${summary.matches} matching, ${summary.new} new`}
+        </span>
+      </div>
+      {cfg.last_status === 'error' && cfg.last_error &&
+        <div style={{ fontSize: 12, color: 'var(--neg)', fontFamily: 'var(--font-mono)' }}>{cfg.last_error}</div>}
+    </SettingsCard>
+
+    <SettingsCard title="Pulled reports" subtitle="Saved locally in backend/data/gmail_reports — not imported into the portfolio yet">
+      {reports.length === 0 ?
+        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Nothing pulled yet. Click “Check now”.</div> :
+        <table className="table" style={{ width: '100%', fontSize: 12 }}>
+          <thead><tr><th style={{ textAlign: 'left' }}>Received</th><th style={{ textAlign: 'left' }}>Subject</th><th style={{ textAlign: 'left' }}>Attachment</th><th style={{ textAlign: 'left' }}>Status</th></tr></thead>
+          <tbody>{reports.map((r) =>
+            <tr key={r.id}>
+              <td style={{ whiteSpace: 'nowrap' }}>{gmailWhen(r.received_at)}</td>
+              <td>{r.subject}</td>
+              <td style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>{r.attachments.map((a) => <div key={a.filename}>{a.filename}{a.encrypted ? ' 🔒' : ''}</div>)}</td>
+              <td style={{ color: r.status === 'downloaded' ? 'var(--pos)' : r.status === 'error' ? 'var(--neg)' : 'var(--text-muted)' }} title={r.error || ''}>{r.status === 'no_pdf' ? 'no PDF' : r.status}</td>
+            </tr>)}
+          </tbody>
+        </table>}
+    </SettingsCard>
+  </>;
+};
 
 const SettingsCard = ({ title, subtitle, children }) =>
 <div className="card">

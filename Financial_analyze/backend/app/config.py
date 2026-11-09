@@ -48,6 +48,9 @@ class Settings(BaseSettings):
 
     # Storage
     upload_dir: str = "./uploads"
+    # Gmail import (app password lives in macOS Keychain, not here)
+    gmail_download_dir: str = "./data/gmail_reports"
+    enable_gmail_poller: bool = True
     max_upload_mb: int = 50
 
     # Auth

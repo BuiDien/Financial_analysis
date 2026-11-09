@@ -93,13 +93,27 @@ def _vn_market_state() -> str:
     return "CLOSED"
 
 
+class VnRateLimited(RuntimeError):
+    pass
+
+
+def _vn_history(symbol: str, **kw):
+    """vnstock's quota guard calls sys.exit() on rate limit (vnai). SystemExit
+    is not an Exception, so it would escape every `except Exception` fallback
+    and 500 the request. Turn it into a normal error."""
+    from vnstock.explorer.vci import Quote as VnQuote
+    try:
+        return VnQuote(symbol).history(**kw)
+    except SystemExit as e:
+        raise VnRateLimited(f"vnstock rate limit: {e}") from None
+
+
 def _get_quote_vn(symbol: str) -> dict:
     from datetime import date, timedelta
-    from vnstock.explorer.vci import Quote as VnQuote
 
     end = date.today()
     start = end - timedelta(days=15)
-    df = VnQuote(symbol).history(start=start.isoformat(), end=end.isoformat(), interval="1D")
+    df = _vn_history(symbol, start=start.isoformat(), end=end.isoformat(), interval="1D")
     closes = [float(c) for c in df["close"].tolist()]
     if not closes:
         raise ValueError(f"no VCI data for {symbol}")
@@ -210,23 +224,38 @@ def _sanitize_history(rows) -> list[dict]:
     return out
 
 
-def _get_history_vn(symbol: str, period: str, interval: str) -> list[dict]:
-    from datetime import date, timedelta
-    from vnstock.explorer.vci import Quote as VnQuote
+def _vn_bar_start(value, token: str):
+    """VCI labels weekly bars by the week's last day (Sunday) and monthly bars
+    by the month's last day. Re-label them by their first day (Monday / the
+    1st), like Yahoo does, so a trade inside the period lands on its bar."""
+    if token not in ("1W", "1M"):
+        return value
+    from datetime import timedelta
+    try:
+        d = datetime.fromisoformat(str(value)[:10]).date()
+    except ValueError:
+        return value
+    d = d - timedelta(days=d.weekday()) if token == "1W" else d.replace(day=1)
+    return f"{d.isoformat()} 00:00:00"
 
-    end = date.today()
+
+def _get_history_vn(symbol: str, period: str, interval: str, end: "date | None" = None) -> list[dict]:
+    from datetime import date, timedelta
+
+    end = end or date.today()
     start = end - timedelta(days=_VN_PERIOD_DAYS.get(period, 35))
-    df = VnQuote(symbol).history(start=start.isoformat(), end=end.isoformat(),
-                                 interval=_VN_INTERVAL.get(interval, "1D"))
+    df = _vn_history(symbol, start=start.isoformat(), end=end.isoformat(),
+                     interval=_VN_INTERVAL.get(interval, "1D"))
     # VCI can ignore the start bound for intraday intervals and return weeks
     # of bars — enforce the requested window ourselves ("YYYY-MM-DD HH:MM:SS"
     # strings compare correctly against the ISO date).
     df = df[df["time"].astype(str) >= start.isoformat()]
+    token = _VN_INTERVAL.get(interval, "1D")
     out = []
     for _, row in df.iterrows():
         bar = _history_bar(
             row,
-            row["time"],
+            _vn_bar_start(row["time"], token),
             {"open": "open", "high": "high", "low": "low", "close": "close"},
         )
         if bar is not None:
@@ -234,8 +263,11 @@ def _get_history_vn(symbol: str, period: str, interval: str) -> list[dict]:
     return out
 
 
-def get_history(ticker: str, period: str = "1mo", interval: str = "1d") -> list[dict]:
-    key = f"hist:{ticker}:{period}:{interval}"
+def get_history(ticker: str, period: str = "1mo", interval: str = "1d",
+                end: "date | None" = None) -> list[dict]:
+    """Bars for `period` ending today, or — with `end` — the window of that
+    length ending on `end` (used to page further back in time)."""
+    key = f"hist:{ticker}:{period}:{interval}" + (f":{end.isoformat()}" if end else "")
     cached = _cache_get(key)
     if cached is not None:
         out = _sanitize_history(cached)
@@ -243,10 +275,16 @@ def get_history(ticker: str, period: str = "1mo", interval: str = "1d") -> list[
             _cache_set(key, out, ttl=300)
         return out
     if ticker.startswith(VN_PREFIX):
-        out = _get_history_vn(ticker[len(VN_PREFIX):], period, interval)
+        out = _get_history_vn(ticker[len(VN_PREFIX):], period, interval, end=end)
         _cache_set(key, out, ttl=300)
         return out
-    df = yf.Ticker(ticker).history(period=period, interval=interval).reset_index()
+    if end is not None:
+        from datetime import timedelta
+        start = end - timedelta(days=_VN_PERIOD_DAYS.get(period, 35))
+        df = yf.Ticker(ticker).history(start=start.isoformat(), end=end.isoformat(),
+                                       interval=interval).reset_index()
+    else:
+        df = yf.Ticker(ticker).history(period=period, interval=interval).reset_index()
     out = []
     for _, row in df.iterrows():
         bar = _history_bar(

@@ -120,3 +120,39 @@ def test_history_sanitizes_non_finite_cached_candles(monkeypatch):
     }]
     assert writes
     json.dumps(rows, allow_nan=False)
+
+
+def test_vnstock_rate_limit_sys_exit_becomes_normal_error(monkeypatch):
+    import pytest
+    from app.services import market
+    import vnstock.explorer.vci as vci
+
+    class Boom:
+        def __init__(self, *a, **k): pass
+        def history(self, **kw): raise SystemExit("Rate limit exceeded.")
+    monkeypatch.setattr(vci, "Quote", Boom)
+    with pytest.raises(market.VnRateLimited):
+        market._get_quote_vn("VNM")
+
+
+def test_vn_history_end_pages_back_in_time(monkeypatch):
+    from datetime import date
+
+    _install_fake_vnstock(monkeypatch)
+    keys = []
+    monkeypatch.setattr(market, "_cache_get", lambda k: keys.append(k) and None)
+    monkeypatch.setattr(market, "_cache_set", lambda *a, **kw: None)
+    FakeVnQuote.calls.clear()
+
+    market.get_history("VN:SSI", period="1y", interval="1d", end=date(2023, 3, 1))
+
+    call = FakeVnQuote.calls[0]
+    assert call["end"] == "2023-03-01"
+    assert call["start"] == "2022-02-24"     # 370 days before end
+    assert keys[0].endswith(":2023-03-01")   # older windows cache separately
+
+
+def test_vn_weekly_and_monthly_bars_are_labelled_by_period_start():
+    assert market._vn_bar_start("2026-11-15 00:00:00", "1W") == "2026-11-09 00:00:00"  # Sun → Mon
+    assert market._vn_bar_start("2026-11-30", "1M") == "2026-11-01 00:00:00"
+    assert market._vn_bar_start("2026-11-05 09:15:00", "5m") == "2026-11-05 09:15:00"

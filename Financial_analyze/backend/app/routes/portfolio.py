@@ -22,6 +22,7 @@ from fastapi import (
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..db import get_db
@@ -361,7 +362,12 @@ def get_portfolio(
         h["weight"] = (
             (h["value"] / float(total) * 100) if h["value"] is not None and total else 0
         )
-    db.commit()  # persist fresh cache points
+    try:
+        db.commit()  # persist fresh cache points
+    except IntegrityError:
+        # A concurrent request cached the same (kind, key, date) first; the
+        # cache is best-effort, so keep its row and still return this response.
+        db.rollback()
     return {
         "id": p.id,
         "name": p.name,
@@ -561,6 +567,26 @@ def performance(range: str = "1y", db: Session = Depends(get_db)):
         ],
         "projection_revision": p.projection_revision,
     }
+
+
+@router.get("/portfolio/tickers")
+def tickers(db: Session = Depends(get_db)):
+    """Per-ticker investment summary with every order/share event (newest first)."""
+    p = _get_or_create(db)
+    try:
+        return engine.ticker_breakdown(db, p)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.get("/portfolio/realized")
+def realized(db: Session = Depends(get_db)):
+    """FIFO realized P/L: per ticker and per sale, with the buy lots each sale used."""
+    p = _get_or_create(db)
+    try:
+        return engine.realized_fifo(db, p)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @router.get("/portfolio/jobs/{job_id}")

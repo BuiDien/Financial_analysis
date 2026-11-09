@@ -89,7 +89,7 @@ const HelixAPI = {
 
   // ── Market ────────────────────────────────────────────────
   quote(ticker)                    { return this._get(`/api/quote/${ticker}`); },
-  history(ticker, period = '1mo', interval = '1d') { return this._get(`/api/history/${ticker}?period=${period}&interval=${interval}`); },
+  history(ticker, period = '1mo', interval = '1d', end = null) { return this._get(`/api/history/${ticker}?period=${period}&interval=${interval}${end ? `&end=${end}` : ''}`); },
   indices()                        { return this._get('/api/indices'); },
   screener(params = {})            { return this._get('/api/screener?' + new URLSearchParams(params)); },
 
@@ -106,6 +106,8 @@ const HelixAPI = {
   voidTransaction(id)              { return this._send('DELETE', `/api/portfolio/transactions/${id}`); },
   setPortfolioCurrency(display_currency) { return this._send('PATCH', '/api/portfolio/preferences', { display_currency }); },
   portfolioJob(id)                 { return this._get(`/api/portfolio/jobs/${id}`); },
+  portfolioRealized()              { return this._get('/api/portfolio/realized'); },
+  portfolioTickers()               { return this._get('/api/portfolio/tickers'); },
   portfolioTransactionsExportUrl(){ return `${this.base}/api/portfolio/transactions/export`; },
   portfolioStatementUrl()         { return `${this.base}/api/portfolio/statement`; },
   async portfolioImportPreview(file) {
@@ -255,6 +257,14 @@ const HelixAPI = {
   },
 
   aiHealth()                       { return this._get('/api/ai/health'); },
+
+  // ── Gmail import (app password is write-only; stored in macOS Keychain) ──
+  gmailSettings()                  { return this._get('/api/gmail/settings'); },
+  saveGmailSettings(body)          { return this._send('PUT', '/api/gmail/settings', body); },
+  removeGmailPassword()            { return this._send('DELETE', '/api/gmail/password'); },
+  testGmail()                      { return this._send('POST', '/api/gmail/test'); },
+  checkGmail()                     { return this._send('POST', '/api/gmail/check'); },
+  gmailReports(limit = 50)         { return this._get(`/api/gmail/reports?limit=${limit}`); },
 
   // Read the user's saved provider preference.
   _aiSettings() {

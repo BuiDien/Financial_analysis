@@ -339,3 +339,60 @@ def test_vnd_holding_is_priced_from_vnstock_in_dong(portfolio_client, monkeypatc
     assert again["holdings"][0]["price"] == pytest.approx(53600)
     assert body["today_change"] != 0
     assert again["today_change"] == pytest.approx(body["today_change"])
+
+
+def test_realized_fifo_uses_oldest_lots_first(db):
+    from datetime import datetime, timezone
+    from app.models.portfolio import Portfolio, PortfolioTransaction
+    from app.services import portfolio_engine as engine
+
+    p = Portfolio(name="Main", display_currency="VND")
+    db.add(p); db.flush()
+    def tx(day, kind, qty, price, fees=0, taxes=0):
+        db.add(PortfolioTransaction(portfolio_id=p.id, type=kind, ticker="NKG", quantity=qty,
+                                    unit_price=price, fees=fees, taxes=taxes, currency="VND",
+                                    effective_at=datetime(2026, 1, day, 8, tzinfo=timezone.utc)))
+    tx(1, "BUY", 100, 10_000, fees=15_000)      # lot A: 1,015,000 -> 10,150/share
+    tx(2, "BUY", 100, 20_000)                   # lot B: 2,000,000 -> 20,000/share
+    tx(3, "SELL", 150, 18_000, fees=4_050, taxes=2_700)
+    db.commit()
+
+    out = engine.realized_fifo(db, p)
+    sale = out["sales"][0]
+    # FIFO: all of lot A + 50 of lot B
+    assert [(l["quantity"], l["unit_cost"]) for l in sale["lots"]] == [(100.0, 10150.0), (50.0, 20000.0)]
+    assert sale["cost"] == 1_015_000 + 1_000_000
+    assert sale["proceeds"] == 150 * 18_000 - 4_050 - 2_700
+    assert sale["gain"] == sale["proceeds"] - sale["cost"]
+    # matches the ledger rebuild's realized gain
+    engine.rebuild(db, p.id)
+    from app.models.portfolio import ProjectionSummary
+    assert float(db.get(ProjectionSummary, p.id).realized_gain) == out["total_gain"]
+    # average cost would differ: avg 15,075/share -> gain 432,000 vs FIFO 678,250
+    assert out["total_gain"] == 678_250
+
+
+def test_ticker_breakdown_counts_orders_and_received_shares(db):
+    from datetime import datetime, timezone
+    from app.models.portfolio import Portfolio, PortfolioTransaction
+    from app.services import portfolio_engine as engine
+
+    p = Portfolio(name="Main", display_currency="VND")
+    db.add(p); db.flush()
+    def tx(day, kind, qty=None, price=None, source="ssi_email", cash=None, taxes=0, fees=0):
+        db.add(PortfolioTransaction(portfolio_id=p.id, type=kind, ticker="SSI", quantity=qty, unit_price=price,
+                                    cash_amount=cash, fees=fees, taxes=taxes, currency="VND", source=source,
+                                    effective_at=datetime(2026, 1, day, 8, tzinfo=timezone.utc)))
+    tx(1, "BUY", 100, 20_000, fees=3_000)                  # bought
+    tx(2, "BUY", 20, 0, source="ssi_corporate")            # bonus shares
+    tx(3, "BUY", 10, 15_000, source="ssi_corporate")       # rights
+    tx(4, "DIVIDEND", cash=100_000, taxes=5_000)
+    tx(5, "SELL", 120, 25_000, fees=4_500, taxes=3_000)
+    db.commit()
+    t = engine.ticker_breakdown(db, p)["tickers"][0]
+    assert (t["orders_buy"], t["orders_sell"]) == (1, 1)
+    assert (t["shares_bought"], t["shares_received"], t["shares_sold"], t["shares_now"]) == (100, 30, 120, 10)
+    assert t["paid"] == 2_003_000 + 150_000 and t["received"] == 3_000_000 - 7_500
+    assert t["dividends"] == 95_000
+    assert [e["kind"] for e in t["events"]] == ["SELL", "DIVIDEND", "RIGHTS", "BONUS", "BUY"]
+    assert t["events"][0]["shares_after"] == 10

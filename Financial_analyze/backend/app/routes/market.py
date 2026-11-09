@@ -1,4 +1,6 @@
 """Market data — quotes, history, indices, screener."""
+from datetime import date
+
 from fastapi import APIRouter, HTTPException, Query
 from ..services import market
 
@@ -14,10 +16,12 @@ def get_quote(ticker: str):
 
 
 @router.get("/history/{ticker}")
-def get_history(ticker: str, period: str = "1mo", interval: str = "1d"):
-    """period: 1d 5d 1mo 3mo 6mo 1y 2y 5y 10y ytd max"""
+def get_history(ticker: str, period: str = "1mo", interval: str = "1d", end: date | None = None):
+    """period: 1d 5d 1mo 3mo 6mo 1y 2y 5y 10y ytd max.
+    end (YYYY-MM-DD): return the `period`-long window ending on that day — for
+    loading older bars as the chart scrolls back."""
     try:
-        return market.get_history(ticker.upper(), period=period, interval=interval)
+        return market.get_history(ticker.upper(), period=period, interval=interval, end=end)
     except Exception as e:
         raise HTTPException(404, f"History unavailable: {e}")
 

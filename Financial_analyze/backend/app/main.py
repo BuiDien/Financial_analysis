@@ -18,6 +18,7 @@ from .routes import (
     scan,
     ocr_inbox,
     history,
+    gmail,
 )
 
 settings = get_settings()
@@ -32,11 +33,17 @@ async def lifespan(_app: FastAPI):
         from .services import scheduler
 
         scheduler.start()
+    if settings.enable_gmail_poller:
+        from .services import gmail_poller
+
+        gmail_poller.start()
     try:
         yield
     finally:
         if settings.enable_scheduler:
             scheduler.shutdown()
+        if settings.enable_gmail_poller:
+            gmail_poller.shutdown()
 
 
 app = FastAPI(
@@ -77,3 +84,4 @@ app.include_router(news.router, prefix="/api", tags=["news"])
 app.include_router(sync.router, tags=["sync"])  # defines its own /ws and /api paths
 app.include_router(scan.router, prefix="/api", tags=["scanner"])
 app.include_router(ocr_inbox.router, prefix="/api", tags=["ocr-inbox"])
+app.include_router(gmail.router, prefix="/api", tags=["gmail"])

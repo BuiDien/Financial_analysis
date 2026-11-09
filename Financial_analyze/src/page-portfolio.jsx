@@ -57,6 +57,7 @@ const PagePortfolio = ({ data, setActiveAsset, setPage }) => {
   const [showTx, setShowTx] = React.useState(false);
   const [editTx, setEditTx] = React.useState(null);
   const [showImport, setShowImport] = React.useState(false);
+  const [historyTicker, setHistoryTicker] = React.useState(null);
   const [busy, setBusy] = React.useState('');
 
   const loadPortfolio = React.useCallback(async () => {
@@ -169,7 +170,7 @@ const PagePortfolio = ({ data, setActiveAsset, setPage }) => {
       {portfolio.stale?.length > 0 && <div className="card" style={{ padding: 10, marginBottom: 16, color: 'var(--text-muted)' }}>Using last-known data for {portfolio.stale.map(x => x.key).join(', ')}. Values are visibly retained, never generated.</div>}
 
       <div className="row" style={{ marginBottom: 16, borderBottom: '1px solid var(--border)' }}>
-        {['overview', 'transactions'].map(id => <button key={id} className="card-action" onClick={() => setTab(id)} style={{ padding: '10px 4px', marginRight: 18, color: tab === id ? 'var(--accent)' : 'var(--text-muted)', borderBottom: tab === id ? '2px solid var(--accent)' : '2px solid transparent', textTransform: 'capitalize' }}>{id}</button>)}
+        {[['overview', 'Overview'], ['tickers', 'By ticker'], ['transactions', 'Transactions']].map(([id, label]) => <button key={id} className="card-action" onClick={() => setTab(id)} style={{ padding: '10px 4px', marginRight: 18, color: tab === id ? 'var(--accent)' : 'var(--text-muted)', borderBottom: tab === id ? '2px solid var(--accent)' : '2px solid transparent' }}>{label}</button>)}
       </div>
 
       {tab === 'overview' ? <>
@@ -197,19 +198,150 @@ const PagePortfolio = ({ data, setActiveAsset, setPage }) => {
             <div className="card"><div className="card-header"><h3 className="card-title">Cash balances</h3><span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>Native and converted</span></div><div className="card-body">{portfolio.cash.length ? portfolio.cash.map(row => <div key={row.currency} className="between row" style={{ padding: '10px 0', borderBottom: '1px solid var(--border)' }}><div><span className="ticker">{row.currency}</span>{row.warning && <span className="pill neg" style={{ marginLeft: 8 }}>Unreconciled</span>}</div><div style={{ textAlign: 'right' }}><div className="num">{pfMoney(row.balance, row.currency)}</div>{row.currency !== currency && <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{pfMoney(row.converted, currency)}</div>}</div></div>) : <span style={{ color: 'var(--text-subtle)' }}>No cash transactions yet.</span>}</div></div>
           </div>
 
-          <HoldingsTable holdings={portfolio.holdings} currency={currency} onSelect={sym => { setActiveAsset(sym); setPage('detail'); }} onExport={exportHoldings} />
+          <HoldingsTable holdings={portfolio.holdings} currency={currency} onSelect={setHistoryTicker} onExport={exportHoldings} />
         </>}
-      </> : <TransactionsPanel data={transactions} filter={txFilter} setFilter={setTxFilter} query={txQuery} setQuery={setTxQuery} onPage={loadTransactions} onAdd={() => { setEditTx(null); setShowTx(true); }} onEdit={tx => { setEditTx(tx); setShowTx(true); }} onVoid={voidTransaction} onExport={() => { const a = document.createElement('a'); a.href = window.HelixAPI.portfolioTransactionsExportUrl(); a.click(); }} />}
+      </> : tab === 'tickers' ? <TickerPanel live={live} revision={portfolio.projection_revision} holdings={portfolio.holdings} /> : <TransactionsPanel data={transactions} filter={txFilter} setFilter={setTxFilter} query={txQuery} setQuery={setTxQuery} onPage={loadTransactions} onAdd={() => { setEditTx(null); setShowTx(true); }} onEdit={tx => { setEditTx(tx); setShowTx(true); }} onVoid={voidTransaction} onExport={() => { const a = document.createElement('a'); a.href = window.HelixAPI.portfolioTransactionsExportUrl(); a.click(); }} />}
 
+      {historyTicker && <TickerHistoryModal ticker={historyTicker} revision={portfolio.projection_revision} price={portfolio.holdings.find(h => h.ticker === historyTicker)?.price} onClose={() => setHistoryTicker(null)} onChart={() => { setActiveAsset(historyTicker); setPage('detail'); }} />}
       {showTx && <TransactionModal initial={editTx} currency={currency} onClose={() => { setShowTx(false); setEditTx(null); }} onSave={saveTransaction} busy={!!busy} />}
       {showImport && <PortfolioImportModal onClose={() => setShowImport(false)} onCommitted={async result => { setShowImport(false); setBusy('Importing…'); try { await awaitJob(result.job_id); await refreshAll(); window.toast?.(`Imported ${result.imported} transactions`, { type: 'success' }); } catch (e) { window.toast?.(e.message, { type: 'error' }); } setBusy(''); }} />}
     </div>
   );
 };
 
+// By ticker — one row per stock: orders, shares bought / received / sold, money
+// in and out, dividends, and a method-free net P/L. Click a row for every event.
+const EVENT_STYLE = {
+  BUY: { label: 'Buy', color: 'var(--text)' },
+  SELL: { label: 'Sell', color: 'var(--accent)' },
+  BONUS: { label: 'Bonus / stock dividend', color: 'var(--pos)' },
+  RIGHTS: { label: 'Rights issue', color: 'var(--pos)' },
+  DIVIDEND: { label: 'Cash dividend', color: 'var(--pos)' },
+};
+
+const tkMoney = (v, c = 'VND') => v == null ? '—' : pfMoney(v, c, 0);
+const tkNum = v => v ? Number(v).toLocaleString() : '—';
+const tkPL = (v, pct) => v == null ? '—' : <><span className={v >= 0 ? 'pos num' : 'neg num'}>{tkMoney(v)}</span>{pct != null && <div><Pill value={pct} /></div>}</>;
+
+// Every order and share event for one ticker (shared by the By-ticker tab and the holdings popup).
+const TickerEvents = ({ t }) => {
+  const [openEvent, setOpenEvent] = React.useState(null);
+  const m = tkMoney, n = tkNum, pl = tkPL;
+  return <>
+    <div style={{ padding: '10px 16px', fontSize: 12, color: 'var(--text-muted)' }}>
+      <strong style={{ color: 'var(--text)' }}>{t.ticker}</strong>: {t.orders_buy} buy orders ({n(t.shares_bought)} shares) · {t.orders_sell} sell orders ({n(t.shares_sold)} shares)
+      {t.shares_received ? <> · <span style={{ color: 'var(--pos)' }}>received {n(t.shares_received)} shares</span> (bonus, stock dividends, rights)</> : null}
+      {' '}· holding {n(t.shares_now)} · FIFO cost of holding {m(t.open_cost)} · fees {m(t.fees)} · taxes {m(t.taxes)}
+    </div>
+    <table className="table" style={{ margin: 0 }}>
+      <thead><tr><th>Date</th><th>Event</th><th className="right">Shares</th><th className="right">Price</th><th className="right">Cash</th><th className="right">Fee + tax</th><th className="right">Shares after</th><th className="right">FIFO P/L</th></tr></thead>
+      <tbody>{t.events.map(e => { const st = EVENT_STYLE[e.kind] || { label: e.kind }; const expandable = e.kind === 'SELL' && e.lots?.length; return <React.Fragment key={e.id}>
+        <tr onClick={() => expandable && setOpenEvent(openEvent === e.id ? null : e.id)} style={{ cursor: expandable ? 'pointer' : 'default' }} title={e.note || ''}>
+          <td className="num" style={{ fontSize: 12 }}>{new Date(e.date).toLocaleDateString()}</td>
+          <td style={{ fontSize: 12, color: st.color, fontWeight: 600 }}>{expandable ? (openEvent === e.id ? '▾ ' : '▸ ') : ''}{st.label}{e.source === 'ssi_statement' ? <span style={{ fontWeight: 400, color: 'var(--text-subtle)' }}> · from monthly statement</span> : null}</td>
+          <td className="right num" style={{ fontSize: 12 }}>{e.quantity != null ? (e.kind === 'SELL' ? '−' : '+') + n(e.quantity) : '—'}</td>
+          <td className="right num" style={{ fontSize: 12 }}>{e.price ? m(e.price) : (e.kind === 'BONUS' ? 'free' : '—')}</td>
+          <td className="right num" style={{ fontSize: 12 }}><span className={e.amount >= 0 ? 'pos' : ''}>{e.amount ? m(e.amount) : '—'}</span></td>
+          <td className="right num" style={{ fontSize: 12 }}>{e.fees + e.taxes ? m(e.fees + e.taxes) : '—'}</td>
+          <td className="right num" style={{ fontSize: 12 }}>{e.kind === 'DIVIDEND' ? '' : n(e.shares_after)}</td>
+          <td className="right" style={{ fontSize: 12 }}>{e.kind === 'SELL' ? pl(e.fifo_gain) : ''}</td>
+        </tr>
+        {openEvent === e.id && e.lots.map((l, i) => <tr key={i}><td></td><td colSpan={2} style={{ fontSize: 11, color: 'var(--text-muted)' }}>↳ from lot bought {new Date(l.buy_date).toLocaleDateString()}</td><td className="right num" style={{ fontSize: 11, color: 'var(--text-muted)' }}>{n(l.quantity)} × {l.unit_cost ? m(l.unit_cost) : 'free'}</td><td className="right num" style={{ fontSize: 11, color: 'var(--text-muted)' }}>cost {m(l.cost)}</td><td colSpan={3}></td></tr>)}
+      </React.Fragment>; })}</tbody>
+    </table>
+  </>;
+};
+
+// Popup opened from the Overview holdings table.
+const TickerHistoryModal = ({ ticker, revision, price, onClose, onChart }) => {
+  const [t, setT] = React.useState(null);
+  const [error, setError] = React.useState('');
+  React.useEffect(() => {
+    window.HelixAPI.portfolioTickers().then(d => {
+      const row = d.tickers.find(x => x.ticker === ticker);
+      row ? setT(row) : setError(`No trades recorded for ${ticker}.`);
+    }).catch(e => setError(e.message));
+  }, [ticker, revision]);
+  const value = t && price != null ? price * t.shares_now : null;
+  const net = t && value != null ? t.received + t.dividends + value - t.paid : null;
+  return <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,.45)', display: 'grid', placeItems: 'center', padding: 20 }}>
+    <div onClick={e => e.stopPropagation()} className="card" style={{ width: '100%', maxWidth: 960, maxHeight: '88vh', overflow: 'auto' }}>
+      <div className="card-header"><div><h3 className="card-title"><span className="ticker">{ticker}</span> · my orders</h3>{t && <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>Paid {tkMoney(t.paid)} · from sells {tkMoney(t.received)} · dividends {tkMoney(t.dividends)} · value now {tkMoney(value)}</span>}</div>
+        <div className="row">{net != null && <span>Net P/L {tkPL(net, t.paid ? net / t.paid * 100 : null)}</span>}<button className="btn" onClick={onChart}>Open chart</button><button className="icon-btn" onClick={onClose}><Icon name="close" size={12} /></button></div></div>
+      <div className="card-body flush" style={{ overflowX: 'auto' }}>
+        {error ? <div style={{ padding: 24, color: 'var(--text-muted)' }}>{error}</div> : !t ? <div style={{ padding: 24, color: 'var(--text-muted)' }}>Loading…</div> : <TickerEvents t={t} />}
+      </div>
+    </div>
+  </div>;
+};
+
+const TickerPanel = ({ live, revision, holdings }) => {
+  const [data, setData] = React.useState(null);
+  const [error, setError] = React.useState('');
+  const [open, setOpen] = React.useState(null);
+  React.useEffect(() => {
+    if (!live) return;
+    window.HelixAPI.portfolioTickers().then(setData).catch(e => setError(e.message));
+  }, [live, revision]);
+  if (!live) return <div className="card" style={{ padding: 24, color: 'var(--text-muted)' }}>Connect the backend to see the per-ticker breakdown.</div>;
+  if (error) return <div className="card" style={{ padding: 12, color: 'var(--neg)' }}>{error}</div>;
+  if (!data) return <div className="card" style={{ padding: 24, color: 'var(--text-muted)' }}>Loading tickers…</div>;
+
+  const price = Object.fromEntries((holdings || []).map(h => [h.ticker, h.price]));
+  const rows = data.tickers.map(t => {
+    const value = t.shares_now > 0 ? (price[t.ticker] != null ? price[t.ticker] * t.shares_now : null) : 0;
+    const net = value == null ? null : t.received + t.dividends + value - t.paid;
+    return { ...t, value, net, net_pct: net != null && t.paid ? net / t.paid * 100 : null };
+  });
+  const tot = rows.reduce((a, r) => ({ paid: a.paid + r.paid, received: a.received + r.received, dividends: a.dividends + r.dividends, value: a.value + (r.value || 0), net: a.net + (r.net || 0), orders: a.orders + r.orders_buy + r.orders_sell }), { paid: 0, received: 0, dividends: 0, value: 0, net: 0, orders: 0 });
+  const m = (v, c = 'VND') => v == null ? '—' : pfMoney(v, c, 0);
+  const n = v => v ? Number(v).toLocaleString() : '—';
+  const pl = (v, pct) => v == null ? '—' : <><span className={v >= 0 ? 'pos num' : 'neg num'}>{m(v)}</span>{pct != null && <div><Pill value={pct} /></div>}</>;
+
+  return <>
+    <div className="stat-grid" style={{ marginBottom: 20 }}>
+      <PortfolioMetric label="Net P/L, all tickers" value={m(tot.net)} delta={tot.paid ? tot.net / tot.paid * 100 : undefined} />
+      <PortfolioMetric label="Paid for shares" value={m(tot.paid)} />
+      <PortfolioMetric label="Received (sells + dividends)" value={m(tot.received + tot.dividends)} />
+      <PortfolioMetric label="Orders" value={tot.orders.toLocaleString()} />
+    </div>
+    <div className="card">
+      <div className="card-header"><div><h3 className="card-title">By ticker</h3><span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>Net P/L = money from sells + dividends + value now − money paid (fees &amp; taxes included). Same result for FIFO or average. Click a ticker for every order and share event.</span></div></div>
+      <div className="card-body flush" style={{ overflowX: 'auto' }}>
+        <table className="table">
+          <thead><tr>
+            <th>Ticker</th><th className="right">Orders<div style={{ fontWeight: 400, fontSize: 10 }}>buy / sell</div></th>
+            <th className="right">Bought</th><th className="right">Received<div style={{ fontWeight: 400, fontSize: 10 }}>bonus / rights</div></th><th className="right">Sold</th><th className="right">Hold now</th>
+            <th className="right">Paid</th><th className="right">From sells</th><th className="right">Dividends</th><th className="right">Value now</th>
+            <th className="right">Net P/L</th><th className="right">FIFO realized</th>
+          </tr></thead>
+          <tbody>{rows.map(t => <React.Fragment key={t.ticker}>
+            <tr onClick={() => { setOpen(open === t.ticker ? null : t.ticker); }} style={{ cursor: 'pointer', opacity: t.shares_now > 0 ? 1 : 0.75 }}>
+              <td><span className="ticker">{open === t.ticker ? '▾' : '▸'} {t.ticker}</span></td>
+              <td className="right num">{t.orders_buy} / {t.orders_sell}</td>
+              <td className="right num">{n(t.shares_bought)}</td>
+              <td className="right num" style={{ color: t.shares_received ? 'var(--pos)' : undefined }}>{t.shares_received ? '+' + n(t.shares_received) : '—'}</td>
+              <td className="right num">{n(t.shares_sold)}</td>
+              <td className="right num" style={{ fontWeight: 600 }}>{n(t.shares_now)}</td>
+              <td className="right num">{m(t.paid)}</td>
+              <td className="right num">{m(t.received)}</td>
+              <td className="right num">{t.dividends ? m(t.dividends) : '—'}</td>
+              <td className="right num">{t.shares_now > 0 ? m(t.value) : '—'}</td>
+              <td className="right">{pl(t.net, t.net_pct)}</td>
+              <td className="right">{t.orders_sell ? pl(t.realized_fifo) : '—'}</td>
+            </tr>
+            {open === t.ticker && <tr><td colSpan={12} style={{ background: 'var(--bg-sunken)', padding: 0 }}><TickerEvents t={t} /></td></tr>}
+          </React.Fragment>)}</tbody>
+          <tfoot><tr style={{ fontWeight: 600 }}><td>Total</td><td className="right num">{tot.orders}</td><td colSpan={4}></td><td className="right num">{m(tot.paid)}</td><td className="right num">{m(tot.received)}</td><td className="right num">{m(tot.dividends)}</td><td className="right num">{m(tot.value)}</td><td className="right">{pl(tot.net)}</td><td></td></tr></tfoot>
+        </table>
+      </div>
+    </div>
+  </>;
+};
+
 const PortfolioEmpty = ({ onAdd, onImport, live }) => <div className="card" style={{ padding: 48, textAlign: 'center' }}><h3 className="serif" style={{ fontSize: 22, marginBottom: 8 }}>Start with the ledger.</h3><p style={{ color: 'var(--text-muted)', marginBottom: 20 }}>Add a deposit and buy, or import a CSV. Empty means empty—no sample positions are mixed into live data.</p><div className="row" style={{ justifyContent: 'center' }}><button className="btn btn-primary" disabled={!live} onClick={onAdd}>Add transaction</button><button className="btn" disabled={!live} onClick={onImport}>Import CSV</button></div></div>;
 
-const HoldingsTable = ({ holdings, currency, onSelect, onExport }) => <div className="card"><div className="card-header"><h3 className="card-title">Holdings</h3><button className="btn" onClick={onExport}><Icon name="download" size={12} /> Export</button></div><div className="card-body flush" style={{ overflowX: 'auto' }}><table className="table"><thead><tr><th>Ticker</th><th>Native</th><th className="right">Shares</th><th className="right">Avg FIFO cost</th><th className="right">Last</th><th className="right">Value ({currency})</th><th className="right">Unrealized</th><th className="right">Weight</th></tr></thead><tbody>{holdings.map(h => <tr key={`${h.ticker}-${h.currency}`} onClick={() => onSelect(h.ticker)}><td><span className="ticker">{h.ticker}</span></td><td>{h.currency}</td><td className="right num">{Number(h.shares).toLocaleString(undefined, { maximumFractionDigits: 6 })}</td><td className="right num">{pfMoney(h.avg_cost, h.currency)}</td><td className="right num">{pfMoney(h.price, h.currency)}</td><td className="right num">{pfMoney(h.value, currency)}</td><td className="right"><span className={h.gain >= 0 ? 'pos num' : 'neg num'}>{pfMoney(h.gain, currency)}</span><div><Pill value={h.gain_pct || 0} /></div></td><td className="right num">{Number(h.weight || 0).toFixed(2)}%</td></tr>)}</tbody></table></div></div>;
+const HoldingsTable = ({ holdings, currency, onSelect, onExport }) => <div className="card"><div className="card-header"><h3 className="card-title">Holdings</h3><button className="btn" onClick={onExport}><Icon name="download" size={12} /> Export</button></div><div className="card-body flush" style={{ overflowX: 'auto' }}><table className="table"><thead><tr><th>Ticker</th><th>Native</th><th className="right">Shares</th><th className="right">Avg FIFO cost</th><th className="right">Last</th><th className="right">Value ({currency})</th><th className="right">Unrealized</th><th className="right">Weight</th></tr></thead><tbody>{holdings.map(h => <tr key={`${h.ticker}-${h.currency}`} onClick={() => onSelect(h.ticker)} style={{ cursor: 'pointer' }} title="Show my orders"><td><span className="ticker">{h.ticker}</span></td><td>{h.currency}</td><td className="right num">{Number(h.shares).toLocaleString(undefined, { maximumFractionDigits: 6 })}</td><td className="right num">{pfMoney(h.avg_cost, h.currency)}</td><td className="right num">{pfMoney(h.price, h.currency)}</td><td className="right num">{pfMoney(h.value, currency)}</td><td className="right"><span className={h.gain >= 0 ? 'pos num' : 'neg num'}>{pfMoney(h.gain, currency)}</span><div><Pill value={h.gain_pct || 0} /></div></td><td className="right num">{Number(h.weight || 0).toFixed(2)}%</td></tr>)}</tbody></table></div></div>;
 
 const TransactionsPanel = ({ data, filter, setFilter, query, setQuery, onPage, onAdd, onEdit, onVoid, onExport }) => <div className="card"><div className="card-header" style={{ flexWrap: 'wrap' }}><div><h3 className="card-title">Transaction ledger</h3><span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{data.total} audited records</span></div><div className="row"><input className="btn" style={{ width: 150 }} value={query} onChange={e => setQuery(e.target.value)} placeholder="Ticker or note…" /><select className="btn" value={filter} onChange={e => setFilter(e.target.value)}><option value="">All types</option>{TX_TYPES.map(x => <option key={x}>{x}</option>)}</select><button className="btn" onClick={onExport}><Icon name="download" size={12} /> Export</button><button className="btn btn-primary" onClick={onAdd}><Icon name="plus" size={12} /> Add</button></div></div><div className="card-body flush" style={{ overflowX: 'auto' }}><table className="table"><thead><tr><th>Date</th><th>Type</th><th>Ticker</th><th className="right">Quantity</th><th className="right">Price / cash</th><th>Currency</th><th>Source</th><th>Status</th><th></th></tr></thead><tbody>{data.items.map(tx => <tr key={tx.id}><td className="num">{new Date(tx.effective_at).toLocaleDateString()}</td><td><span className="ticker">{tx.type}</span></td><td>{tx.ticker || '—'}</td><td className="right num">{tx.quantity ?? '—'}</td><td className="right num">{pfMoney(tx.unit_price ?? tx.cash_amount, tx.currency)}</td><td>{tx.currency}</td><td>{tx.source}</td><td><span className={`pill ${tx.status === 'active' ? 'pos' : ''}`}>{tx.status}</span></td><td className="right">{tx.status === 'active' && <div className="row" style={{ justifyContent: 'flex-end' }}><button className="card-action" onClick={() => onEdit(tx)}>Edit</button><button className="card-action" style={{ color: 'var(--neg)' }} onClick={() => onVoid(tx)}>Void</button></div>}</td></tr>)}</tbody></table>{data.items.length === 0 && <div style={{ padding: 36, textAlign: 'center', color: 'var(--text-subtle)' }}>No transactions match this filter.</div>}</div><div className="card-header"><button className="btn" disabled={data.page <= 1} onClick={() => onPage(data.page - 1)}>Previous</button><span className="num" style={{ fontSize: 11 }}>Page {data.page} of {Math.max(1, Math.ceil(data.total / data.page_size))}</span><button className="btn" disabled={data.page * data.page_size >= data.total} onClick={() => onPage(data.page + 1)}>Next</button></div></div>;
 

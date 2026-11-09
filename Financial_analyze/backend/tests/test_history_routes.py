@@ -459,7 +459,7 @@ def test_history_companies_route_does_not_shadow_market_history(client, monkeypa
     calls = []
     monkeypatch.setattr(
         market, "get_history",
-        lambda ticker, period="1mo", interval="1d": calls.append(ticker) or {"ticker": ticker, "bars": []},
+        lambda ticker, period="1mo", interval="1d", end=None: calls.append(ticker) or {"ticker": ticker, "bars": []},
     )
     assert client.get("/api/history/companies").json() == []
     response = client.get("/api/history/MBB")

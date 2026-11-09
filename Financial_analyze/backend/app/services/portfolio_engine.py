@@ -234,6 +234,165 @@ def validate_ledger_sequence(
             quantities[key] -= quantity
 
 
+def realized_fifo(db: Session, portfolio: Portfolio) -> dict:
+    """Per-sale FIFO breakdown: which buy lots each SELL consumed.
+
+    Mirrors rebuild(): BUY cost = qty*price + fees + taxes (per lot, converted at
+    the buy date), SELL proceeds = qty*price - fees - taxes (converted at the
+    sell date), lots consumed oldest first. The per-ticker totals therefore sum
+    to the ledger's realized gain (minus standalone FEE/TAX entries).
+    """
+    currency = portfolio.display_currency
+    active = (
+        db.query(PortfolioTransaction)
+        .filter_by(portfolio_id=portfolio.id, status="active")
+        .filter(PortfolioTransaction.type.in_(["BUY", "SELL"]))
+        .order_by(PortfolioTransaction.effective_at, PortfolioTransaction.id)
+        .all()
+    )
+    lots: dict[tuple[str, str], deque] = defaultdict(deque)
+    sales = []
+    for tx in active:
+        native = tx.currency
+        qty, price = dec(tx.quantity), dec(tx.unit_price)
+        fees, taxes = dec(tx.fees), dec(tx.taxes)
+        rate, _ = fx_rate(db, native, currency, tx.effective_at.date())
+        if tx.type == "BUY":
+            cost = qty * price + fees + taxes
+            lots[(tx.ticker, native)].append({
+                "buy_id": tx.id, "date": tx.effective_at, "qty": qty,
+                "cost_native": cost, "cost_display": cost * rate,
+                "unit_cost": cost / qty, "source": tx.source,
+            })
+            continue
+        proceeds_native = qty * price - fees - taxes
+        remaining, basis_native, basis_display, used_lots = qty, ZERO, ZERO, []
+        queue = lots[(tx.ticker, native)]
+        while remaining > 0:
+            if not queue:
+                raise ValueError(f"Transaction {tx.id} oversells {tx.ticker}")
+            lot = queue[0]
+            used = min(remaining, lot["qty"])
+            ratio = used / lot["qty"]
+            part_native, part_display = lot["cost_native"] * ratio, lot["cost_display"] * ratio
+            basis_native += part_native
+            basis_display += part_display
+            used_lots.append({
+                "buy_id": lot["buy_id"], "buy_date": lot["date"].isoformat(),
+                "quantity": float(used), "unit_cost": float(lot["unit_cost"]),
+                "cost": float(part_native), "zero_cost_adjustment": lot["source"] == "ssi_adjust",
+            })
+            if used == lot["qty"]:
+                queue.popleft()
+            else:
+                lot["qty"] -= used
+                lot["cost_native"] -= part_native
+                lot["cost_display"] -= part_display
+            remaining -= used
+        gain_display = proceeds_native * rate - basis_display
+        sales.append({
+            "sell_id": tx.id, "date": tx.effective_at.isoformat(), "ticker": tx.ticker,
+            "currency": native, "quantity": float(qty), "price": float(price),
+            "fees": float(fees), "taxes": float(taxes),
+            "proceeds": float(proceeds_native), "cost": float(basis_native),
+            "gain": float(proceeds_native - basis_native),
+            "gain_display": float(gain_display),
+            "gain_pct": float((proceeds_native - basis_native) / basis_native * 100) if basis_native else None,
+            "lots": used_lots,
+        })
+    by_ticker: dict[str, dict] = {}
+    for sale in sales:
+        t = by_ticker.setdefault(sale["ticker"], {
+            "ticker": sale["ticker"], "currency": sale["currency"], "sells": 0, "quantity": 0.0,
+            "proceeds": 0.0, "cost": 0.0, "gain": 0.0, "gain_display": 0.0,
+            "has_zero_cost_lots": False})
+        t["sells"] += 1
+        for k in ("quantity", "proceeds", "cost", "gain", "gain_display"):
+            t[k] += sale[k]
+        t["has_zero_cost_lots"] |= any(l["zero_cost_adjustment"] for l in sale["lots"])
+    for t in by_ticker.values():
+        t["gain_pct"] = t["gain"] / t["cost"] * 100 if t["cost"] else None
+    tickers = sorted(by_ticker.values(), key=lambda t: t["gain_display"], reverse=True)
+    return {
+        "method": "FIFO",
+        "display_currency": currency,
+        "total_gain": sum(t["gain_display"] for t in tickers),
+        "tickers": tickers,
+        "sales": list(reversed(sales)),  # newest first
+    }
+
+
+_RECEIVED_SOURCES = {"ssi_corporate"}
+
+
+def ticker_breakdown(db: Session, portfolio: Portfolio) -> dict:
+    """Everything per ticker: each order and share event in date order (with the
+    running share count), shares bought / received / sold, money paid / received,
+    cash dividends, and FIFO realized P/L. Market value is added by the caller."""
+    fifo = realized_fifo(db, portfolio)
+    sale_by_id = {s["sell_id"]: s for s in fifo["sales"]}
+    txs = (
+        db.query(PortfolioTransaction)
+        .filter_by(portfolio_id=portfolio.id, status="active")
+        .filter(PortfolioTransaction.ticker.isnot(None))
+        .filter(PortfolioTransaction.type.in_(["BUY", "SELL", "DIVIDEND"]))
+        .order_by(PortfolioTransaction.effective_at, PortfolioTransaction.id)
+        .all()
+    )
+    out: dict[str, dict] = {}
+    for tx in txs:
+        t = out.setdefault(tx.ticker, {
+            "ticker": tx.ticker, "currency": tx.currency, "orders_buy": 0, "orders_sell": 0,
+            "shares_bought": 0.0, "shares_received": 0.0, "shares_sold": 0.0, "shares_now": 0.0,
+            "paid": 0.0, "received": 0.0, "dividends": 0.0, "fees": 0.0, "taxes": 0.0,
+            "realized_fifo": 0.0, "open_cost": 0.0, "first_date": tx.effective_at.isoformat(),
+            "events": []})
+        qty, price = dec(tx.quantity), dec(tx.unit_price)
+        fees, taxes, cash = dec(tx.fees), dec(tx.taxes), dec(tx.cash_amount)
+        ev = {"id": tx.id, "date": tx.effective_at.isoformat(), "source": tx.source, "note": tx.note,
+              "fees": float(fees), "taxes": float(taxes)}
+        if tx.type == "BUY":
+            received_free = tx.source in _RECEIVED_SOURCES and price == 0
+            kind = "BONUS" if received_free else ("RIGHTS" if tx.source in _RECEIVED_SOURCES else "BUY")
+            amount = qty * price + fees + taxes
+            t["shares_now"] += float(qty)
+            if kind == "BUY":
+                t["orders_buy"] += 1
+                t["shares_bought"] += float(qty)
+            else:
+                t["shares_received"] += float(qty)
+            t["paid"] += float(amount)
+            ev.update(kind=kind, quantity=float(qty), price=float(price), amount=-float(amount))
+        elif tx.type == "SELL":
+            amount = qty * price - fees - taxes
+            t["orders_sell"] += 1
+            t["shares_sold"] += float(qty)
+            t["shares_now"] -= float(qty)
+            t["received"] += float(amount)
+            sale = sale_by_id.get(tx.id)
+            ev.update(kind="SELL", quantity=float(qty), price=float(price), amount=float(amount),
+                      fifo_cost=sale["cost"] if sale else None, fifo_gain=sale["gain"] if sale else None,
+                      lots=sale["lots"] if sale else [])
+            if sale:
+                t["realized_fifo"] += sale["gain"]
+        else:  # DIVIDEND
+            net = cash - fees - taxes
+            t["dividends"] += float(net)
+            ev.update(kind="DIVIDEND", quantity=None, price=None, amount=float(net), gross=float(cash))
+        t["fees"] += float(fees)
+        t["taxes"] += float(taxes)
+        ev["shares_after"] = t["shares_now"]
+        t["events"].append(ev)
+    for t in out.values():
+        t["events"].reverse()  # newest first
+    # FIFO cost of the shares still held = total paid - FIFO cost of everything sold
+    for tk, t in out.items():
+        sold_cost = sum(s["cost"] for s in fifo["sales"] if s["ticker"] == tk)
+        t["open_cost"] = t["paid"] - sold_cost
+    return {"method": "FIFO", "display_currency": portfolio.display_currency,
+            "tickers": sorted(out.values(), key=lambda t: (t["shares_now"] <= 0, t["ticker"]))}
+
+
 def rebuild(db: Session, portfolio_id: int) -> None:
     portfolio = db.get(Portfolio, portfolio_id)
     if not portfolio:

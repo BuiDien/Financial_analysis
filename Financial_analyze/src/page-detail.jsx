@@ -3,16 +3,35 @@
 // or is computed from real daily closes. Nothing is invented: when a source
 // is missing the field shows "—" or an empty state.
 
-// yfinance-style period/interval per chart range
+// Candle timeframes: [first window to load, bar interval]. Scrolling left
+// loads older windows, so the window only sets how much shows at first.
+// 3M (quarter) candles are built from monthly bars — no provider serves them.
 const DETAIL_RANGES = {
-  '1D': ['1d', '5m'], '1W': ['5d', '30m'], '1M': ['1mo', '1d'],
-  '3M': ['3mo', '1d'], '1Y': ['1y', '1d'], '5Y': ['5y', '1wk'],
+  '5m': ['5d', '5m'], '15m': ['1mo', '15m'], '1H': ['3mo', '1h'],
+  '1D': ['1y', '1d'], '1W': ['5y', '1wk'], '1M': ['5y', '1mo'], '3M': ['5y', '1mo'],
+};
+
+// Merge monthly bars into calendar quarters (bar times are exchange-clock UTC).
+const toQuarters = (bars) => {
+  const out = [];
+  for (const b of bars) {
+    const d = new Date(b.time * 1000);
+    const q = d.getUTCFullYear() * 4 + Math.floor(d.getUTCMonth() / 3);
+    const last = out[out.length - 1];
+    if (last && last.q === q) {
+      last.high = Math.max(last.high, b.high); last.low = Math.min(last.low, b.low);
+      last.close = b.close; last.volume = (last.volume || 0) + (b.volume || 0);
+    } else {
+      out.push({ ...b, q, time: Math.floor(Date.UTC(d.getUTCFullYear(), Math.floor(d.getUTCMonth() / 3) * 3, 1) / 1000) });
+    }
+  }
+  return out;
 };
 
 // How often the page re-pulls the quote / chart while visible. The backend
 // caches quotes 120s and history 300s, so faster polling buys nothing.
 const QUOTE_POLL_MS = 60 * 1000;
-const CHART_POLL_MS = { '1D': 2 * 60 * 1000, '1W': 5 * 60 * 1000 };   // other ranges: no refresh
+const CHART_POLL_MS = { '5m': 2 * 60 * 1000, '15m': 2 * 60 * 1000, '1H': 5 * 60 * 1000 };   // daily+ candles: live quote updates the last bar
 
 // Map an app ticker to the backend market symbol + price scale. Vietnamese
 // listings route to vnstock/VCI via "VN:" (Yahoo has no HOSE data) and VCI
@@ -28,13 +47,25 @@ const resolveMarket = (sym, holding) => {
   return { market, vn, scale: vn && !VN_INDEXES.has(market.slice(3)) ? 1000 : 1 };
 };
 
+// Bars are plotted in the exchange's own clock: the wall-clock part of the
+// date string ("2026-11-05 09:15:00" for HOSE, "2026-11-03 09:30:00-05:00"
+// for NASDAQ) is stored as if it were UTC, which is what Lightweight Charts
+// displays. `off` keeps the exchange's UTC offset in minutes (VCI strings carry
+// none — they are Vietnam time, UTC+7).
+const VN_OFFSET_MIN = 7 * 60;
 const toBar = (r, scale = 1) => {
-  const t = r.date ? Date.parse(String(r.date).replace(' ', 'T')) : NaN;
+  const raw = r.date ? String(r.date).trim().replace(' ', 'T') : '';
+  const m = raw.match(/(Z|[+-]\d\d:?\d\d)$/);
+  const wall = m ? raw.slice(0, -m[0].length) : raw;
+  const t = wall ? Date.parse(wall.length <= 10 ? wall + 'T00:00:00Z' : wall + 'Z') : NaN;
+  let off = VN_OFFSET_MIN;
+  if (m) off = m[0] === 'Z' ? 0 : (m[0][0] === '-' ? -1 : 1) * (Number(m[0].slice(1, 3)) * 60 + Number(m[0].slice(-2)));
   return {
-    time: Number.isFinite(t) ? Math.floor(t / 1000) : undefined,
+    time: Number.isFinite(t) ? Math.floor(t / 1000) : undefined, off,
     open: r.open * scale, high: r.high * scale, low: r.low * scale, close: r.close * scale, volume: r.volume,
   };
 };
+const fmtOffset = (min) => `UTC${min >= 0 ? '+' : '−'}${Math.floor(Math.abs(min) / 60)}${Math.abs(min) % 60 ? ':' + String(Math.abs(min) % 60).padStart(2, '0') : ''}`;
 
 const scaleQuote = (q, scale) => {
   if (!q || scale === 1) return q;
@@ -132,7 +163,7 @@ const maSignal = (ma, last) => {
 };
 
 const PageDetail = ({ activeAsset = 'NVDA', data, setActiveAsset, setPage }) => {
-  const [range, setRange] = React.useState('1M');
+  const [range, setRange] = React.useState('1D');   // candle timeframe
   const [chartType, setChartType] = React.useState('candle'); // candle | area
   const [switcherOpen, setSwitcherOpen] = React.useState(false);
   const store = useWatchlists();
@@ -175,10 +206,15 @@ const PageDetail = ({ activeAsset = 'NVDA', data, setActiveAsset, setPage }) => 
   // Chart bars for the selected range — short ranges refresh on a timer
   const [bars, setBars] = React.useState(null);
   const [chartState, setChartState] = React.useState('loading'); // loading | ready | empty
-  React.useEffect(() => { setBars(null); setChartState(live ? 'loading' : 'empty'); }, [market, range, live]);
+  // Older bars loaded by scrolling left — kept apart so the polled refresh
+  // of the recent window doesn't drop them.
+  const [older, setOlder] = React.useState([]);
+  const [olderState, setOlderState] = React.useState('idle'); // idle | loading | done
+  const olderBusy = React.useRef(false);
+  React.useEffect(() => { setBars(null); setOlder([]); setOlderState('idle'); olderBusy.current = false; setChartState(live ? 'loading' : 'empty'); }, [market, range, live]);
   usePoll((isCancelled) => {
     if (!live) return;
-    const [period, interval] = DETAIL_RANGES[range] || DETAIL_RANGES['1M'];
+    const [period, interval] = DETAIL_RANGES[range] || DETAIL_RANGES['1D'];
     window.HelixAPI.history(market, period, interval)
       .then(rows => {
         if (isCancelled()) return;
@@ -187,6 +223,27 @@ const PageDetail = ({ activeAsset = 'NVDA', data, setActiveAsset, setPage }) => 
       })
       .catch(() => { if (!isCancelled()) setChartState(s => (s === 'ready' ? s : 'empty')); });
   }, CHART_POLL_MS[range] || 0, [market, scale, range, live]);
+
+  // Exchange UTC offset (minutes), from the latest bar's date string.
+  const marketOff = (bars && bars.length ? bars[bars.length - 1].off : null) ?? (vn ? VN_OFFSET_MIN : 0);
+
+  // My trades on this ticker (from the portfolio ledger) — drawn as chart markers
+  const [myTicker, setMyTicker] = React.useState(null);
+  const [showTrades, setShowTrades] = React.useState(true);
+  React.useEffect(() => {
+    let cancelled = false;
+    setMyTicker(null);
+    if (!live || !window.HelixAPI.portfolioTickers) return undefined;
+    const sym = market.startsWith('VN:') ? market.slice(3) : market;
+    window.HelixAPI.portfolioTickers()
+      .then(d => { if (!cancelled) setMyTicker((d.tickers || []).find(t => t.ticker === sym || t.ticker === String(activeAsset).toUpperCase()) || null); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [market, activeAsset, live]);
+  const tradeMarkers = React.useMemo(() => {
+    if (!showTrades || !myTicker) return null;
+    return myTicker.events.map(e => ({ time: Math.floor(Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(e.date) ? e.date : e.date + 'Z') / 1000) + marketOff * 60, kind: e.kind, quantity: e.quantity }));  // ledger times are UTC → exchange clock
+  }, [myTicker, showTrades, marketOff]);
 
   // Prices are shown in the listing's own currency, exactly as the exchange
   // quotes them — no FX conversion. VND → "53,600 ₫"; others → "186.64 USD".
@@ -197,14 +254,39 @@ const PageDetail = ({ activeAsset = 'NVDA', data, setActiveAsset, setPage }) => 
   };
   const money = (n) => fmtMoney(n, nativeCcy);
 
+  // How far back each scroll-back request reaches, per bar size.
+  const OLDER_CHUNK = { '5m': '5d', '15m': '1mo', '1h': '3mo', '1d': '1y', '1wk': '5y', '1mo': '5y' };
+  const loadOlder = React.useCallback(() => {
+    if (!live || olderBusy.current || olderState === 'done') return;
+    const first = (older[0] || (bars && bars[0]));
+    if (!first || !Number.isFinite(first.time)) return;
+    const [, interval] = DETAIL_RANGES[range] || DETAIL_RANGES['1D'];
+    const end = new Date(first.time * 1000).toISOString().slice(0, 10);  // exchange-local date
+    olderBusy.current = true; setOlderState('loading');
+    const key = `${market}|${range}`;
+    window.HelixAPI.history(market, OLDER_CHUNK[interval] || '1y', interval, end)
+      .then(rows => {
+        if (`${market}|${range}` !== key) return;
+        const add = (Array.isArray(rows) ? rows : []).map(r => toBar(r, scale)).filter(b => Number.isFinite(b.time) && b.time < first.time);
+        if (!add.length) { setOlderState('done'); return; }
+        setOlder(o => [...add, ...o]);
+        setOlderState('idle');
+      })
+      .catch(() => setOlderState('done'))
+      .finally(() => { olderBusy.current = false; });
+  }, [live, olderState, older, bars, range, market, scale]);
+
   // Fold the live quote into the latest candle so the chart moves between history refreshes
   const ohlc = React.useMemo(() => {
     if (!bars || !bars.length) return bars;
+    let out = older.length ? [...older.filter(b => b.time < bars[0].time), ...bars] : bars;
     const px = quote?.price;
-    if (px == null || !Number.isFinite(px)) return bars;
-    const lastBar = bars[bars.length - 1];
-    return [...bars.slice(0, -1), { ...lastBar, close: px, high: Math.max(lastBar.high, px), low: Math.min(lastBar.low, px) }];
-  }, [bars, quote?.price]);
+    if (px != null && Number.isFinite(px)) {
+      const lb = out[out.length - 1];
+      out = [...out.slice(0, -1), { ...lb, close: px, high: Math.max(lb.high, px), low: Math.min(lb.low, px) }];
+    }
+    return range === '3M' ? toQuarters(out) : out;
+  }, [bars, older, quote?.price, range]);
 
   const tech = React.useMemo(() => (daily && daily.length ? computeTechnicals(daily) : {}), [daily]);
   // VCI gives no 52W range — derive it from the real 1Y daily bars
@@ -324,15 +406,18 @@ const PageDetail = ({ activeAsset = 'NVDA', data, setActiveAsset, setPage }) => 
               <button className="range-chip" aria-selected={chartType === 'area'} onClick={() => setChartType('area')}>Area</button>
             </div>
           </div>
+          <span style={{ fontSize: 11, color: 'var(--text-subtle)' }} title="Chart times are the exchange's local time">{vn ? 'Vietnam time' : 'Exchange time'} ({fmtOffset(marketOff)})</span>
+          {myTicker && <button className="range-chip" aria-selected={showTrades} onClick={() => setShowTrades(v => !v)} title="Show my buys (▲) and sells (▼) on the chart">My trades · {myTicker.orders_buy + myTicker.orders_sell}</button>}
           <div className="range-chips">
             {Object.keys(DETAIL_RANGES).map(r => (
               <button key={r} className="range-chip" aria-selected={range === r} onClick={() => setRange(r)}>{r}</button>
             ))}
           </div>
         </div>
-        <div className="chart-wrap" style={{ height: 420 }}>
+        <div className="chart-wrap" style={{ height: 420, position: 'relative' }}>
+          {chartState === 'ready' && olderState !== 'idle' && <div style={{ position: 'absolute', left: 12, bottom: 40, zIndex: 4, fontSize: 11, color: 'var(--text-subtle)', background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 8px', pointerEvents: 'none' }}>{olderState === 'loading' ? 'Loading older bars…' : 'Start of available history'}</div>}
           {chartState === 'ready' && ohlc
-            ? <LWChart data={ohlc} type={chartType} height={420} volume={true} range={range} />
+            ? <LWChart data={ohlc} type={chartType} height={420} volume={true} range={range} markers={tradeMarkers} onReachStart={loadOlder} />
             : (
               <div style={{ height: 420, display: 'grid', placeItems: 'center', color: 'var(--text-subtle)', fontSize: 13 }}>
                 {chartState === 'loading' ? 'Loading price history…' : live ? `No price history for ${activeAsset} in this range.` : 'Connect the backend to load price history.'}
