@@ -219,6 +219,48 @@ Standard CRUD; body = alert object (minus id).
 
 ---
 
+## 7. Backtest
+
+Long-only, daily-bar strategy simulation. Fills at the next bar's open; indicators are warmed up from 650 calendar days before `start`.
+
+### GET /api/backtest/strategies
+```json
+[{"id":"sma_cross","name":"SMA crossover","description":"...",
+  "params":[{"key":"fast","label":"Fast SMA","default":20,"min":2,"max":200,"step":1}]}]
+```
+ids: buy_hold | sma_cross | rsi_reversion | breakout.
+
+### POST /api/backtest/run
+```json
+{"ticker":"VN:VNM","strategy":"sma_cross","params":{"fast":20,"slow":50},
+ "start":"2021-11-09","end":"2026-11-09",
+ "initial_capital":null,"fee_pct":null,"sell_tax_pct":null}
+```
+`ticker` is uppercased server-side. `params` omitted keys use defaults. Null/omitted `initial_capital`, `fee_pct` (percent, e.g. 0.15), `sell_tax_pct` fall back to market defaults:
+
+| | currency | capital | fee % | sell tax % | lot | price_scale | min_hold_bars |
+|---|---|---|---|---|---|---|---|
+| `VN:` | VND | 100,000,000 | 0.15 | 0.1 | 100 | 1000 | 3 (T+2 settlement) |
+| `VN:` index (VNINDEX, VN30, HNXINDEX, HNX30, UPCOMINDEX) | VND | 100,000,000 | 0.15 | 0.1 | 1 | 1 | 3 |
+| other | USD | 10,000 | 0 | 0 | 1 | 1 | 0 |
+
+Response:
+```json
+{"ticker":"VN:VNM","currency":"VND","strategy":{"id":"sma_cross","name":"SMA crossover"},
+ "params":{"fast":20,"slow":50},"start":"2021-11-09","end":"2026-11-09",
+ "settings":{"initial_capital":100000000,"fee_pct":0.15,"sell_tax_pct":0.1,
+             "lot_size":100,"price_scale":1000,"min_hold_bars":3},
+ "bars":[{"date":"2021-11-09","open":0,"high":0,"low":0,"close":0,"volume":0}],
+ "equity":[{"date":"2021-11-09","value":100000000}],
+ "benchmark_equity":[{"date":"2021-11-09","value":100000000}],
+ "trades":[], "skipped_buys":0, "metrics":{}, "benchmark_metrics":{}}
+```
+`bars`, `equity` and `benchmark_equity` have equal length (bars with date >= start). `benchmark_*` is buy & hold with the same settings. `skipped_buys` counts strategy buy attempts that bought 0 shares because capital was below one lot (lot_size x price); the page uses it to explain empty trade lists.
+
+Errors (`{"detail": "..."}`): 400 unknown strategy / invalid params / `start >= end` / fewer than 2 bars in range; 404 no price data for ticker; 503 VN provider rate-limited; 502 other provider failure.
+
+---
+
 ## Contract ↔ data model ↔ HelixAPI map
 | Contract endpoint | Data tables | HelixAPI method | Phase |
 |---|---|---|---|

@@ -34,6 +34,7 @@ const SHORTCUT_GROUPS = [
       { id: 'go-detail',     label: 'Asset Detail',        default: 'g e' },
       { id: 'go-portfolio',  label: 'Portfolio',           default: 'g p' },
       { id: 'go-screener',   label: 'Screener',            default: 'g s' },
+      { id: 'go-backtest',   label: 'Backtest',            default: 'g b' },
       { id: 'go-statements', label: 'Financial Statements', default: 'g f' },
       { id: 'go-sync',       label: 'Sync',                default: 'g y' },
       { id: 'go-news',       label: 'News',                default: 'g n' },

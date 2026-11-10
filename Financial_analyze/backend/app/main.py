@@ -19,6 +19,7 @@ from .routes import (
     ocr_inbox,
     history,
     gmail,
+    backtest,
 )
 
 settings = get_settings()
@@ -85,3 +86,4 @@ app.include_router(sync.router, tags=["sync"])  # defines its own /ws and /api p
 app.include_router(scan.router, prefix="/api", tags=["scanner"])
 app.include_router(ocr_inbox.router, prefix="/api", tags=["ocr-inbox"])
 app.include_router(gmail.router, prefix="/api", tags=["gmail"])
+app.include_router(backtest.router, prefix="/api", tags=["backtest"])

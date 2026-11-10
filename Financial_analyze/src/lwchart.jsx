@@ -10,6 +10,8 @@
 //   markers  : [{ time (unix s), kind: 'BUY'|'SELL'|'BONUS'|'RIGHTS'|'DIVIDEND', quantity }]
 //              snapped to the bar that contains them; same-bar events are merged
 //   onReachStart : called when the user scrolls near the oldest bar (load older data)
+//   lines    : [{ data: [{ time, value }], color, title }] | null — extra line series on
+//              the main price scale (color may be a CSS var(--x)). When given, `data` may be [].
 //
 // Reads our CSS custom properties so the canvas matches the active theme, and
 // re-themes automatically when the html[data-theme] attribute flips.
@@ -34,11 +36,19 @@ const synthTimes = (n, range) => {
   return Array.from({ length: n }, (_, i) => start + i * stepSec);
 };
 
-const LWChart = ({ data, type = 'candle', height = 360, volume = true, range = '1M', markers = null, onReachStart = null }) => {
+// Resolve "var(--x)" (or a plain color) to something the canvas can paint.
+const resolveColor = (c, fallback) => {
+  const m = typeof c === 'string' && c.match(/^var\((--[^,)]+)(?:,\s*([^)]+))?\)$/);
+  if (m) return cssVar(m[1], m[2] || fallback);
+  return c || fallback;
+};
+
+const LWChart = ({ data, type = 'candle', height = 360, volume = true, range = '1M', markers = null, onReachStart = null, lines = null }) => {
   const containerRef = React.useRef(null);
   const chartRef = React.useRef(null);
   const mainSeriesRef = React.useRef(null);
   const volSeriesRef = React.useRef(null);
+  const lineSeriesRef = React.useRef([]);
   const lastBarRef = React.useRef(null);
   const prevTimesRef = React.useRef(null);   // times last pushed — detects prepends
   const reachStartRef = React.useRef(onReachStart);
@@ -46,6 +56,8 @@ const LWChart = ({ data, type = 'candle', height = 360, volume = true, range = '
   const [ready, setReady] = React.useState(LW_CDN_READY());
   const [themeTick, setThemeTick] = React.useState(0);
   const [legend, setLegend] = React.useState(null);  // { o,h,l,c,chg } for the hovered/last bar
+  // Structural identity of the overlay lines — a change rebuilds the chart; data-only changes don't.
+  const linesSig = lines ? lines.map(l => `${l.color}|${l.title}`).join(',') : '';
 
   // Poll until the CDN library is available (it loads async alongside React).
   React.useEffect(() => {
@@ -86,6 +98,13 @@ const LWChart = ({ data, type = 'candle', height = 360, volume = true, range = '
       },
       handleScroll: true,
       handleScale: true,
+      // Overlay-line charts (equity curves) get compact axis labels: 105M, 1.2B, 950,000.
+      ...(lines && lines.length ? { localization: { priceFormatter: (v) => {
+        const a = Math.abs(v);
+        if (a >= 1e9) return (v / 1e9).toFixed(2).replace(/\.?0+$/, '') + 'B';
+        if (a >= 1e6) return (v / 1e6).toFixed(2).replace(/\.?0+$/, '') + 'M';
+        return Math.round(v).toLocaleString('en-US');
+      } } } : {}),
     });
     chartRef.current = chart;
 
@@ -108,6 +127,12 @@ const LWChart = ({ data, type = 'candle', height = 360, volume = true, range = '
     } else {
       volSeriesRef.current = null;
     }
+
+    // Optional overlay lines (e.g. strategy vs benchmark equity) on the main scale.
+    lineSeriesRef.current = (lines || []).map(l => {
+      const lOpts = { color: resolveColor(l.color, accent), lineWidth: 2, title: l.title || '', priceLineVisible: false };
+      return chart.addLineSeries ? chart.addLineSeries(lOpts) : chart.addSeries(LWC.LineSeries, lOpts);
+    });
 
     // Live OHLC legend — follows the crosshair, falls back to the last bar.
     const updateLegend = (bar) => {
@@ -137,13 +162,26 @@ const LWChart = ({ data, type = 'candle', height = 360, volume = true, range = '
     });
     ro.observe(containerRef.current);
 
-    return () => { ro.disconnect(); chart.remove(); chartRef.current = null; };
-  }, [ready, type, height, volume, themeTick, range]);
+    return () => { ro.disconnect(); chart.remove(); chartRef.current = null; lineSeriesRef.current = []; };
+  }, [ready, type, height, volume, themeTick, range, linesSig]);
 
   // Push data whenever it (or the chart) changes.
   React.useEffect(() => {
     const main = mainSeriesRef.current;
-    if (!main || !data || !data.length) return;
+    if (!main) return;
+    const hasLines = Array.isArray(lines) && lines.length > 0;
+    if (hasLines) {
+      lineSeriesRef.current.forEach((series, i) => series.setData((lines[i] && lines[i].data) || []));
+    }
+    if (!data || !data.length) {
+      // Lines-only chart: fit once on first load, then keep the user's view.
+      if (hasLines && !prevTimesRef.current) {
+        const ts = chartRef.current?.timeScale();
+        if (ts) ts.fitContent();
+        prevTimesRef.current = (lines[0] && lines[0].data || []).map(p => p.time);
+      }
+      return;
+    }
     // Real bars carry `time` (unix seconds); use them when strictly ascending,
     // otherwise fall back to synthetic spacing.
     const real = data.map(d => d.time);
@@ -185,7 +223,7 @@ const LWChart = ({ data, type = 'candle', height = 360, volume = true, range = '
       : { open: last.open, high: last.high, low: last.low, close: last.close };
     if (type === 'area') setLegend({ value: last.close });
     else setLegend({ o: last.open, h: last.high, l: last.low, c: last.close, chg: last.open ? ((last.close - last.open) / last.open) * 100 : 0 });
-  }, [data, type, range, ready, themeTick, markers]);
+  }, [data, type, range, ready, themeTick, markers, lines, linesSig]);
 
   return (
     <div style={{ position: 'relative', width: '100%', height }}>

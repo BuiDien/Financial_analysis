@@ -6,6 +6,7 @@ const NAV = [
   { id: 'detail', label: 'Asset Detail', icon: 'chart' },
   { id: 'portfolio', label: 'Portfolio', icon: 'portfolio' },
   { id: 'screener', label: 'Screener', icon: 'screener' },
+  { id: 'backtest', label: 'Backtest', icon: 'trending' },
   { id: 'statements', label: 'Financial Statements', icon: 'portfolio' },
   { id: 'sync', label: 'Sync', icon: 'sync' },
   { id: 'ocr-inbox', label: 'OCR Inbox', icon: 'search' },

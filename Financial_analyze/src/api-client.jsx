@@ -93,6 +93,10 @@ const HelixAPI = {
   indices()                        { return this._get('/api/indices'); },
   screener(params = {})            { return this._get('/api/screener?' + new URLSearchParams(params)); },
 
+  // ── Backtest ──────────────────────────────────────────────
+  backtestStrategies()             { return this._get('/api/backtest/strategies'); },
+  backtestRun(body)                { return this._send('POST', '/api/backtest/run', body); },
+
   // ── Fundamentals ──────────────────────────────────────────
   statements(ticker, period = 'annual') { return this._get(`/api/statements/${ticker}?period=${period}`); },
   ratios(ticker)                   { return this._get(`/api/ratios/${ticker}`); },
