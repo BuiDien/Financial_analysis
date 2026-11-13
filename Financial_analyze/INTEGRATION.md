@@ -66,18 +66,12 @@ Swagger docs: http://localhost:8000/docs
 |---|---|---|---|
 | AI sidebar chat | `src/ai-panel.jsx` | `POST /api/ai/chat`, `GET /api/ai/health` | **wired to Hermes Agent** |
 | OCR label correction | `src/page-ocr-inbox.jsx` | `POST /api/ocr-inbox/reviews/{id}/pages/{page}/label-review-runs` | **wired directly to Ollama** |
-| Reader "Ask about this filing" | `src/page-reader.jsx` | `POST /api/filings/{id}/ask` | **wired** (auto) |
-| Reader OCR Parse | `src/ocr-tool.jsx` | `POST /api/filings/{id}/ocr-parse` | **wired** (auto) |
-| Data Tracker autosave | `src/page-reader.jsx` | `PUT /api/filings/{id}/tracker` | **wired** (auto, debounced) |
-| Filings list | `src/page-filings.jsx` | `GET /api/filings` | mock — swap when ready |
-| PDF upload | `src/page-filings.jsx` | `HelixAPI.uploadFiling(file, meta)` | mock — swap when ready |
-| "Analyze with AI" | `src/page-filings.jsx` | `POST /api/filings/{id}/analyze` | mock — swap when ready |
-| Dashboard quotes | `src/page-dashboard.jsx` | `GET /api/quote/{t}`, `/api/indices` | mock — swap when ready |
-| Asset detail chart | `src/page-detail.jsx` | `GET /api/history/{t}?period=1mo` | mock — swap when ready |
-| Statements page | `src/page-statements.jsx` | `GET /api/statements/{t}` | mock — swap when ready |
+| Dashboard quotes | `src/page-dashboard.jsx` | `GET /api/quote/{t}`, `/api/indices` | live (missing fields show —; demo data only offline) |
+| Asset detail chart | `src/page-detail.jsx` | `GET /api/history/{t}?period=1mo` | live |
+| Statements page | `src/page-statements.jsx` | `GET /api/statements/{t}` | live (verified OCR history) |
 | Portfolio | `src/page-portfolio.jsx` | `/api/portfolio`, `/api/portfolio/transactions`, `/api/portfolio/performance`, `/api/portfolio/imports/*` | live ledger with explicit read-only demo fallback |
-| Screener | `src/page-screener.jsx` | `GET /api/screener` | mock — swap when ready |
-| News | `src/page-news.jsx` | `GET /api/news` | mock — swap when ready |
+| Screener | `src/page-screener.jsx` | `GET /api/screener` | live (rules funnel) |
+| News | `src/page-news.jsx` | `GET /api/news` | live |
 
 "Wired (auto)" features detect the backend automatically. The "swap when ready" rows
 keep their embedded mock data until you replace the mock arrays with `HelixAPI` calls —

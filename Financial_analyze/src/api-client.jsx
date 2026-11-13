@@ -2,9 +2,12 @@
 //
 // HOW IT WORKS
 //   1. Set the backend URL below (or via localStorage 'helix_api_url').
-//   2. On load, HelixAPI pings GET {base}/health (1.5s timeout).
+//   2. On load, HelixAPI pings GET {base}/health (1.5s timeout, 3 tries).
 //   3. If reachable → HelixAPI.live = true and pages/AI use real endpoints.
-//   4. If not → everything falls back to the built-in mock data. The UI works either way.
+//      Live sections that fail show an empty/error state — never mock numbers.
+//   4. If not → offline demo mode (labelled sample data). /health is re-checked
+//      every 10s, and repeated connection failures flip a live session offline;
+//      onStatusChange subscribers re-hydrate on every transition.
 //
 // To point at your local FastAPI server:
 //   localStorage.setItem('helix_api_url', 'http://localhost:8000'); location.reload();
@@ -25,54 +28,117 @@ const apiErrorDetail = payload => {
   return detail && typeof detail === 'object' ? JSON.stringify(detail) : '';
 };
 
+// Default request timeout. A hung upstream (Yahoo / vnstock) must never leave
+// a page waiting forever; long-running calls pass their own `timeout`.
+const HELIX_TIMEOUT_MS = 15000;
+const HELIX_LONG_MS = 5 * 60 * 1000;     // AI chat, uploads, OCR/Hermes runs
+const HELIX_REDETECT_MS = 10000;          // re-check /health while offline
+const HELIX_HEARTBEAT_MS = 30000;         // /health heartbeat while live
+const HELIX_FAIL_LIMIT = 3;               // consecutive network failures → offline
+
 const HelixAPI = {
   base: localStorage.getItem('helix_api_url') || HELIX_DEFAULT_API,
-  live: false,          // set true after a successful /health ping
-  checked: false,
+  live: false,          // true while /health answers
+  checked: false,       // first detect() finished
   listeners: [],
+  _netFails: 0,
+  _redetectTimer: null,
 
-  onStatusChange(fn) { this.listeners.push(fn); },
-
-  async detect() {
-    // A cold backend (pandas/yfinance/anthropic imports) can take longer to
-    // answer than one 1.5s ping — a single failed check used to lock `live`
-    // false for the rest of the page session (nothing ever re-checked it).
-    // Retry a few times before giving up.
-    const ATTEMPTS = 3;
-    for (let i = 0; i < ATTEMPTS; i++) {
-      try {
-        const ctrl = new AbortController();
-        const t = setTimeout(() => ctrl.abort(), 1500);
-        const res = await fetch(`${this.base}/health`, { signal: ctrl.signal });
-        clearTimeout(t);
-        this.live = res.ok;
-      } catch {
-        this.live = false;
-      }
-      if (this.live || i === ATTEMPTS - 1) break;
-      await new Promise(r => setTimeout(r, 500));
-    }
-    this.checked = true;
-    this.listeners.forEach(fn => fn(this.live));
-    return this.live;
+  // fn(live) runs on every live/offline transition (and once after the
+  // first check). Returns an unsubscribe function.
+  onStatusChange(fn) {
+    this.listeners.push(fn);
+    return () => { this.listeners = this.listeners.filter(x => x !== fn); };
   },
 
-  async _get(path) {
-    const res = await fetch(`${this.base}${path}`);
+  _setLive(v) {
+    const changed = v !== this.live || !this.checked;
+    this.live = v;
+    this.checked = true;
+    if (v) this._netFails = 0;
+    if (changed) this.listeners.slice().forEach(fn => { try { fn(v); } catch (e) { console.error(e); } });
+    this._scheduleRedetect();
+  },
+
+  // Offline: poll /health every 10s so a backend started later (or
+  // restarted) is picked up without reloading. Live: a 30s heartbeat, so a
+  // backend that dies while the app sits idle is noticed too (two misses).
+  _scheduleRedetect() {
+    clearTimeout(this._redetectTimer);
+    if (!this.live) {
+      this._redetectTimer = setTimeout(() => { this.detect(1); }, HELIX_REDETECT_MS);
+      return;
+    }
+    this._redetectTimer = setTimeout(async () => {
+      if (await this._ping()) { this._scheduleRedetect(); return; }
+      this.detect(2);
+    }, HELIX_HEARTBEAT_MS);
+  },
+
+  async _ping() {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 1500);
+      const res = await fetch(`${this.base}/health`, { signal: ctrl.signal });
+      clearTimeout(t);
+      return res.ok;
+    } catch { return false; }
+  },
+
+  async detect(attempts = 3) {
+    // A cold backend (pandas/yfinance imports) can take longer than one
+    // 1.5s ping, so the first check retries a few times.
+    let ok = false;
+    for (let i = 0; i < attempts; i++) {
+      ok = await this._ping();
+      if (ok || i === attempts - 1) break;
+      await new Promise(r => setTimeout(r, 500));
+    }
+    this._setLive(ok);
+    return ok;
+  },
+
+  // fetch with a timeout; tracks connection failures so a backend that dies
+  // mid-session flips the app to offline instead of failing call by call.
+  async _fetch(path, init = {}, timeout = HELIX_TIMEOUT_MS) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeout);
+    try {
+      const res = await fetch(`${this.base}${path}`, { ...init, signal: ctrl.signal });
+      this._netFails = 0;
+      return res;
+    } catch (e) {
+      if (e && e.name === 'AbortError') {
+        const err = new Error(`Request timed out after ${Math.round(timeout / 1000)}s: ${path}`);
+        err.timeout = true;
+        throw err;
+      }
+      // TypeError = connection refused / reset: the backend itself is gone.
+      if (this.live && ++this._netFails >= HELIX_FAIL_LIMIT) this.detect(1);
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
+  },
+
+  async _get(path, { timeout } = {}) {
+    const res = await this._fetch(path, {}, timeout);
     if (!res.ok) {
       let detail = `${res.status} ${path}`;
       try { detail = apiErrorDetail(await res.json()) || detail; } catch {}
-      throw new Error(detail);
+      const err = new Error(detail);
+      err.status = res.status;
+      throw err;
     }
     return res.json();
   },
 
-  async _send(method, path, body) {
-    const res = await fetch(`${this.base}${path}`, {
+  async _send(method, path, body, { timeout } = {}) {
+    const res = await this._fetch(path, {
       method,
       headers: { 'Content-Type': 'application/json' },
       body: body !== undefined ? JSON.stringify(body) : undefined,
-    });
+    }, timeout);
     if (!res.ok) {
       let detail = `${res.status} ${path}`;
       let payload = null;
@@ -84,6 +150,7 @@ const HelixAPI = {
       err.detail = payload?.detail;
       throw err;
     }
+    if (res.status === 204) return null;
     return res.json();
   },
 
@@ -91,11 +158,10 @@ const HelixAPI = {
   quote(ticker)                    { return this._get(`/api/quote/${ticker}`); },
   history(ticker, period = '1mo', interval = '1d', end = null) { return this._get(`/api/history/${ticker}?period=${period}&interval=${interval}${end ? `&end=${end}` : ''}`); },
   indices()                        { return this._get('/api/indices'); },
-  screener(params = {})            { return this._get('/api/screener?' + new URLSearchParams(params)); },
 
   // ── Backtest ──────────────────────────────────────────────
   backtestStrategies()             { return this._get('/api/backtest/strategies'); },
-  backtestRun(body)                { return this._send('POST', '/api/backtest/run', body); },
+  backtestRun(body)                { return this._send('POST', '/api/backtest/run', body, { timeout: HELIX_LONG_MS }); },
 
   // ── Fundamentals ──────────────────────────────────────────
   statements(ticker, period = 'annual') { return this._get(`/api/statements/${ticker}?period=${period}`); },
@@ -116,62 +182,40 @@ const HelixAPI = {
   portfolioStatementUrl()         { return `${this.base}/api/portfolio/statement`; },
   async portfolioImportPreview(file) {
     const fd = new FormData(); fd.append('file', file);
-    const res = await fetch(`${this.base}/api/portfolio/imports/preview`, { method: 'POST', body: fd });
+    const res = await this._fetch('/api/portfolio/imports/preview', { method: 'POST', body: fd }, HELIX_LONG_MS);
     if (!res.ok) throw new Error((await res.json()).detail || 'Import preview failed');
     return res.json();
   },
   portfolioImportValidate(id, mapping) { return this._send('POST', `/api/portfolio/imports/${id}/validate`, { mapping }); },
-  portfolioImportCommit(id)        { return this._send('POST', `/api/portfolio/imports/${id}/commit`); },
+  portfolioImportCommit(id)        { return this._send('POST', `/api/portfolio/imports/${id}/commit`, undefined, { timeout: HELIX_LONG_MS }); },
   portfolioImportErrorsUrl(id)     { return `${this.base}/api/portfolio/imports/${id}/errors`; },
-  addHolding(h)                    { return this._send('POST', '/api/portfolio/holdings', h); },
-  removeHolding(id)                { return this._send('DELETE', `/api/portfolio/holdings/${id}`); },
 
-  // ── Filings ───────────────────────────────────────────────
-  filings(ticker)                  { return this._get('/api/filings' + (ticker ? `?ticker=${ticker}` : '')); },
-  async uploadFiling(file, meta) {
-    const fd = new FormData();
-    fd.append('file', file);
-    fd.append('ticker', meta.ticker);
-    fd.append('filing_type', meta.type);
-    fd.append('period', meta.period);
-    const res = await fetch(`${this.base}/api/filings/upload`, { method: 'POST', body: fd });
-    if (!res.ok) {
-      let detail = 'Upload failed';
-      try { detail = (await res.json()).detail || detail; } catch {}
-      throw new Error(detail);
-    }
-    return res.json();
-  },
-  analyzeFiling(id)                { return this._send('POST', `/api/filings/${id}/analyze`); },
-  ocrParse(id)                     { return this._send('POST', `/api/filings/${id}/ocr-parse`); },
-  askFiling(id, question, section) { return this._send('POST', `/api/filings/${id}/ask`, { question, section }); },
-  getTracker(id)                   { return this._get(`/api/filings/${id}/tracker`); },
+  // ── Filing tracker (written by the Sync page's OCR results) ───────
   saveTracker(id, tracker)         { return this._send('PUT', `/api/filings/${id}/tracker`, { tracker }); },
-  filingFileUrl(id)                { return `${this.base}/api/filings/${id}/file`; },
-  deleteFiling(id)                 { return this._send('DELETE', `/api/filings/${id}`); },
 
   // ── News ──────────────────────────────────────────────────
   news(limit = 30)                 { return this._get(`/api/news?limit=${limit}`); },
-  newsSearch(q, count = 5, timeRange = 'week') { return this._get(`/api/news/search?q=${encodeURIComponent(q)}&count=${count}&time_range=${encodeURIComponent(timeRange)}`); },
-  newsArticle(url)                 { return this._get(`/api/news/article?url=${encodeURIComponent(url)}`); },
-  newsDailySummary()               { return this._get('/api/news/summary'); },
+  newsSearch(q, count = 5, timeRange = 'week') { return this._get(`/api/news/search?q=${encodeURIComponent(q)}&count=${count}&time_range=${encodeURIComponent(timeRange)}`, { timeout: 45000 }); },
+  newsArticle(url)                 { return this._get(`/api/news/article?url=${encodeURIComponent(url)}`, { timeout: 45000 }); },
+  newsDailySummary()               { return this._get('/api/news/summary', { timeout: 30000 }); },
 
   // ── Sync (distributed OCR coordinator) ─────────────────────────────
   // Drives backend/app/routes/sync.py: the Mac is the coordinator, worker
   // laptops connect to ws://<base>/ws/ocr with the pairing code.
   syncStatus()                     { return this._get('/api/sync/status'); },
   syncRegenCode()                  { return this._send('POST', '/api/sync/pair-code'); },
-  syncDispatch(filingId)           { return this._send('POST', `/api/sync/dispatch/${filingId}`); },
   syncControlJob(jobId, action)    { return this._send('POST', `/api/sync/jobs/${jobId}/control`, { action }); },
   syncResult(jobId)                { return this._get(`/api/sync/result/${jobId}`); },
   syncWsUrl()                      { return this.base.replace(/^http/, 'ws') + '/ws/ocr'; },
 
   // ── OCR Inbox + human verification ──────────────────────────────
-  async ocrInboxUpload(files, allowDuplicate = false) {
+  // target: optional { ticker, scope, fiscal_year, period_code } labels for every uploaded PDF.
+  async ocrInboxUpload(files, allowDuplicate = false, target = null) {
     const fd = new FormData();
     Array.from(files).forEach(file => fd.append('files', file));
     fd.append('allow_duplicate', allowDuplicate ? 'true' : 'false');
-    const res = await fetch(`${this.base}/api/ocr-inbox`, { method: 'POST', body: fd });
+    Object.entries(target || {}).forEach(([k, v]) => { if (v !== null && v !== undefined && v !== '') fd.append(k, String(v)); });
+    const res = await this._fetch('/api/ocr-inbox', { method: 'POST', body: fd }, HELIX_LONG_MS);
     if (!res.ok) {
       let detail = 'OCR Inbox upload failed';
       try {
@@ -190,12 +234,13 @@ const HelixAPI = {
   ocrInboxItem(id)                 { return this._get(`/api/ocr-inbox/${id}`); },
   ocrInboxFileUrl(id)              { return `${this.base}/api/ocr-inbox/${id}/file`; },
   ocrInboxPageUrl(id, page)        { return `${this.base}/api/ocr-inbox/${id}/pages/${page}`; },
-  ocrInboxRun(id)                  { return this._send('POST', `/api/ocr-inbox/${id}/run`); },
+  ocrInboxRun(id)                  { return this._send('POST', `/api/ocr-inbox/${id}/run`, undefined, { timeout: HELIX_LONG_MS }); },
   ocrInboxRetry(id)                { return this._send('POST', `/api/ocr-inbox/${id}/retry`); },
   ocrInboxCancel(id)               { return this._send('POST', `/api/ocr-inbox/${id}/cancel`); },
   ocrInboxDelete(id)               { return this._send('DELETE', `/api/ocr-inbox/${id}`); },
   ocrInboxLabels(id, labels)       { return this._send('PATCH', `/api/ocr-inbox/${id}/labels`, labels); },
-  ocrInboxPublish(id)              { return this._send('POST', `/api/ocr-inbox/${id}/publish`); },
+  ocrReviewReopen(itemId, revision, reason = null) { return this._send('POST', `/api/ocr-inbox/${itemId}/review/reopen`, { revision, reason }); },
+  ocrInboxPublish(id)              { return this._send('POST', `/api/ocr-inbox/${id}/publish`, undefined, { timeout: 60000 }); },
   ocrReview(id)                    { return this._get(`/api/ocr-inbox/reviews/${id}`); },
   ocrReviewPage(reviewId, page)    { return this._get(`/api/ocr-inbox/reviews/${reviewId}/pages/${page}`); },
   ocrReviewAutoLevels(reviewId, page, revision, markdown) {
@@ -205,7 +250,7 @@ const HelixAPI = {
     return this._send('POST', `/api/ocr-inbox/reviews/${reviewId}/level-total-preview/pages/${page}`, { revision, markdown });
   },
   ocrHermesLabelReviewStart(reviewId, page, revision, targets) {
-    return this._send('POST', `/api/ocr-inbox/reviews/${reviewId}/pages/${page}/label-review-runs`, { revision, targets });
+    return this._send('POST', `/api/ocr-inbox/reviews/${reviewId}/pages/${page}/label-review-runs`, { revision, targets }, { timeout: HELIX_LONG_MS });
   },
   ocrHermesLabelReviewLatest(reviewId, page) {
     return this._get(`/api/ocr-inbox/reviews/${reviewId}/pages/${page}/label-review-runs/latest`);
@@ -233,8 +278,8 @@ const HelixAPI = {
 
   // ── Company history (facts from verified OCR statements) ─────
   // answers: { revision, tables, lines, accepted_misreads, resolutions } (HistoryAnswersIn).
-  historyPreview(reviewId, answers) { return this._send('POST', `/api/ocr-inbox/reviews/${reviewId}/history-preview`, answers); },
-  historyWrite(reviewId, answers)  { return this._send('POST', `/api/ocr-inbox/reviews/${reviewId}/history`, answers); },
+  historyPreview(reviewId, answers) { return this._send('POST', `/api/ocr-inbox/reviews/${reviewId}/history-preview`, answers, { timeout: 60000 }); },
+  historyWrite(reviewId, answers)  { return this._send('POST', `/api/ocr-inbox/reviews/${reviewId}/history`, answers, { timeout: 60000 }); },
   historyRemove(itemId)            { return this._send('DELETE', `/api/ocr-inbox/${itemId}/history`); },
   // body: { statement_kind, fact_key, chosen_fact_id }
   historyResolve(ticker, scope, body) { return this._send('POST', `/api/history/${encodeURIComponent(ticker)}/${encodeURIComponent(scope)}/resolutions`, body); },
@@ -247,17 +292,30 @@ const HelixAPI = {
     return this._get(`/api/history/${encodeURIComponent(ticker)}/${encodeURIComponent(scope)}/series?${params}`);
   },
 
-  // ── VN Market Scanner (broad scan tier) ───────────────────
-  // Drives backend/app/routes/scan.py. Results are third-party (vnstock)
-  // data, always verified=false — screening only, deep-dive to verify.
-  scanLatest()                     { return this._get('/api/scan/latest'); },
-  scanRun(limit = null)            { return this._send('POST', '/api/scan', { limit }); },
+  // ── Screener (rules funnel) ───────────────────────────────
+  // Drives backend/app/routes/screener.py. Broad-scan data is third-party
+  // (vnstock) — keep it labelled UNVERIFIED in the UI.
+  screenerRules()                  { return this._get('/api/screener/rules'); },
+  screenerStrategies()             { return this._get('/api/screener/strategies'); },
+  screenerCreateStrategy(name, rules) { return this._send('POST', '/api/screener/strategies', { name, rules }); },
+  screenerUpdateStrategy(id, patch)   { return this._send('PUT', `/api/screener/strategies/${id}`, patch); },
+  screenerDeleteStrategy(id)       { return this._send('DELETE', `/api/screener/strategies/${id}`); },
+  screenerResetStrategy(id)        { return this._send('POST', `/api/screener/strategies/${id}/reset`); },
+  screenerEvaluate(strategyId, rules) { return this._send('POST', '/api/screener/evaluate', { strategy_id: strategyId, rules }, { timeout: 60000 }); },
+  notesList(symbol)                { return this._get(`/api/notes/${encodeURIComponent(symbol)}`); },
+  notesAdd(symbol, body)           { return this._send('POST', `/api/notes/${encodeURIComponent(symbol)}`, { body }); },
+  notesEdit(id, body)              { return this._send('PUT', `/api/notes/item/${id}`, { body }); },
+  notesDelete(id)                  { return this._send('DELETE', `/api/notes/item/${id}`); },
+  screenerState()                  { return this._get('/api/screener/state'); },
+  screenerRefreshStatus()          { return this._get('/api/screener/refresh'); },
+  screenerRefresh(kind)            { return this._send('POST', '/api/screener/refresh', { kind }, { timeout: 60000 }); },
 
   // ── AI chat (sidebar) ─────────────────────────────────────
   // messages: [{role, content}], page: 'dashboard' | ... , pageContext: {}
   async aiChat(page, pageContext, messages, provider = 'hermes') {
-    const out = await this._send('POST', '/api/ai/chat', { provider, page, page_context: pageContext, messages });
-    return out.answer;
+    const out = await this._send('POST', '/api/ai/chat', { provider, page, page_context: pageContext, messages }, { timeout: HELIX_LONG_MS });
+    const answer = out?.answer;
+    return typeof answer === 'string' ? answer : answer == null ? '' : JSON.stringify(answer);
   },
 
   aiHealth()                       { return this._get('/api/ai/health'); },
@@ -267,7 +325,7 @@ const HelixAPI = {
   saveGmailSettings(body)          { return this._send('PUT', '/api/gmail/settings', body); },
   removeGmailPassword()            { return this._send('DELETE', '/api/gmail/password'); },
   testGmail()                      { return this._send('POST', '/api/gmail/test'); },
-  checkGmail()                     { return this._send('POST', '/api/gmail/check'); },
+  checkGmail()                     { return this._send('POST', '/api/gmail/check', undefined, { timeout: HELIX_LONG_MS }); },
   gmailReports(limit = 50)         { return this._get(`/api/gmail/reports?limit=${limit}`); },
 
   // Read the user's saved provider preference.
@@ -286,7 +344,9 @@ const HelixAPI = {
       try {
         return await this.aiChat(page, context, chatMessages, provider);
       } catch (e) {
-        if (provider === 'hermes') return `Hermes Agent is unavailable. ${e.message || e}`;
+        return provider === 'hermes'
+          ? `Hermes Agent is unavailable. ${e.message || e}`
+          : `The AI request failed. ${e.message || e}`;
       }
     }
     if (provider === 'hermes') {
@@ -299,17 +359,23 @@ const HelixAPI = {
 // Kick off detection immediately (non-blocking)
 HelixAPI.detect();
 
-// Small status chip — drop <ApiStatusChip /> anywhere to show Live/Mock state
-const ApiStatusChip = () => {
-  const [live, setLive] = React.useState(HelixAPI.live);
-  const [checked, setChecked] = React.useState(HelixAPI.checked);
+// React hook: { live, checked }, re-rendering on every status transition.
+const useApiLive = () => {
+  const [st, setSt] = React.useState(() => ({ live: HelixAPI.live, checked: HelixAPI.checked }));
   React.useEffect(() => {
-    HelixAPI.onStatusChange(v => { setLive(v); setChecked(true); });
-    if (HelixAPI.checked) { setLive(HelixAPI.live); setChecked(true); }
+    const off = HelixAPI.onStatusChange(() => setSt({ live: HelixAPI.live, checked: HelixAPI.checked }));
+    setSt({ live: HelixAPI.live, checked: HelixAPI.checked });
+    return off;
   }, []);
+  return st;
+};
+
+// Small status chip — drop <ApiStatusChip /> anywhere to show Live/Offline state
+const ApiStatusChip = () => {
+  const { live, checked } = useApiLive();
   if (!checked) return null;
   return (
-    <span title={live ? `Connected to ${HelixAPI.base}` : 'Backend not reachable — using mock data. Run: uvicorn app.main:app --port 8000'}
+    <span title={live ? `Connected to ${HelixAPI.base}` : `Backend not reachable at ${HelixAPI.base} — showing labelled demo data. Retrying every 10s. Run: ./scripts/run.sh`}
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 5,
         fontSize: 10, fontWeight: 600, fontFamily: 'var(--font-mono)',
@@ -320,7 +386,7 @@ const ApiStatusChip = () => {
         textTransform: 'uppercase', letterSpacing: '0.05em',
       }}>
       <span style={{ width: 5, height: 5, borderRadius: '50%', background: live ? 'var(--pos)' : 'var(--text-subtle)' }}></span>
-      {live ? 'API Live' : 'Mock data'}
+      {live ? 'API Live' : 'Offline · demo data'}
     </span>
   );
 };
@@ -343,3 +409,4 @@ if (!window.claude || typeof window.claude.complete !== 'function') {
 
 window.HelixAPI = HelixAPI;
 window.ApiStatusChip = ApiStatusChip;
+window.useApiLive = useApiLive;

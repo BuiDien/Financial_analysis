@@ -1,385 +1,712 @@
-// Screener — filter equities
+// Screener — rule-based Vietnam stock screener: strategy chips, editable rules
+// panel, debounced server-side evaluation. Broad-scan data is third-party
+// (vnstock) and stays UNVERIFIED.
 
-const SCREENER_DATA = [
-  { sym: 'NVDA', name: 'NVIDIA Corp', sector: 'Technology', mcap: 3490, pe: 67.4, divYield: 0.03, perf1y: 184.2, perf3m: 24.1, vol: 342.1 },
-  { sym: 'AAPL', name: 'Apple Inc', sector: 'Technology', mcap: 3550, pe: 35.2, divYield: 0.42, perf1y: 24.8, perf3m: 8.2, vol: 48.2 },
-  { sym: 'MSFT', name: 'Microsoft', sector: 'Technology', mcap: 3130, pe: 36.8, divYield: 0.78, perf1y: 18.4, perf3m: 4.1, vol: 22.7 },
-  { sym: 'GOOGL', name: 'Alphabet', sector: 'Communication', mcap: 2180, pe: 24.6, divYield: 0.45, perf1y: 32.1, perf3m: 12.4, vol: 31.4 },
-  { sym: 'AMZN', name: 'Amazon', sector: 'Consumer Disc.', mcap: 2300, pe: 42.1, divYield: 0, perf1y: 28.7, perf3m: 9.3, vol: 38.6 },
-  { sym: 'META', name: 'Meta Platforms', sector: 'Communication', mcap: 1490, pe: 27.8, divYield: 0.32, perf1y: 64.2, perf3m: 14.2, vol: 14.8 },
-  { sym: 'TSLA', name: 'Tesla', sector: 'Consumer Disc.', mcap: 1110, pe: 92.4, divYield: 0, perf1y: 42.1, perf3m: -8.4, vol: 92.1 },
-  { sym: 'BRK.B', name: 'Berkshire', sector: 'Financials', mcap: 1020, pe: 14.2, divYield: 0, perf1y: 18.4, perf3m: 4.8, vol: 4.2 },
-  { sym: 'AVGO', name: 'Broadcom', sector: 'Technology', mcap: 832, pe: 78.4, divYield: 1.18, perf1y: 88.4, perf3m: 32.1, vol: 21.3 },
-  { sym: 'JPM', name: 'JPMorgan', sector: 'Financials', mcap: 678, pe: 12.4, divYield: 2.18, perf1y: 32.1, perf3m: 8.2, vol: 11.4 },
-  { sym: 'XOM', name: 'Exxon Mobil', sector: 'Energy', mcap: 478, pe: 13.8, divYield: 3.42, perf1y: -4.2, perf3m: -8.4, vol: 15.6 },
-  { sym: 'V', name: 'Visa', sector: 'Financials', mcap: 612, pe: 31.2, divYield: 0.74, perf1y: 16.4, perf3m: 4.2, vol: 6.8 },
-  { sym: 'JNJ', name: 'Johnson & Johnson', sector: 'Healthcare', mcap: 384, pe: 22.4, divYield: 3.12, perf1y: -2.4, perf3m: -1.8, vol: 8.4 },
-  { sym: 'WMT', name: 'Walmart', sector: 'Consumer Staples', mcap: 718, pe: 38.4, divYield: 1.04, perf1y: 48.2, perf3m: 12.1, vol: 18.4 },
-  { sym: 'KO', name: 'Coca-Cola', sector: 'Consumer Staples', mcap: 282, pe: 26.8, divYield: 2.84, perf1y: 8.4, perf3m: 2.1, vol: 12.6 },
+const SCR_STAGES = [
+  { id: 'good', title: 'Good company rules' },
+  { id: 'oversold', title: 'Oversold highlight' },
 ];
+const SCR_BANK_OPTS = { any: 'Any', exclude: 'Exclude banks', no_financials: 'Exclude financials', only: 'Banks only' };
+const SCR_EXCHANGES = ['HOSE', 'HNX', 'UPCOM'];
+const SCR_FLAG_LABEL = { warning: 'Warning', control: 'Control', restricted: 'Restricted', suspended: 'Suspended' };
 
-const SECTORS = ['All sectors', 'Technology', 'Healthcare', 'Financials', 'Consumer Disc.', 'Communication', 'Industrials', 'Energy', 'Consumer Staples'];
+// Per-rule table column: short header + value format.
+const SCR_COLS = {
+  roe_years: ['ROE', 'pct'], profit_growth: ['Profit growth', 'pct'], revenue_growth: ['Revenue growth', 'pct'],
+  debt_to_equity: ['Debt/Eq', 'num'], ocf_to_profit: ['Cash flow/profit', 'pct'], pe_vs_industry: ['P/E vs industry', 'pct'],
+  profit_growth_min: ['Worst yr growth', 'pct'], receivable_days_change: ['Recv days Δ', 'days'],
+  inventory_days_change: ['Inv days Δ', 'days'], gross_margin_change: ['Gross margin Δ', 'pts'],
+  share_dilution: ['Dilution', 'pct'], foreign_room: ['Foreign room', 'pct'],
+  pb: ['P/B', 'num'], dividend_yield: ['Div yield', 'pct'], traded_value: ['Value bn', 'bn'], market_cap: ['Mkt cap bn', 'bn'],
+  bank_npl: ['NPL', 'pct'], bank_nim: ['NIM', 'pct'], bank_cir: ['CIR', 'pct'], bank_car: ['CAR', 'pct'],
+  rsi: ['RSI', 'num0'], price_drop: ['Drop', 'pct'], volume_spike: ['Volume', 'x'],
+};
+const SCR_OVER = ['rsi', 'price_drop', 'volume_spike'];
+const SCR_NAMES = ['Quality', 'Deep value', 'Dividend', 'Banks'];
 
-// Generate a large realistic mock universe on demand (stands in for a real
-// 10,000-stock backend screen when the backend isn't reachable).
-const SECTOR_POOL = ['Technology', 'Healthcare', 'Financials', 'Consumer Disc.', 'Communication', 'Industrials', 'Energy', 'Consumer Staples', 'Utilities', 'Materials', 'Real Estate'];
-const SUFFIX = ['Corp', 'Inc', 'Group', 'Holdings', 'Industries', 'Partners', 'Systems', 'Labs', 'Technologies', 'Capital'];
-let _universeCache = null;
-const buildUniverse = (n = 800) => {
-  if (_universeCache) return _universeCache;
-  const out = [...SCREENER_DATA];
-  const seen = new Set(out.map(r => r.sym));
-  let seed = 12345;
-  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
-  const L = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-  while (out.length < n) {
-    let sym = '';
-    const len = 3 + Math.floor(rnd() * 2);
-    for (let i = 0; i < len; i++) sym += L[Math.floor(rnd() * 26)];
-    if (seen.has(sym)) continue;
-    seen.add(sym);
-    const sector = SECTOR_POOL[Math.floor(rnd() * SECTOR_POOL.length)];
-    const mcap = Math.round((rnd() ** 3) * 800 + 2);          // skew small
-    const pe = +(rnd() * 80 + 6).toFixed(1);
-    const divYield = +(rnd() < 0.4 ? 0 : rnd() * 4).toFixed(2);
-    const perf1y = +((rnd() - 0.4) * 120).toFixed(1);
-    const perf3m = +((rnd() - 0.45) * 40).toFixed(1);
-    const vol = +(rnd() * 60 + 0.5).toFixed(1);
-    out.push({ sym, name: `${sym} ${SUFFIX[Math.floor(rnd() * SUFFIX.length)]}`, sector, mcap, pe, divYield, perf1y, perf3m, vol });
-  }
-  _universeCache = out;
-  return out;
+const scrFmt = (id, v) => {
+  if (v === null || v === undefined || Number.isNaN(v)) return '—';
+  const f = (SCR_COLS[id] || [])[1];
+  const sign = (n) => (n < 0 ? '−' : '');
+  if (f === 'pct') return `${sign(v)}${Math.abs(v).toFixed(Math.abs(v) < 10 ? 1 : 0)}%`;
+  if (f === 'bn') return Math.round(v).toLocaleString();
+  if (f === 'days') return `${v > 0 ? '+' : sign(v)}${Math.abs(v).toFixed(0)}d`;
+  if (f === 'pts') return `${v > 0 ? '+' : sign(v)}${Math.abs(v).toFixed(1)} pts`;
+  if (f === 'x') return `${v.toFixed(1)}×`;
+  if (f === 'num0') return v.toFixed(0);
+  return v.toFixed(2);
 };
 
-// VN market scan (backend scanner tier): broad-scan rows are third-party
-// (vnstock) data, always unverified — screening only. Rendered through the
-// SAME "Run on 10,000 stocks" button + results table as the mock screener,
-// swapping to VN-shaped columns (lean/scores) when the backend is live.
-const LEAN_STYLE = {
-  long_term:  { label: 'LONG TERM',  color: 'var(--green, #16a34a)' },
-  short_term: { label: 'SHORT TERM', color: 'var(--accent)' },
-  long:  { label: 'LONG TERM',  color: 'var(--green, #16a34a)' },
-  short: { label: 'SHORT TERM', color: 'var(--accent)' },
-  avoid: { label: 'AVOID', color: 'var(--text-subtle)' },
+const scrRow = (symbol, strength, oversold, vals) => ({
+  symbol, exchange: 'HOSE', industry: null, strength, oversold,
+  rules: Object.fromEntries(Object.entries(vals).map(([id, [value, score]]) => [id, { status: 'pass', value, score }])),
+});
+// Shown (read-only) when the backend is offline. Fake tickers, layout only.
+const SAMPLE_RESULT = {
+  counts: { universe: 1519, in_scope: 1200, passed: 5, oversold: 2, skipped: 1 },
+  freshness: { prices_as_of: null, financials_as_of: null },
+  skipped: [{ symbol: 'FFF', missing: ['roe_years'] }],
+  rows: [
+    scrRow('AAA', 82, 'yes', { roe_years: [24, 90], profit_growth: [18, 70], debt_to_equity: [0.3, 90], pe_vs_industry: [78, 60], rsi: [26, null], price_drop: [-13, null], volume_spike: [2.4, null] }),
+    scrRow('BBB', 64, 'yes', { roe_years: [19, 40], profit_growth: [11, 20], debt_to_equity: [0.6, 50], pe_vs_industry: [65, 90], rsi: [28, null], price_drop: [-11, null], volume_spike: [1.8, null] }),
+    scrRow('CCC', 91, 'no', { roe_years: [31, 95], profit_growth: [27, 90], debt_to_equity: [0.2, 95], pe_vs_industry: [82, 50], rsi: [52, null], price_drop: [2, null], volume_spike: [1.1, null] }),
+    scrRow('DDD', 77, 'no', { roe_years: [26, 80], profit_growth: [16, 50], debt_to_equity: [0.5, 60], pe_vs_industry: [85, 45], rsi: [44, null], price_drop: [-3, null], volume_spike: [0.9, null] }),
+    scrRow('EEE', 58, 'missing', { roe_years: [20, 40], profit_growth: [12, 20], debt_to_equity: [0.6, 55], pe_vs_industry: [94, 20], rsi: [null, null], price_drop: [null, null], volume_spike: [null, null] }),
+  ],
 };
 
-const LeanBadge = ({ lean }) => {
-  const s = LEAN_STYLE[lean] || LEAN_STYLE.avoid;
+const scrDefaultCfg = (spec) => {
+  const cfg = { id: spec.id, on: false };
+  Object.entries(spec.params).forEach(([k, p]) => { cfg[k] = p.default; });
+  return cfg;
+};
+
+// Canonical form for dirty comparison / sending: every catalog rule, numbers as numbers.
+const scrNormalize = (catalog, rules) => Object.values(catalog).map((spec) => {
+  const found = rules.find(r => r.id === spec.id);
+  const cfg = found ? { ...scrDefaultCfg(spec), ...found } : scrDefaultCfg(spec);
+  if (spec.id === 'scope') cfg.on = true;
+  Object.keys(spec.params).forEach((k) => {
+    if (spec.id !== 'scope') cfg[k] = typeof cfg[k] === 'string' && cfg[k].trim() !== '' ? Number(cfg[k]) : cfg[k];
+  });
+  return cfg;
+});
+
+const scrPayload = (catalog, rules) => {
+  const norm = scrNormalize(catalog, rules);
+  const bad = norm.some(c => c.id !== 'scope' && Object.keys(catalog[c.id].params).some(k => typeof c[k] !== 'number' || Number.isNaN(c[k])));
+  return bad ? null : norm;
+};
+
+const ScrToggle = ({ value, onChange, label }) => (
+  <button type="button" role="switch" aria-checked={value} aria-label={label} onClick={() => onChange(!value)}
+    style={{ width: 30, height: 16, borderRadius: 999, border: 'none', cursor: 'pointer', flexShrink: 0, position: 'relative',
+      background: value ? 'var(--accent)' : 'var(--border-strong)', transition: 'background 150ms', padding: 0 }}>
+    <span style={{ position: 'absolute', top: 2, left: value ? 16 : 2, width: 12, height: 12, borderRadius: '50%', background: 'white', transition: 'left 150ms', boxShadow: '0 1px 2px rgba(0,0,0,0.2)' }} />
+  </button>
+);
+
+const ScrSegmented = ({ options, value, onChange }) => (
+  <div style={{ display: 'inline-flex', background: 'var(--bg-sunken)', borderRadius: 6, padding: 2, gap: 2 }}>
+    {options.map(o => (
+      <button key={o.id} type="button" onClick={() => onChange(o.id)}
+        style={{ padding: '4px 10px', borderRadius: 4, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+          background: value === o.id ? 'var(--bg-elev)' : 'transparent',
+          color: value === o.id ? 'var(--text)' : 'var(--text-muted)',
+          boxShadow: value === o.id ? '0 1px 2px rgba(0,0,0,0.06)' : 'none' }}>{o.label}</button>
+    ))}
+  </div>
+);
+
+const scrInputStyle = {
+  width: 64, padding: '3px 6px', background: 'var(--bg-sunken)', border: '1px solid var(--border)',
+  borderRadius: 'var(--radius)', color: 'var(--text)', fontSize: 12, fontWeight: 600, textAlign: 'right',
+};
+const scrLinkBtn = { background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent)', fontFamily: 'inherit', fontSize: 12, fontWeight: 600, padding: 0 };
+const scrSubtle = { fontSize: 10, letterSpacing: '0.06em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--text-subtle)' };
+
+// Step for wheel / arrow keys / spinner: 0.1 for small ratios (D/E, P/B, volume ×), else 1.
+const scrStep = (p) => p.step || (((p.unit === 'x' || !p.unit) && p.max <= 20) ? 0.1 : 1);  // days/pts → 1
+
+// Number box: type a value, or hover and scroll the mouse wheel (Shift = 10 steps),
+// or use ↑/↓. Clamped to the rule's min/max.
+const ScrNumInput = ({ value, p, onChange }) => {
+  const ref = React.useRef(null);
+  const step = scrStep(p);
+  const latest = React.useRef({ value, onChange });
+  latest.current = { value, onChange };
+  const bump = React.useCallback((dir, big) => {
+    const cur = parseFloat(latest.current.value);
+    const base = Number.isFinite(cur) ? cur : (p.default ?? p.min ?? 0);
+    const dec = step < 1 ? 1 : 0;
+    let next = +(base + dir * step * (big ? 10 : 1)).toFixed(dec);
+    if (p.min != null) next = Math.max(p.min, next);
+    if (p.max != null) next = Math.min(p.max, next);
+    latest.current.onChange(String(next));
+  }, [step, p.min, p.max, p.default]);
+  React.useEffect(() => {
+    const el = ref.current;
+    // Non-passive so the page does not scroll while adjusting the value.
+    const onWheel = (e) => { e.preventDefault(); bump(e.deltaY < 0 ? 1 : -1, e.shiftKey); };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [bump]);
   return (
-    <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', padding: '2px 7px', borderRadius: 999, color: s.color, border: `1px solid ${s.color}`, opacity: lean === 'avoid' ? 0.7 : 1 }}>
-      {s.label}
-    </span>
+    <input ref={ref} type="number" className="num" value={value} min={p.min} max={p.max} step={step}
+      style={scrInputStyle} title="Type a number, or scroll / ↑↓ to adjust (Shift = ×10)"
+      onKeyDown={e => {
+        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+          e.preventDefault(); bump(e.key === 'ArrowUp' ? 1 : -1, e.shiftKey);
+        }
+      }}
+      onChange={e => onChange(e.target.value === '' ? '' : e.target.value)} />
   );
 };
 
-const PageScreener = ({ setActiveAsset, setPage }) => {
-  const [sector, setSector] = React.useState('All sectors');
-  const [mcapMin, setMcapMin] = React.useState(0);
-  const [peMax, setPeMax] = React.useState(100);
-  const [divMin, setDivMin] = React.useState(0);
-  const [perfMin, setPerfMin] = React.useState(-50);
-  const [sortKey, setSortKey] = React.useState('mcap');
-  const [sortDir, setSortDir] = React.useState('desc');
-  const [universe, setUniverse] = React.useState(SCREENER_DATA);
-  const [scanning, setScanning] = React.useState(false);
-  const [fullRun, setFullRun] = React.useState(false);
-  const [scanPct, setScanPct] = React.useState(0);
-  const [scanCount, setScanCount] = React.useState(0);
-  const [vnMode, setVnMode] = React.useState(false);   // true once a real VN scan has rendered
-  const [vnMeta, setVnMeta] = React.useState(null);    // { runId, startedAt }
-  const TOTAL_UNIVERSE = 10000;
+const ScrRuleRow = ({ spec, cfg, onChange }) => (
+  <div className="row" style={{ gap: 10, padding: '7px 16px', borderTop: '1px solid var(--border)', opacity: cfg.on ? 1 : 0.55 }}>
+    <ScrToggle value={cfg.on} onChange={(on) => onChange({ on })} label={spec.label} />
+    <span style={{ flex: 1, fontSize: 13 }} title={(window.ScrPlain.PLAIN[spec.id] || {}).help || ''}>
+      {(window.ScrPlain.PLAIN[spec.id] || {}).name || spec.label}
+      <span style={{ display: 'block', fontSize: 11, color: 'var(--text-subtle)' }}>{spec.label}</span>
+    </span>
+    {Object.entries(spec.params).map(([k, p]) => (
+      <label key={k} className="row" style={{ gap: 4, fontSize: 11, color: 'var(--text-muted)' }}>
+        <span className="num" style={{ textTransform: 'uppercase' }}>{k}</span>
+        <ScrNumInput value={cfg[k]} p={p} onChange={v => onChange({ [k]: v })} />
+        {p.unit && <span style={{ minWidth: 28 }}>{p.unit}</span>}
+      </label>
+    ))}
+  </div>
+);
 
-  const runMockScreen = () => {
-    setScanning(true);
-    setScanPct(0);
-    setScanCount(0);
-    const started = Date.now();
-    const DURATION = 1400;
-    const tick = setInterval(() => {
-      const t = Math.min(1, (Date.now() - started) / DURATION);
-      const eased = 1 - Math.pow(1 - t, 2);   // ease-out
-      setScanPct(Math.round(eased * 100));
-      setScanCount(Math.round(eased * TOTAL_UNIVERSE));
-      if (t >= 1) {
-        clearInterval(tick);
-        setVnMode(false);
-        setUniverse(buildUniverse(800));
-        setFullRun(true);
-        setScanning(false);
-        window.toast && window.toast('Scanned 10,000 stocks · expanded universe', { type: 'success' });
+// Simple view: one active check as a plain sentence with an ⓘ explanation.
+const ScrPlainRule = ({ id, cfg }) => {
+  const [open, setOpen] = React.useState(false);
+  const P = window.ScrPlain.PLAIN[id] || { name: id, help: '' };
+  return (
+    <div style={{ padding: '8px 16px', borderTop: '1px solid var(--border)' }}>
+      <div className="row" style={{ gap: 8, alignItems: 'baseline' }}>
+        <span style={{ color: 'var(--green, #16a34a)', fontWeight: 700 }}>✓</span>
+        <span style={{ flex: 1 }}>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>{P.name}</span>
+          <span style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>{window.ScrPlain.sentence(id, cfg)}</span>
+          {open && <span style={{ display: 'block', fontSize: 12, color: 'var(--text-subtle)', marginTop: 4 }}>{P.help}</span>}
+        </span>
+        {P.help && <button type="button" onClick={() => setOpen(!open)} aria-label={`What does “${P.name}” mean?`} title={P.help}
+          style={{ ...scrLinkBtn, color: open ? 'var(--accent)' : 'var(--text-subtle)', fontSize: 14 }}>ⓘ</button>}
+      </div>
+    </div>
+  );
+};
+
+const ScrTh = ({ k, sort, onSort, children, left }) => (
+  <th className={left ? '' : 'right'} onClick={() => onSort(k)} style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}>
+    {children}{sort.key === k && <span style={{ marginLeft: 4, color: 'var(--accent)' }}>{sort.dir === 'asc' ? '↑' : '↓'}</span>}
+  </th>
+);
+
+const PageScreener = ({ setActiveAsset, setPage }) => {
+  const api = window.HelixAPI;
+  const [catalog, setCatalog] = React.useState(null);
+  const [strategies, setStrategies] = React.useState([]);
+  const [activeId, setActiveId] = React.useState(null);
+  const [rules, setRules] = React.useState([]);          // working copy
+  const [result, setResult] = React.useState(null);      // last good evaluate response
+  const [loadErr, setLoadErr] = React.useState(null);
+  const [evaluating, setEvaluating] = React.useState(false);
+  const [panelOpen, setPanelOpen] = React.useState(true);
+  const [rstatus, setRstatus] = React.useState(null);  // GET /refresh
+  const [sort, setSort] = React.useState({ key: 'strength', dir: 'desc' });
+  const [showSkipped, setShowSkipped] = React.useState(false);
+  const [advanced, setAdvancedState] = React.useState(() => { try { return localStorage.getItem('scr-advanced') === '1'; } catch (e) { return false; } });
+  const setAdvanced = (v) => { setAdvancedState(v); try { localStorage.setItem('scr-advanced', v ? '1' : '0'); } catch (e) { /* ignore */ } };
+  const SP = window.ScrPlain;
+  const lastDone = React.useRef('');
+  const seq = React.useRef(0);
+  const timer = React.useRef(null);
+
+  const toast = (msg, type = 'info') => window.toast && window.toast(msg, { type });
+  const active = strategies.find(s => s.id === activeId) || null;
+  const dirty = !!(catalog && active) &&
+    JSON.stringify(scrNormalize(catalog, rules)) !== JSON.stringify(scrNormalize(catalog, active.rules));
+  const isStarter = !!(active && active.starter_key);
+  // Easy / Normal / Strict: Normal = the strategy as saved; the others move every number one step.
+  const level = catalog && active ? SP.detectLevel(catalog, active.rules, rules) : 'normal';
+
+  // Debounced evaluation (250 ms). seq is bumped when an evaluate is SCHEDULED, so any older
+  // in-flight response (or pending timer) can never paint over newer rules. Failures keep the last good result.
+  const evaluate = (nextRules, strategyId, immediate = false, cat = catalog) => {
+    clearTimeout(timer.current);
+    const mine = ++seq.current;
+    const run = async () => {
+      const payload = scrPayload(cat, nextRules);
+      if (!payload) { setEvaluating(false); return; }    // a field is blank; wait for a number
+      setEvaluating(true);
+      try {
+        const res = await api.screenerEvaluate(strategyId ?? null, payload);
+        if (mine === seq.current) setResult(res);
+      } catch (e) {
+        if (mine === seq.current) toast(e.message || 'Evaluate failed', 'error');
+      } finally {
+        if (mine === seq.current) setEvaluating(false);
       }
-    }, 60);
+    };
+    if (immediate) run(); else timer.current = setTimeout(run, 250);
   };
 
-  const runVnScan = async () => {
-    setScanning(true);
+  // Latest values for async callbacks (polling) without stale closures.
+  const latest = React.useRef({});
+  latest.current = { rules, activeId, dirty, catalog };
+
+  // Refresh polling: every 5 s only while a refresh runs or is queued.
+  const busy = !!(rstatus && (rstatus.running || (rstatus.queued || []).length));
+  React.useEffect(() => {
+    if (!busy) return undefined;
+    const iv = setInterval(async () => {
+      try {
+        const st = await api.screenerRefreshStatus();
+        const prev = lastDone.current;
+        lastDone.current = `${st.running}:${st.kind}:${st.done}`;
+        setRstatus(st);
+        if (lastDone.current !== prev) {
+          const L = latest.current;
+          evaluate(L.rules, L.dirty ? null : L.activeId, true, L.catalog);
+        }
+      } catch (e) { /* transient; next tick retries */ }
+    }, 5000);
+    return () => clearInterval(iv);
+  }, [busy]);
+
+  const requestRefresh = async (kind) => {
     try {
-      let data = await window.HelixAPI.scanLatest();
-      if (!data?.results?.length) {
-        await window.HelixAPI.scanRun(30);   // no prior run yet — do a bounded on-demand scan
-        data = await window.HelixAPI.scanLatest();
-      }
-      setVnMode(true);
-      setVnMeta({ runId: data.run_id, startedAt: data.started_at });
-      setUniverse(data.results);
-      setFullRun(true);
-      window.toast && window.toast(`VN scan loaded · ${data.results.length} symbols · unverified`, { type: 'success' });
+      const st = await api.screenerRefresh(kind);
+      lastDone.current = `${st.running}:${st.kind}:${st.done}`;
+      setRstatus(st);
     } catch (e) {
-      window.toast && window.toast('VN scan failed — check the backend', { type: 'error' });
-    } finally {
-      setScanning(false);
+      toast(e.status === 409 ? 'Already refreshing' : (e.message || 'Refresh failed'), e.status === 409 ? 'info' : 'error');
+      if (e.status === 409) {
+        try { const st = await api.screenerRefreshStatus(); lastDone.current = `${st.running}:${st.kind}:${st.done}`; setRstatus(st); } catch (e2) { /* ignore */ }
+      }
     }
   };
 
-  const runFullScreen = () => {
-    if (scanning) return;
-    if (window.HelixAPI?.live) runVnScan();
-    else runMockScreen();
+  // Mount: catalog + strategies + last used strategy.
+  React.useEffect(() => {
+    let dead = false;
+    (async () => {
+      try {
+        const [rulesRes, strats, state] = await Promise.all([api.screenerRules(), api.screenerStrategies(), api.screenerState()]);
+        api.screenerRefreshStatus().then(st => { if (!dead) { lastDone.current = `${st.running}:${st.kind}:${st.done}`; setRstatus(st); } }).catch(() => {});
+        if (dead) return;
+        const pick = strats.find(s => s.id === state?.last_strategy_id) || strats.find(s => s.starter_key === 'quality') || strats[0];
+        setCatalog(rulesRes.catalog);
+        setStrategies(strats);
+        if (pick) {
+          setActiveId(pick.id);
+          setRules(pick.rules);
+          evaluate(pick.rules, pick.id, true, rulesRes.catalog);
+        }
+      } catch (e) {
+        if (!dead) setLoadErr(e.message || 'Could not load the screener');
+      }
+    })();
+    return () => { dead = true; clearTimeout(timer.current); };
+  }, []);
+
+  const selectStrategy = async (s) => {
+    if (s.id === activeId) return;
+    if (dirty && !(await window.askConfirm({ title: 'Discard changes', message: `Discard your unsaved changes to “${active.name}”?`, confirmText: 'Discard', danger: true }))) return;
+    setActiveId(s.id);
+    setRules(s.rules);
+    evaluate(s.rules, s.id, true);
   };
 
-  const filtered = vnMode
-    ? [...universe].sort((a, b) => a.rank - b.rank)
-    : universe.filter(r =>
-        (sector === 'All sectors' || r.sector === sector) &&
-        r.mcap >= mcapMin &&
-        r.pe <= peMax &&
-        r.divYield >= divMin &&
-        r.perf1y >= perfMin
-      ).sort((a, b) => {
-        const m = sortDir === 'asc' ? 1 : -1;
-        return (a[sortKey] - b[sortKey]) * m;
-      });
-
-  const setSort = (key) => {
-    if (sortKey === key) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
-    else { setSortKey(key); setSortDir('desc'); }
+  const editRule = (id, patch) => {
+    const spec = catalog[id];
+    const next = rules.some(r => r.id === id)
+      ? rules.map(r => r.id === id ? { ...r, ...patch } : r)
+      : [...rules, { ...scrDefaultCfg(spec), ...patch }];
+    setRules(next);
+    evaluate(next, null);   // modified rules are not the stored strategy — don't record them as last-used
   };
 
-  // ── Saved presets (localStorage) ───────────────────────────
-  const PRESETS_KEY = 'helix_screener_presets_v1';
-  const [presets, setPresets] = React.useState(() => {
-    try { return JSON.parse(localStorage.getItem(PRESETS_KEY) || '[]'); } catch { return []; }
-  });
-  const persistPresets = (next) => { setPresets(next); localStorage.setItem(PRESETS_KEY, JSON.stringify(next)); };
+  const setLevel = (lv) => {
+    if (!active) return;
+    const next = SP.applyLevel(catalog, active.rules, lv);
+    setRules(next);
+    evaluate(next, lv === 'normal' ? active.id : null, true);
+  };
 
-  const savePreset = async () => {
-    const name = await window.askPrompt({ title: 'Save screen preset', label: 'Preset name', value: `Screen ${presets.length + 1}`, confirmText: 'Save' });
+  const refreshList = async () => {
+    const strats = await api.screenerStrategies();
+    setStrategies(strats);
+    return strats;
+  };
+
+  const save = async () => {
+    const payload = scrPayload(catalog, rules);
+    if (!payload) return toast('Fill in every number first', 'error');
+    try {
+      const s = await api.screenerUpdateStrategy(activeId, { rules: payload });
+      await refreshList();
+      setRules(s.rules);
+      toast(`Saved “${s.name}”`, 'success');
+      evaluate(s.rules, s.id, true);
+    } catch (e) { toast(e.message || 'Save failed', 'error'); }
+  };
+
+  const saveAsNew = async () => {
+    const payload = scrPayload(catalog, rules);
+    if (!payload) return toast('Fill in every number first', 'error');
+    const name = await window.askPrompt({ title: 'New strategy', label: 'Name', placeholder: 'e.g. My value screen', confirmText: 'Create' });
     if (!name) return;
-    const preset = { id: 'p_' + Date.now(), name, sector, mcapMin, peMax, divMin, perfMin, sortKey, sortDir };
-    persistPresets([preset, ...presets.filter(p => p.name !== name)]);
-    window.toast && window.toast(`Saved preset “${name}”`, { type: 'success' });
+    try {
+      const s = await api.screenerCreateStrategy(name, payload);
+      await refreshList();
+      setActiveId(s.id); setRules(s.rules);
+      toast(`Created “${s.name}”`, 'success');
+      evaluate(s.rules, s.id, true);
+    } catch (e) { toast(e.message || 'Create failed', 'error'); }
   };
 
-  const applyPreset = (p) => {
-    setSector(p.sector); setMcapMin(p.mcapMin); setPeMax(p.peMax);
-    setDivMin(p.divMin); setPerfMin(p.perfMin);
-    setSortKey(p.sortKey || 'mcap'); setSortDir(p.sortDir || 'desc');
-    window.toast && window.toast(`Applied “${p.name}”`, { type: 'info' });
+  const discard = () => { setRules(active.rules); evaluate(active.rules, active.id, true); };
+
+  const resetStarter = async () => {
+    try {
+      const s = await api.screenerResetStrategy(activeId);
+      await refreshList();
+      setRules(s.rules);
+      toast(`Reset “${s.name}” to default`, 'success');
+      evaluate(s.rules, s.id, true);
+    } catch (e) { toast(e.message || 'Reset failed', 'error'); }
   };
 
-  const deletePreset = (id) => persistPresets(presets.filter(p => p.id !== id));
+  const rename = async () => {
+    const name = await window.askPrompt({ title: 'Rename strategy', label: 'Name', value: active.name, confirmText: 'Rename' });
+    if (!name || name === active.name) return;
+    try {
+      await api.screenerUpdateStrategy(activeId, { name });
+      await refreshList();
+      toast(`Renamed to “${name}”`, 'success');
+    } catch (e) { toast(e.message || 'Rename failed', 'error'); }
+  };
 
-  const exportResultsCSV = () => {
-    const rows = vnMode
-      ? [['Ticker', 'Rank', 'Lean', 'Total Score', 'Fundamentals', 'Valuation', 'Technical'].join(','),
-         ...filtered.map(r => [r.symbol, r.rank, r.lean, r.total_score,
-                                r.scores?.fundamentals ?? '', r.scores?.valuation ?? '', r.scores?.technical ?? ''].join(','))]
-      : [['Ticker', 'Name', 'Sector', 'Market Cap ($B)', 'P/E', 'Div Yield %', '3M %', '1Y %'].join(','),
-         ...filtered.map(r => [r.sym, `"${r.name}"`, `"${r.sector}"`, r.mcap, r.pe, r.divYield, r.perf3m, r.perf1y].join(','))];
-    const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
+  const remove = async () => {
+    if (!await window.askConfirm({ title: 'Delete strategy', message: `Delete “${active.name}”? This can't be undone.`, confirmText: 'Delete', danger: true })) return;
+    try {
+      await api.screenerDeleteStrategy(activeId);
+      const strats = await refreshList();
+      const fallback = strats.find(s => s.starter_key === 'quality') || strats[0];
+      setActiveId(fallback.id); setRules(fallback.rules);
+      toast('Strategy deleted', 'success');
+      evaluate(fallback.rules, fallback.id, true);
+    } catch (e) { toast(e.message || 'Delete failed', 'error'); }
+  };
+
+  const scopeCfg = catalog ? scrNormalize(catalog, rules).find(c => c.id === 'scope') : null;
+  const banks = scopeCfg ? scopeCfg.banks : 'any';
+  const exchanges = (scopeCfg && scopeCfg.exchanges) || [];
+  const flagged = scopeCfg ? (scopeCfg.flagged || 'exclude') : 'exclude';
+  const visible = (spec) => !(spec.applies_to === 'bank' && (banks === 'exclude' || banks === 'no_financials')) && !(spec.applies_to === 'nonbank' && banks === 'only');
+
+  const offline = !!loadErr;
+  const shown = offline ? SAMPLE_RESULT : result;
+  const fmtAge = (iso) => iso ? new Date(iso).toLocaleString() : 'never';
+  const fresh = (shown && shown.freshness) || {};
+  const pAsOf = rstatus ? rstatus.prices_as_of : fresh.prices_as_of;
+  const fAsOf = rstatus ? rstatus.financials_as_of : fresh.financials_as_of;
+  const kindWord = rstatus && rstatus.kind === 'financials' ? 'financials' : 'prices';
+
+  // ── Table model ───────────────────────────────────────────
+  const rows = shown ? shown.rows : [];
+  const goodIds = shown && rows.length
+    ? Object.keys(SCR_COLS).filter(id => !SCR_OVER.includes(id) && rows[0].rules[id]) : [];
+  const overIds = shown && rows.length ? SCR_OVER.filter(id => rows[0].rules[id]) : [];
+  const dDays = (rules.find(r => r.id === 'price_drop') || {}).d || 5;
+  const headerOf = (id) => (SP.PLAIN[id] ? SP.PLAIN[id].short : SCR_COLS[id][0]);
+  const sortVal = (r, key) => key === 'strength' ? r.strength : key === 'symbol' ? r.symbol : (r.rules[key] && !SP.isNotApplicable(r.rules[key]) ? r.rules[key].value : null);
+  const sortRows = (list) => [...list].sort((x, y) => {
+    const a = sortVal(x, sort.key), b = sortVal(y, sort.key);
+    if (a === null || a === undefined) return (b === null || b === undefined) ? 0 : 1;   // blanks last
+    if (b === null || b === undefined) return -1;
+    const c = typeof a === 'string' ? a.localeCompare(b) : a - b;
+    return sort.dir === 'asc' ? c : -c;
+  });
+  const hot = sortRows(rows.filter(r => r.oversold === 'yes'));
+  const rest = sortRows(rows.filter(r => r.oversold !== 'yes'));
+  const clickSort = (key) => setSort(sort.key === key ? { key, dir: sort.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: key === 'symbol' ? 'asc' : 'desc' });
+  const colSpan = 3 + goodIds.length + overIds.length;
+  const labelOf = (id) => (SP.PLAIN[id] ? SP.PLAIN[id].name : catalog && catalog[id] ? catalog[id].label : id);
+  const tipOf = (id) => (SP.PLAIN[id] ? `${SP.PLAIN[id].name} — ${SP.PLAIN[id].help}` : labelOf(id));
+  const ruleCfg = (id) => (catalog ? scrNormalize(catalog, rules).find(c => c.id === id) : null);
+  // Row tooltip: why this ticker passed, in plain words.
+  const whyOf = (r) => ['Why it passed:', ...goodIds.map((id) => {
+    const c = r.rules[id];
+    if (!c) return null;
+    if (SP.isNotApplicable(c)) return `– ${labelOf(id)}: ${SP.NA_TIP.toLowerCase()}`;
+    const how = c.score === null || c.score === undefined ? '' : c.score >= 50 ? ' (well above the bar)' : ' (just above the bar)';
+    return `✓ ${labelOf(id)}: ${scrFmt(id, c.value)}${how}`;
+  }).filter(Boolean), ...(r.oversold === 'yes' ? ['⚡ Price just dropped hard — possible bounce'] : [])].join('\n');
+
+  const cellClass = (cell) => !cell || cell.score === null || cell.score === undefined ? '' : cell.score >= 66 ? 'scr-s3' : cell.score >= 33 ? 'scr-s2' : '';
+  // Green dot = well above the bar, amber = just above it.
+  const dot = (cell) => (!cell || cell.score === null || cell.score === undefined ? null
+    : <span title={cell.score >= 50 ? 'Well above the bar' : 'Just above the bar'}
+        style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', marginRight: 5, verticalAlign: 'middle',
+          background: cell.score >= 50 ? 'var(--green, #16a34a)' : 'var(--amber, #d97706)' }} />);
+  // "n/a" = rule not applicable to this company type: neutral, neither a fail nor missing data.
+  const naCell = (id) => <td key={id} className="right scr-na" title={`${labelOf(id)}: ${SP.NA_TIP.toLowerCase()}`}>n/a</td>;
+  let rank = 0;
+  const renderRow = (r, isHot) => {
+    rank += 1;
+    return (
+      <tr key={r.symbol} className={isHot ? 'scr-hot' : ''} style={{ cursor: offline ? 'default' : 'pointer' }} title={whyOf(r)}
+        onClick={() => { if (!offline) { setActiveAsset && setActiveAsset('VN:' + r.symbol); setPage && setPage('detail'); } }}>
+        <td className="right num" style={{ color: 'var(--text-subtle)' }}>{rank}</td>
+        <td>
+          <span className="ticker">{r.symbol}</span>
+          {r.flag && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, padding: '1px 5px', borderRadius: 4, background: 'var(--red-soft, rgba(220,38,38,0.12))', color: 'var(--red, #dc2626)' }}
+            title="Exchange status (HOSE/HNX warning, control, restriction or suspension)">{SCR_FLAG_LABEL[r.flag] || r.flag}</span>}
+          {r.note_latest_at && <span style={{ marginLeft: 6 }} title={`Last note ${new Date(r.note_latest_at).toLocaleDateString()}`}>📝</span>}
+          {r.oversold === 'yes' && <span style={{ color: 'var(--amber, #d97706)', fontWeight: 700, marginLeft: 6 }} title="Price just dropped hard — possible bounce">⚡</span>}
+          {r.oversold === 'missing' && <span style={{ color: 'var(--text-subtle)', fontSize: 11, marginLeft: 6 }}>no recent price data</span>}
+        </td>
+        <td>
+          <span style={{ display: 'inline-block', width: 54, height: 6, borderRadius: 3, background: 'var(--bg-sunken)', verticalAlign: 'middle', marginRight: 6, overflow: 'hidden' }}>
+            <i style={{ display: 'block', height: '100%', width: `${Math.max(0, Math.min(100, r.strength))}%`, background: 'var(--green, #16a34a)' }} />
+          </span>
+          <span className="num">{r.strength}</span>
+        </td>
+        {goodIds.map(id => { const c = r.rules[id]; if (SP.isNotApplicable(c)) return naCell(id); return <td key={id} className={`right num ${cellClass(c)}`}>{dot(c)}{scrFmt(id, c ? c.value : null)}</td>; })}
+        {overIds.map(id => { const c = r.rules[id]; if (SP.isNotApplicable(c)) return naCell(id); return <td key={id} className="right num" style={r.oversold === 'yes' ? { color: 'var(--amber, #d97706)', fontWeight: 700 } : undefined}>{scrFmt(id, c ? c.value : null)}</td>; })}
+      </tr>
+    );
+  };
+
+  const exportCSV = () => {
+    const ids = [...goodIds, ...overIds];
+    const q = v => /[",\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : v;
+    const out = [['#', 'Ticker', 'Oversold', 'Strength', ...ids.map(headerOf)].map(q).join(',')];
+    [...hot, ...rest].forEach((r, i) => out.push([i + 1, r.symbol, r.oversold, r.strength, ...ids.map(id => { if (SP.isNotApplicable(r.rules[id])) return 'n/a'; const v = r.rules[id] ? r.rules[id].value : null; return v === null || v === undefined ? '' : v; })].map(q).join(',')));
+    const url = URL.createObjectURL(new Blob([out.join('\n')], { type: 'text/csv' }));
     const a = document.createElement('a');
     a.href = url; a.download = 'screener_results.csv'; a.click();
     URL.revokeObjectURL(url);
-    window.toast && window.toast(`Exported ${filtered.length} matches`, { type: 'success' });
+    toast(`Exported ${rows.length} rows`, 'success');
   };
+
+  const funnelBox = { border: '1px solid var(--border)', borderRadius: 6, padding: '4px 10px', fontSize: 12 };
+  const emptyMarket = shown && shown.counts.universe === 0;
+
+  const chip = (s) => (
+    <button key={s.id} type="button" onClick={() => selectStrategy(s)}
+      style={{ padding: '5px 12px', borderRadius: 999, fontSize: 12, fontFamily: 'inherit', cursor: 'pointer', fontWeight: 600,
+        border: `1px solid ${s.id === activeId ? 'var(--accent)' : 'var(--border)'}`,
+        background: s.id === activeId ? 'var(--accent)' : 'var(--bg-elev)',
+        color: s.id === activeId ? 'white' : 'var(--text)' }}
+      title={SP.STRATEGY_DESC[s.starter_key] || 'Your own strategy'}>{s.name}</button>
+  );
+  const starters = strategies.filter(s => s.starter_key);
+  const mine = strategies.filter(s => !s.starter_key);
 
   return (
     <div className="page">
       <div className="page-header">
         <div>
           <h1 className="page-title">Stock screener.</h1>
-          <p className="page-sub">Filter the market by what matters to you</p>
+          <p className="page-sub">Pick a strategy, tweak the rules, see who passes</p>
         </div>
         <div className="row">
-          <button className="btn" onClick={savePreset}>Save preset</button>
-          <button className="btn btn-primary" onClick={runFullScreen} disabled={scanning}>
-            {scanning
-              ? (window.HelixAPI?.live ? 'Scanning VN market…' : `Scanning… ${scanPct}%`)
-              : fullRun ? 'Re-run full screen ↻'
-              : (window.HelixAPI?.live ? 'Run VN market scan →' : 'Run on 10,000 stocks →')}
-          </button>
+          <button className="btn" disabled={offline || busy} onClick={() => requestRefresh('financials')}>Refresh financials</button>
+          <button className="btn btn-primary" disabled={offline || busy} onClick={() => requestRefresh('prices')}>Refresh prices ↻</button>
         </div>
       </div>
 
-      {presets.length > 0 && (
-        <div className="row" style={{ gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 11, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Presets</span>
-          {presets.map(p => (
-            <span key={p.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 6px 5px 12px', background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 999, fontSize: 12 }}>
-              <button onClick={() => applyPreset(p)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12, padding: 0 }}>{p.name}</button>
-              <button onClick={() => deletePreset(p.id)} title="Delete preset" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)', display: 'grid', placeItems: 'center', padding: 2, borderRadius: '50%' }}>
-                <Icon name="close" size={10} />
-              </button>
-            </span>
+      {offline && (
+        <div className="row" style={{ gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+          <span style={scrSubtle}>Strategy</span>
+          {SCR_NAMES.map((n, i) => (
+            <span key={n} style={{ padding: '5px 12px', borderRadius: 999, fontSize: 12, fontWeight: 600, opacity: 0.6, border: `1px solid ${i === 0 ? 'var(--accent)' : 'var(--border)'}`, background: i === 0 ? 'var(--accent)' : 'var(--bg-elev)', color: i === 0 ? 'white' : 'var(--text)' }}>{n}</span>
           ))}
+          <span title={loadErr} style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', padding: '2px 7px', borderRadius: 999, background: 'var(--bg-sunken)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>Sample data — backend offline</span>
         </div>
       )}
 
-      {/* Filters card — only meaningful for the mock US universe */}
-      {!vnMode && (
-        <div className="card" style={{ marginBottom: 20 }}>
-          <div className="card-header">
-            <h3 className="card-title">Filters</h3>
-            <button className="card-action" onClick={() => { setSector('All sectors'); setMcapMin(0); setPeMax(100); setDivMin(0); setPerfMin(-50); }}>Reset</button>
+      {catalog && (
+        <>
+          <div className="row" style={{ gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+            <span style={scrSubtle}>Strategy</span>
+            {starters.map(chip)}
+            {mine.map(chip)}
+            <button type="button" onClick={saveAsNew}
+              style={{ padding: '5px 12px', borderRadius: 999, fontSize: 12, fontFamily: 'inherit', cursor: 'pointer', fontWeight: 600, border: '1px dashed var(--border-strong)', background: 'transparent', color: 'var(--text-muted)' }}>+ My own</button>
           </div>
-          <div className="card-body" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 16 }}>
-            <FilterField label="Sector">
-              <select value={sector} onChange={e => setSector(e.target.value)} style={selectStyle}>
-                {SECTORS.map(s => <option key={s}>{s}</option>)}
-              </select>
-            </FilterField>
-            <FilterRange label="Market Cap (min, $B)" value={mcapMin} setValue={setMcapMin} min={0} max={4000} step={50} suffix="B" />
-            <FilterRange label="P/E Ratio (max)" value={peMax} setValue={setPeMax} min={5} max={200} step={5} />
-            <FilterRange label="Div Yield (min %)" value={divMin} setValue={setDivMin} min={0} max={5} step={0.1} suffix="%" />
-            <FilterRange label="1Y Performance (min %)" value={perfMin} setValue={setPerfMin} min={-50} max={200} step={5} suffix="%" />
-          </div>
-        </div>
-      )}
-
-      {/* Results */}
-      <div className="card" style={{ position: 'relative' }}>
-        {scanning && !vnMode && (
-          <div style={{
-            position: 'absolute', inset: 0, zIndex: 5, borderRadius: 'var(--radius-lg)',
-            background: 'color-mix(in srgb, var(--bg-elev) 85%, transparent)',
-            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12,
-          }}>
-            <div className="num" style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-0.02em' }}>
-              {scanCount.toLocaleString()} <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-muted)' }}>screened</span>
-            </div>
-            <div style={{ width: 220, height: 4, background: 'var(--bg-sunken)', borderRadius: 2, overflow: 'hidden' }}>
-              <div style={{ height: '100%', width: `${scanPct}%`, background: 'var(--accent)', transition: 'width 60ms linear' }} />
-            </div>
-          </div>
-        )}
-        <div className="card-header">
-          <div className="row" style={{ gap: 8 }}>
-            <h3 className="card-title">{filtered.length.toLocaleString()} matches</h3>
-            {vnMode && (
-              <span title="Broad-scan data is third-party (vnstock) and unverified — for screening only. Deep-dive a symbol to verify." style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', padding: '2px 7px', borderRadius: 999, background: 'var(--bg-sunken)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
-                UNVERIFIED
-              </span>
-            )}
-          </div>
-          <div className="row">
-            <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>
-              {vnMode
-                ? `run #${vnMeta?.runId} · ${vnMeta?.startedAt ? new Date(vnMeta.startedAt).toLocaleString() : ''}`
-                : `of ${universe.length.toLocaleString()} screened · sorted by ${sortKey} · ${sortDir}`}
-            </span>
-            <button className="btn" onClick={exportResultsCSV}><Icon name="download" size={12} /> Export</button>
-          </div>
-        </div>
-        <div className="card-body flush">
-          <table className="table">
-            <thead>
-              {vnMode ? (
-                <tr>
-                  <th className="right">#</th>
-                  <th>Ticker</th>
-                  <th>Lean</th>
-                  <th className="right">Score</th>
-                  <th className="right">Fund.</th>
-                  <th className="right">Valuation</th>
-                  <th className="right">Technical</th>
-                </tr>
-              ) : (
-                <tr>
-                  <th>Ticker</th>
-                  <th>Name</th>
-                  <th>Sector</th>
-                  <SortHeader label="Mkt Cap" k="mcap" sk={sortKey} sd={sortDir} onClick={() => setSort('mcap')} />
-                  <SortHeader label="P/E" k="pe" sk={sortKey} sd={sortDir} onClick={() => setSort('pe')} />
-                  <SortHeader label="Div Yield" k="divYield" sk={sortKey} sd={sortDir} onClick={() => setSort('divYield')} />
-                  <SortHeader label="3M" k="perf3m" sk={sortKey} sd={sortDir} onClick={() => setSort('perf3m')} />
-                  <SortHeader label="1Y" k="perf1y" sk={sortKey} sd={sortDir} onClick={() => setSort('perf1y')} />
-                </tr>
-              )}
-            </thead>
-            <tbody>
-              {vnMode ? filtered.slice(0, 100).map(r => (
-                <tr key={r.symbol} onClick={() => { setActiveAsset(r.symbol); setPage('detail'); }}>
-                  <td className="right num" style={{ color: 'var(--text-subtle)' }}>{r.rank}</td>
-                  <td><span className="ticker">{r.symbol}</span></td>
-                  <td><LeanBadge lean={r.lean} /></td>
-                  <td className="right num" style={{ fontWeight: 700 }}>{r.total_score.toFixed(1)}</td>
-                  <td className="right num">{(r.scores?.fundamentals ?? 0).toFixed(0)}</td>
-                  <td className="right num">{(r.scores?.valuation ?? 0).toFixed(0)}</td>
-                  <td className="right num">{(r.scores?.technical ?? 0).toFixed(0)}</td>
-                </tr>
-              )) : filtered.slice(0, 100).map(r => (
-                <tr key={r.sym} onClick={() => { setActiveAsset(r.sym); setPage('detail'); }}>
-                  <td><span className="ticker">{r.sym}</span></td>
-                  <td style={{ color: 'var(--text-muted)' }}>{r.name}</td>
-                  <td>
-                    <span style={{ fontSize: 11, padding: '2px 6px', background: 'var(--bg-sunken)', borderRadius: 3, color: 'var(--text-muted)' }}>{r.sector}</span>
-                  </td>
-                  <td className="right num">${r.mcap >= 1000 ? (r.mcap / 1000).toFixed(2) + 'T' : r.mcap + 'B'}</td>
-                  <td className="right num">{r.pe.toFixed(1)}</td>
-                  <td className="right num" style={{ color: r.divYield > 0 ? 'var(--text)' : 'var(--text-subtle)' }}>{r.divYield.toFixed(2)}%</td>
-                  <td className="right"><Pill value={r.perf3m} /></td>
-                  <td className="right"><Pill value={r.perf1y} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {filtered.length > 100 && (
-            <div style={{ padding: '12px 16px', fontSize: 12, color: 'var(--text-subtle)', textAlign: 'center', borderTop: '1px solid var(--border)' }}>
-              Showing first 100 of {filtered.length.toLocaleString()} matches{vnMode ? '' : ' · tighten filters or Export to see all'}
+          {active && (
+            <div style={{ marginTop: -8, marginBottom: 16, fontSize: 13, color: 'var(--text-muted)' }}>
+              <b style={{ color: 'var(--text)' }}>{active.name}:</b> {SP.STRATEGY_DESC[active.starter_key] || 'Your own strategy'}
             </div>
           )}
-        </div>
-      </div>
+
+          <div className="card" style={{ marginBottom: 20 }}>
+            <div className="card-header">
+              <h3 className="card-title">{advanced ? 'Advanced rules' : 'What we look for'}{active ? ` — ${active.name}` : ''}</h3>
+              <div className="row" style={{ gap: 12 }}>
+                {dirty && <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)' }}>Modified</span>}
+                {dirty && <button style={scrLinkBtn} onClick={save}>Save</button>}
+                {dirty && <button style={scrLinkBtn} onClick={saveAsNew}>Save as new</button>}
+                {dirty && <button style={scrLinkBtn} onClick={discard}>Discard</button>}
+                {isStarter && <button style={scrLinkBtn} onClick={resetStarter}>Reset to default</button>}
+                {active && !isStarter && <button style={scrLinkBtn} onClick={rename}>Rename</button>}
+                {active && !isStarter && <button style={{ ...scrLinkBtn, color: 'var(--red, #dc2626)' }} onClick={remove}>Delete</button>}
+                <button className="card-action" onClick={() => setAdvanced(!advanced)} title="Show every rule and its exact numbers">{advanced ? 'Simple view' : 'Advanced ⚙'}</button>
+                <button className="card-action" onClick={() => setPanelOpen(!panelOpen)}>{panelOpen ? 'Collapse ▴' : 'Expand ▾'}</button>
+              </div>
+            </div>
+            {panelOpen && !advanced && (
+              <div className="card-body flush">
+                <div className="row" style={{ gap: 10, padding: '12px 16px', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>How picky?</span>
+                  {level === 'custom' && <span style={{ fontSize: 11, color: 'var(--text-subtle)' }} title="You changed numbers in Advanced">Custom numbers</span>}
+                  <ScrSegmented value={level} onChange={setLevel}
+                    options={SP.LEVELS.map(id => ({ id, label: SP.LEVEL_LABEL[id] }))} />
+                </div>
+                <div style={{ padding: '0 16px 10px', fontSize: 12, color: 'var(--text-subtle)' }}>
+                  Easy shows more stocks, Strict shows only the best. {SP.scopeSummary(scopeCfg)}.
+                </div>
+                <div style={{ ...scrSubtle, padding: '10px 16px 4px', borderTop: '1px solid var(--border)' }}>A stock must pass every check</div>
+                {Object.values(catalog).filter(sp => sp.stage === 'good' && visible(sp) && (ruleCfg(sp.id) || {}).on).map(sp => (
+                  <ScrPlainRule key={sp.id} id={sp.id} cfg={ruleCfg(sp.id)} />
+                ))}
+                {SCR_OVER.some(id => (ruleCfg(id) || {}).on) && (
+                  <>
+                    <div style={{ ...scrSubtle, padding: '10px 16px 4px', borderTop: '1px solid var(--border)' }}>⚡ Bounce signal — marks passing stocks whose price just dropped hard</div>
+                    {SCR_OVER.filter(id => (ruleCfg(id) || {}).on).map(id => <ScrPlainRule key={id} id={id} cfg={ruleCfg(id)} />)}
+                  </>
+                )}
+              </div>
+            )}
+            {panelOpen && advanced && (
+              <div className="card-body flush">
+                <div className="row" style={{ gap: 10, padding: '10px 16px' }}>
+                  <span style={{ ...scrSubtle, flex: 1 }}>Scope · banks</span>
+                  <ScrSegmented value={banks} onChange={(v) => editRule('scope', { banks: v })}
+                    options={Object.entries(SCR_BANK_OPTS).filter(([k]) => catalog.scope.params.banks.options.includes(k)).map(([id, label]) => ({ id, label }))} />
+                </div>
+                {catalog.scope.params.exchanges && (
+                  <div className="row" style={{ gap: 10, padding: '0 16px 10px' }}>
+                    <span style={{ ...scrSubtle, flex: 1 }} title="None selected = all exchanges">Scope · exchanges</span>
+                    <div style={{ display: 'inline-flex', gap: 4 }}>
+                      {SCR_EXCHANGES.map(ex => {
+                        const on = exchanges.includes(ex);
+                        return (
+                          <button key={ex} type="button" aria-pressed={on}
+                            onClick={() => editRule('scope', { exchanges: on ? exchanges.filter(e => e !== ex) : [...exchanges, ex] })}
+                            style={{ padding: '4px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+                              border: '1px solid ' + (on ? 'var(--accent)' : 'var(--border)'),
+                              background: on ? 'var(--accent-soft, var(--bg-sunken))' : 'transparent',
+                              color: on ? 'var(--accent)' : 'var(--text-muted)' }}>{ex}</button>
+                        );
+                      })}
+                      {exchanges.length === 0 && <span style={{ fontSize: 11, color: 'var(--text-subtle)', alignSelf: 'center', marginLeft: 4 }}>all</span>}
+                    </div>
+                  </div>
+                )}
+                {catalog.scope.params.flagged && (
+                  <div className="row" style={{ gap: 10, padding: '0 16px 10px' }}>
+                    <ScrToggle value={flagged === 'exclude'} label="Hide warned / controlled stocks"
+                      onChange={(on) => editRule('scope', { flagged: on ? 'exclude' : 'include' })} />
+                    <span style={{ flex: 1, fontSize: 13 }}>Hide stocks under exchange warning, control, restriction or suspension</span>
+                  </div>
+                )}
+                {SCR_STAGES.map(stage => (
+                  <div key={stage.id}>
+                    <div style={{ ...scrSubtle, padding: '10px 16px 4px', borderTop: '1px solid var(--border)' }}>{stage.title}</div>
+                    {Object.values(catalog).filter(sp => sp.stage === stage.id && visible(sp)).map(sp => {
+                      const cfg = scrNormalize(catalog, rules).find(c => c.id === sp.id);
+                      const raw = rules.find(r => r.id === sp.id);
+                      const shownCfg = raw ? { ...cfg, ...Object.fromEntries(Object.keys(sp.params).map(k => [k, raw[k]])) } : cfg;
+                      return <ScrRuleRow key={sp.id} spec={sp} cfg={shownCfg} onChange={(patch) => editRule(sp.id, patch)} />;
+                    })}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {!shown && catalog && !evaluating && (
+        <div className="card"><div className="card-body" style={{ color: 'var(--text-muted)', fontSize: 13 }}>
+          Could not evaluate the rules. <button type="button" style={scrLinkBtn} onClick={() => evaluate(rules, dirty ? null : activeId, true)}>Retry</button>
+        </div></div>
+      )}
+
+      {shown && (
+        <>
+          <div className="row" style={{ gap: 6, marginBottom: 8, flexWrap: 'wrap', fontSize: 11, color: 'var(--text-subtle)' }}>
+            <span>Prices as of {fmtAge(pAsOf)} · financials as of {fmtAge(fAsOf)}</span>
+            <span>·</span>
+            <span title="Broad-scan data is third-party (vnstock) and unverified — for screening only. Deep-dive a symbol to verify." style={{ fontWeight: 700, letterSpacing: '0.06em' }}>UNVERIFIED</span>
+            {rstatus && rstatus.running && <span>· {rstatus.total > 0 ? `Refreshing ${kindWord} ${rstatus.done.toLocaleString()} / ${rstatus.total.toLocaleString()}…` : `Refreshing ${kindWord}…`}</span>}
+            {rstatus && rstatus.last_error &&<span style={{ opacity: 0.7 }}>· last error: {rstatus.last_error}</span>}
+            {evaluating && <span>· evaluating…</span>}
+          </div>
+
+          <div className="row" style={{ gap: 6, marginBottom: 12, flexWrap: 'wrap', fontSize: 12 }}>
+            <span style={funnelBox}>Whole market <b className="num">{shown.counts.universe.toLocaleString()}</b></span> →
+            <span style={funnelBox}>Pass every check <b className="num">{shown.counts.passed.toLocaleString()}</b></span> →
+            <span style={{ ...funnelBox, borderColor: 'var(--amber, #d97706)', color: 'var(--amber, #d97706)' }}>Bounce chance now <b className="num">{shown.counts.oversold.toLocaleString()}</b> ⚡</span>
+            {shown.counts.skipped > 0 && (
+              <button type="button" style={{ ...scrLinkBtn, marginLeft: 'auto' }} onClick={() => setShowSkipped(!showSkipped)}>
+                {shown.counts.skipped.toLocaleString()} skipped, missing data {showSkipped ? '▴' : '▾'}
+              </button>
+            )}
+          </div>
+
+          {showSkipped && (
+            <div className="card" style={{ marginBottom: 12, maxHeight: 220, overflow: 'auto' }}>
+              <div className="card-body flush">
+                {(shown.skipped || []).map(sk => (
+                  <div key={sk.symbol} className="row" style={{ gap: 10, padding: '6px 16px', borderTop: '1px solid var(--border)', fontSize: 12 }}>
+                    <span className="ticker" style={{ minWidth: 56 }}>{sk.symbol}</span>
+                    <span style={{ color: 'var(--text-muted)' }}>missing: {sk.missing.map(labelOf).join(' · ')}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="card">
+            <div className="card-header">
+              <h3 className="card-title">{rows.length.toLocaleString()} passing</h3>
+              <button className="btn" onClick={exportCSV} disabled={!rows.length}><Icon name="download" size={12} /> Export</button>
+            </div>
+            <div className="card-body flush" style={{ overflowX: 'auto' }}>
+              {emptyMarket ? (
+                <div style={{ padding: 28, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+                  <div style={{ marginBottom: 12 }}>No market data yet. Refresh prices and financials to start.</div>
+                  <div className="row" style={{ gap: 8, justifyContent: 'center' }}>
+                    <button className="btn" disabled={busy} onClick={() => requestRefresh('financials')}>Refresh financials</button>
+                    <button className="btn btn-primary" disabled={busy} onClick={() => requestRefresh('prices')}>Refresh prices ↻</button>
+                  </div>
+                </div>
+              ) : rows.length === 0 ? (
+                <div style={{ padding: 28, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No stock passes every check. Try <b>Easy</b> under “How picky?”.</div>
+              ) : (
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th className="right">#</th>
+                      <ScrTh sort={sort} onSort={clickSort} k="symbol" left>Ticker</ScrTh>
+                      <ScrTh sort={sort} onSort={clickSort} k="strength" left><span title="0–100: how far past the bar the stock is, on average over all checks">Score</span></ScrTh>
+                      {goodIds.map(id => <ScrTh key={id} sort={sort} onSort={clickSort} k={id}><span title={tipOf(id)}>{headerOf(id)}</span></ScrTh>)}
+                      {overIds.map(id => <ScrTh key={id} sort={sort} onSort={clickSort} k={id}><span title={tipOf(id)}>{headerOf(id)}</span></ScrTh>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {hot.length > 0 && <tr className="scr-sep"><td colSpan={colSpan} style={{ ...scrSubtle, textAlign: 'left', paddingTop: 12 }}>⚡ Good company, price just dropped hard — possible bounce</td></tr>}
+                    {hot.map(r => renderRow(r, true))}
+                    {rest.length > 0 && <tr className="scr-sep"><td colSpan={colSpan} style={{ ...scrSubtle, textAlign: 'left', paddingTop: 12 }}>Good companies</td></tr>}
+                    {rest.map(r => renderRow(r, false))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+          <style>{`
+            .scr-hot td { background: color-mix(in srgb, var(--amber, #d97706) 10%, transparent); }
+            .scr-s3 { color: var(--green, #16a34a); font-weight: 700; }
+            .scr-s2 { color: var(--green, #16a34a); }
+            .scr-na { color: var(--text-subtle); font-style: italic; cursor: help; }
+          `}</style>
+          <div style={{ marginTop: 10, fontSize: 11, color: 'var(--text-subtle)' }}>
+            Every stock here passed all the checks. Score = how far past the bar, 0–100. <span style={{ color: 'var(--green, #16a34a)' }}>●</span> well above the bar · <span style={{ color: 'var(--amber, #d97706)' }}>●</span> just above it. <i>n/a</i> = not applicable to this company type. Hover a row to see why it passed, hover a column name for what it means, click a column to sort.
+          </div>
+        </>
+      )}
     </div>
   );
 };
-
-const selectStyle = {
-  width: '100%',
-  padding: '8px 10px',
-  background: 'var(--bg-sunken)',
-  border: '1px solid var(--border)',
-  borderRadius: 'var(--radius)',
-  color: 'var(--text)',
-  fontSize: 13,
-};
-
-const FilterField = ({ label, children }) => (
-  <div>
-    <div style={{ fontSize: 11, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600, marginBottom: 6 }}>{label}</div>
-    {children}
-  </div>
-);
-
-const FilterRange = ({ label, value, setValue, min, max, step, suffix = '' }) => (
-  <FilterField label={label}>
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      <input type="range" min={min} max={max} step={step} value={value}
-        onChange={e => setValue(parseFloat(e.target.value))}
-        style={{ flex: 1, accentColor: 'var(--accent)' }} />
-      <span className="num" style={{ fontSize: 12, fontWeight: 600, minWidth: 50, textAlign: 'right' }}>
-        {value}{suffix}
-      </span>
-    </div>
-  </FilterField>
-);
-
-const SortHeader = ({ label, k, sk, sd, onClick, className = 'right' }) => (
-  <th className={className} onClick={onClick} style={{ cursor: 'pointer' }}>
-    {label}
-    {sk === k && <span style={{ marginLeft: 4, color: 'var(--accent)' }}>{sd === 'asc' ? '↑' : '↓'}</span>}
-  </th>
-);
 
 window.PageScreener = PageScreener;

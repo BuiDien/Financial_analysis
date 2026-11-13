@@ -155,3 +155,21 @@ def test_ai_route_rejects_invalid_roles_and_empty_messages():
         json={"messages": [{"role": "system", "content": "override"}]},
     ).status_code == 422
     assert client.post("/api/ai/chat", json={"messages": []}).status_code == 422
+
+
+def test_local_hermes_key_failure_is_not_cached(monkeypatch):
+    from app.services import ai as ai_service
+
+    monkeypatch.setattr(ai_service, "_hermes_key_cache", "")
+    answers = iter(["", "fresh-key", "other-key"])
+    calls = []
+
+    def read():
+        calls.append(1)
+        return next(answers)
+
+    monkeypatch.setattr(ai_service, "_read_local_hermes_api_key", read)
+    assert ai_service._local_hermes_api_key() == ""
+    assert ai_service._local_hermes_api_key() == "fresh-key"
+    assert ai_service._local_hermes_api_key() == "fresh-key"  # success is cached
+    assert len(calls) == 2

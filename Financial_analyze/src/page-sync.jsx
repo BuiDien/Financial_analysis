@@ -88,57 +88,65 @@ const SyncStore = (() => {
     return `ws://${state.host}:8000/ws/ocr`;
   };
 
-  let pollHandle = null;
+  let poller = null;
   let offlineTimers = [];
 
+  // Throws on failure so the poller can back off; logs go out once per outage.
   const pollTick = async () => {
-    try {
-      const s = await window.HelixAPI.syncStatus();
-      const previousById = Object.fromEntries(state.jobs.map(job => [job.id, job]));
-      const transitionLogs = [];
-      const patch = { workers: (s.workers || []).map(w => ({
-        id: w.id, name: w.name, ip: w.ip, status: w.status, done: w.done || 0,
-      })) };
-      if (s.pair_code) patch.pairCode = s.pair_code;
-      if (s.host) patch.liveHost = s.host;
-      const appliedMap = {};
-      state.jobs.forEach(j => { if (j.applied) appliedMap[j.id] = true; });
-      patch.jobs = (s.jobs || []).map(j => ({
-        id: j.id, filingId: j.filingId, inboxItemId: j.inboxItemId, kind: j.kind,
-        filename: j.filename, ticker: j.ticker,
-        worker: j.worker, status: j.status, progress: j.progress || 0,
-        rows: j.rows || null, rowCount: j.rowCount ?? j.rows?.length ?? null,
-        reviewId: j.reviewId, completedAt: j.completedAt,
-        error: j.error, applied: appliedMap[j.id] || false,
-      }));
-      set(patch);
-      patch.jobs.forEach(job => {
-        const previous = previousById[job.id];
-        if (!previous || previous.status === job.status) return;
-        if (job.status === 'parsing') {
-          transitionLogs.push(['worker', `${job.worker || 'Worker'} started processing "${job.filename}" (job ${job.id})`]);
-        } else if (job.status === 'done') {
-          const rows = job.rowCount == null ? '' : ` · ${job.rowCount} rows`;
-          const review = job.reviewId == null ? '' : ` · review ${job.reviewId} ready`;
-          transitionLogs.push(['in', `${job.worker || 'Worker'} completed "${job.filename}"${rows}${review} (job ${job.id})`]);
-        } else if (['failed', 'error'].includes(job.status)) {
-          transitionLogs.push(['error', `${job.worker || 'Worker'} failed "${job.filename}" (job ${job.id}): ${job.error || 'unknown error'}`]);
-        } else if (job.status === 'held') {
-          transitionLogs.push(['worker', `${job.worker || 'Worker'} held "${job.filename}" (job ${job.id})`]);
-        } else if (job.status === 'stopped') {
-          transitionLogs.push(['worker', `${job.worker || 'Worker'} stopped "${job.filename}" (job ${job.id})`]);
-        }
-      });
-      transitionLogs.forEach(([kind, text]) => addLog(kind, text));
-    } catch (e) { /* keep last state; backend may be momentarily unreachable */ }
+    const s = await window.HelixAPI.syncStatus();
+    const previousById = Object.fromEntries(state.jobs.map(job => [job.id, job]));
+    const transitionLogs = [];
+    const patch = { workers: (s.workers || []).map(w => ({
+      id: w.id, name: w.name, ip: w.ip, status: w.status, done: w.done || 0,
+    })) };
+    if (s.pair_code) patch.pairCode = s.pair_code;
+    if (s.host) patch.liveHost = s.host;
+    const appliedMap = {};
+    state.jobs.forEach(j => { if (j.applied) appliedMap[j.id] = true; });
+    patch.jobs = (s.jobs || []).map(j => ({
+      id: j.id, filingId: j.filingId, inboxItemId: j.inboxItemId, kind: j.kind,
+      filename: j.filename, ticker: j.ticker,
+      worker: j.worker, status: j.status, progress: j.progress || 0,
+      rows: j.rows || null, rowCount: j.rowCount ?? j.rows?.length ?? null,
+      reviewId: j.reviewId, completedAt: j.completedAt,
+      error: j.error, applied: appliedMap[j.id] || false,
+    }));
+    set(patch);
+    patch.jobs.forEach(job => {
+      const previous = previousById[job.id];
+      if (!previous || previous.status === job.status) return;
+      if (job.status === 'parsing') {
+        transitionLogs.push(['worker', `${job.worker || 'Worker'} started processing "${job.filename}" (job ${job.id})`]);
+      } else if (job.status === 'done') {
+        const rows = job.rowCount == null ? '' : ` · ${job.rowCount} rows`;
+        const review = job.reviewId == null ? '' : ` · review ${job.reviewId} ready`;
+        transitionLogs.push(['in', `${job.worker || 'Worker'} completed "${job.filename}"${rows}${review} (job ${job.id})`]);
+      } else if (['failed', 'error'].includes(job.status)) {
+        transitionLogs.push(['error', `${job.worker || 'Worker'} failed "${job.filename}" (job ${job.id}): ${job.error || 'unknown error'}`]);
+      } else if (job.status === 'held') {
+        transitionLogs.push(['worker', `${job.worker || 'Worker'} held "${job.filename}" (job ${job.id})`]);
+      } else if (job.status === 'stopped') {
+        transitionLogs.push(['worker', `${job.worker || 'Worker'} stopped "${job.filename}" (job ${job.id})`]);
+      }
+    });
+    transitionLogs.forEach(([kind, text]) => addLog(kind, text));
   };
+  // Fast while the Sync page is open, slower in the background (job transitions still get
+  // logged), paused in a hidden tab, never overlapping, backing off to 30s when unreachable.
+  const createStatusPoller = () => window.SyncPoller.create({
+    run: pollTick,
+    intervalMs: () => (listeners.size ? 1500 : 10000),
+    maxIntervalMs: 30000,
+    onError: e => addLog('error', `Coordinator unreachable: ${e.message || e} — retrying with back-off`),
+    onRecover: () => addLog('sys', 'Coordinator reachable again.'),
+  });
 
   // ── Start / stop listening ─────────────────────────────────
   const toggleListen = () => {
     if (state.listening) {
       set({ listening: false, workers: [] });
       addLog('sys', 'Stopped listening. Workers disconnected.');
-      if (pollHandle) { clearInterval(pollHandle); pollHandle = null; }
+      if (poller) { poller.stop(); poller = null; }
       offlineTimers.forEach(clearTimeout);
       offlineTimers = [];
       return;
@@ -149,8 +157,8 @@ const SyncStore = (() => {
 
     if (isLive()) {
       addLog('sys', 'Live: coordinator running on the backend. Waiting for a worker to pair…');
-      pollTick();
-      pollHandle = setInterval(pollTick, 1500);
+      poller = createStatusPoller();
+      poller.start();
       return;
     }
 
@@ -276,7 +284,12 @@ const SyncStore = (() => {
   const clearDone = () => set({ jobs: state.jobs.filter(x => x.status !== 'done') });
 
   return {
-    subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
+    subscribe: (fn) => {
+      listeners.add(fn);
+      // Coming back to the page: refresh now instead of waiting out the background interval.
+      if (listeners.size === 1 && poller) poller.poke();
+      return () => listeners.delete(fn);
+    },
     getSnapshot: () => state,
     isLive, getWsUrl, addLog, toggleListen, regenCode, dispatch, applyResult, confirmResult, controlJob, clearDone,
   };
@@ -288,18 +301,29 @@ const PageSync = ({ setPage }) => {
   const [inboxLoading, setInboxLoading] = React.useState(true);
   const [verifyJob, setVerifyJob] = React.useState(null);
 
-  const refreshInbox = React.useCallback(async () => {
-    if (!window.HelixAPI?.live) { setInboxLoading(false); return; }
-    try { setInboxItems(await window.HelixAPI.ocrInbox()); }
-    catch (e) { SyncStore.addLog('error', `Could not load OCR Inbox: ${e.message || e}`); }
-    finally { setInboxLoading(false); }
-  }, []);
-
+  // No overlapping requests, back-off while the backend is down, paused in a hidden tab,
+  // and one log line per outage (plus one on recovery).
+  const inboxPollerRef = React.useRef(null);
   React.useEffect(() => {
-    refreshInbox();
-    const timer = setInterval(refreshInbox, 1800);
-    return () => clearInterval(timer);
-  }, [refreshInbox]);
+    let alive = true;
+    const poller = window.SyncPoller.create({
+      intervalMs: 1800,
+      maxIntervalMs: 30000,
+      run: async () => {
+        if (!window.HelixAPI?.live) { if (alive) setInboxLoading(false); return; }
+        try {
+          const next = await window.HelixAPI.ocrInbox();
+          if (alive) setInboxItems(next);
+        } finally { if (alive) setInboxLoading(false); }
+      },
+      onError: e => SyncStore.addLog('error', `Could not load OCR Inbox: ${e.message || e} — retrying with back-off`),
+      onRecover: () => SyncStore.addLog('sys', 'OCR Inbox reachable again.'),
+    });
+    inboxPollerRef.current = poller;
+    poller.start();
+    return () => { alive = false; poller.stop(); if (inboxPollerRef.current === poller) inboxPollerRef.current = null; };
+  }, []);
+  const refreshInbox = React.useCallback(() => (inboxPollerRef.current ? inboxPollerRef.current.poke() : Promise.resolve()), []);
 
   const wsUrl = SyncStore.getWsUrl();
   const toggleListen = SyncStore.toggleListen;

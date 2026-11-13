@@ -1,6 +1,7 @@
 // Home — real-time watch board for indices, commodities (gold), and stocks.
-// Live-polls the backend when reachable; otherwise simulates gentle ticks so
-// the board always feels alive. Watch list is editable and persists locally.
+// Live-polls the backend when reachable; offline it shows a clearly labelled
+// simulation. Prices are shown in each listing's own currency (no FX
+// conversion — there is no FX source). Watch list persists locally.
 
 const HOME_WATCH_KEY = 'helix_home_watch_v1';
 
@@ -97,19 +98,12 @@ const CUSTOM_MARKETS = [
 
 const DEFAULT_WATCH = ['XAU', 'SPX', 'NDX', 'US10Y', 'NVDA', 'BTC', 'WTI', 'VIX'];
 
-// Display currencies with approximate FX rates vs USD (1 USD = rate units).
-// Dollar-denominated instruments are converted; indices, %, and DXY are not.
-const HOME_CCY = {
-  USD: { symbol: '$', rate: 1 },
-  EUR: { symbol: '€', rate: 0.92 },
-  GBP: { symbol: '£', rate: 0.79 },
-  JPY: { symbol: '¥', rate: 157.0 },
-  CAD: { symbol: 'C$', rate: 1.37 },
-  AUD: { symbol: 'A$', rate: 1.51 },
-  CHF: { symbol: 'Fr', rate: 0.88 },
-  CNY: { symbol: '¥', rate: 7.24 },
+// Vietnamese stocks are quoted by VCI in nghìn đồng → shown ×1000 in đồng,
+// same rule as the detail page and portfolio. VN indices are points.
+const homeIsVnStock = (sym) => {
+  const m = LIVE_TICKER[sym];
+  return !!m && m.startsWith('VN:') && !HELIX_VN_INDEXES.has(m.slice(3));
 };
-const CURRENCY_KEY = 'helix_home_currency_v1';
 
 const loadWatch = () => {
   try {
@@ -137,32 +131,36 @@ const PageHome = ({ setActiveAsset, setPage }) => {
   const [watch, setWatch] = React.useState(loadWatch);
   const [focus, setFocus] = React.useState(() => loadWatch()[0]);
   const [showAdd, setShowAdd] = React.useState(false);
-  const [live, setLive] = React.useState(!!window.HelixAPI?.live);
+  const { live } = useApiLive();
   const [now, setNow] = React.useState(new Date());
   // Each quote carries its own `gen`, bumped only when a poll delivers data
   // for a market that's actually trading — the ONLY thing that re-triggers
   // that chart's draw-in animation. Closed markets (q.state === 'CLOSED')
   // keep their series and gen frozen: no fake movement, no redraws.
-  const [currency, setCurrency] = React.useState(() => localStorage.getItem(CURRENCY_KEY) || 'USD');
-  React.useEffect(() => { localStorage.setItem(CURRENCY_KEY, currency); }, [currency]);
 
   // Per-symbol live state: { price, chg, series }. By the time this page
   // mounts, App has already resolved HelixAPI.checked/.live (it gates the
   // whole app behind a loading screen until that's known) — so when live,
   // never seed the hardcoded INSTRUMENTS base as a fake price; wait for the
   // real first fetch instead, same "no mock flash" rule as the rest of the app.
-  const [quotes, setQuotes] = React.useState(() => {
+  const initialQuotes = (liveNow) => {
     const q = {};
-    const liveNow = !!window.HelixAPI?.live;
     watch.forEach((sym, i) => {
-      if (liveNow) { q[sym] = { price: null, chg: 0, series: null, state: null, gen: 0 }; return; }
+      if (liveNow) { q[sym] = { price: null, chg: null, series: null, state: null, gen: 0 }; return; }
       const inst = INSTRUMENTS[sym];
       const series = makeSeries(inst.base, sym.charCodeAt(0) + i);
       const prevClose = series[0];
       q[sym] = { price: inst.base, chg: ((inst.base - prevClose) / prevClose) * 100, series, state: null, gen: 0 };
     });
     return q;
-  });
+  };
+  const [quotes, setQuotes] = React.useState(() => initialQuotes(!!window.HelixAPI?.live));
+  // Backend came up / went away: drop every value from the other mode.
+  const liveMounted = React.useRef(false);
+  React.useEffect(() => {
+    if (!liveMounted.current) { liveMounted.current = true; return; }
+    setQuotes(initialQuotes(live));
+  }, [live]);
 
   React.useEffect(() => { localStorage.setItem(HOME_WATCH_KEY, JSON.stringify(watch)); }, [watch]);
 
@@ -172,7 +170,7 @@ const PageHome = ({ setActiveAsset, setPage }) => {
       const next = { ...prev };
       watch.forEach((sym, i) => {
         if (!next[sym]) {
-          if (window.HelixAPI?.live) { next[sym] = { price: null, chg: 0, series: null, state: null, gen: 0 }; return; }
+          if (window.HelixAPI?.live) { next[sym] = { price: null, chg: null, series: null, state: null, gen: 0 }; return; }
           const inst = INSTRUMENTS[sym];
           const series = makeSeries(inst.base, sym.charCodeAt(0) + i);
           next[sym] = { price: inst.base, chg: ((inst.base - series[0]) / series[0]) * 100, series, state: null, gen: 0 };
@@ -214,7 +212,7 @@ const PageHome = ({ setActiveAsset, setPage }) => {
           const last = closes[closes.length - 1];
           next[r.sym] = {
             price: cur?.price ?? last,
-            chg: cur?.price != null ? cur.chg : ((last - closes[0]) / closes[0]) * 100,
+            chg: cur?.chg ?? null,      // only a real quote supplies the day change
             series: closes,
             state: cur?.state ?? null,
             gen: (cur?.gen || 0) + 1,
@@ -224,7 +222,7 @@ const PageHome = ({ setActiveAsset, setPage }) => {
       });
     });
     return () => { cancelled = true; };
-  }, [watch]);
+  }, [watch, live]);
 
   // Live polling (backend) OR simulated ticks (mock)
   React.useEffect(() => {
@@ -270,7 +268,7 @@ const PageHome = ({ setActiveAsset, setPage }) => {
               // fabricated series in live mode: before the history seed lands
               // (or if it failed) the chart simply builds from real polls.
               const series = [...(cur?.series || []).slice(-11), r.q.price];
-              next[r.sym] = { price: r.q.price, chg: r.q.change_pct ?? cur?.chg ?? 0, series,
+              next[r.sym] = { price: r.q.price, chg: r.q.change_pct ?? cur?.chg ?? null, series,
                               state: r.q.market_state || null, gen: (cur?.gen || 0) + 1 };
             }
           }
@@ -281,16 +279,16 @@ const PageHome = ({ setActiveAsset, setPage }) => {
 
     // Fire the first fetch immediately — don't make the user wait out the
     // 2s interval tick before the board shows anything.
-    if (window.HelixAPI?.live) { setLive(true); pollLive(); }
-    else { setLive(false); tickMock(); }
+    if (live) pollLive();
+    else tickMock();
 
     const interval = setInterval(() => {
-      if (window.HelixAPI?.live) { setLive(true); pollLive(); }
-      else { setLive(false); tickMock(); }
+      if (window.HelixAPI?.live) pollLive();
+      else tickMock();
     }, 5 * 60 * 1000);   // 5-minute cadence; 2s polling (240+ req/min) tripped Yahoo's rate limit
 
     return () => { cancelled = true; clearInterval(interval); };
-  }, [watch]);
+  }, [watch, live]);
 
   const addInstrument = (sym) => { if (!watch.includes(sym)) setWatch(w => [...w, sym]); setShowAdd(false); };
   const removeInstrument = (sym) => {
@@ -301,18 +299,17 @@ const PageHome = ({ setActiveAsset, setPage }) => {
   const focusInst = INSTRUMENTS[focus];
   const focusQ = quotes[focus];
 
+  // Native currency only: "$142.36" (USD listings), "61,500 ₫" (VN stocks),
+  // plain points for indices, "%" for yields.
   const fmtPrice = (sym, v) => {
     const inst = INSTRUMENTS[sym];
-    if (v == null) return '—';
-    // Convert only true dollar-denominated instruments into the chosen currency
-    const convertible = inst.unit === '$';
-    const cur = HOME_CCY[currency] || HOME_CCY.USD;
-    const val = convertible ? v * cur.rate : v;
-    const dp = (convertible && currency === 'JPY') ? 0 : inst.dp;
-    const s = val.toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp });
-    if (convertible) return cur.symbol + s;
+    if (!isNum(v)) return '—';
+    if (homeIsVnStock(sym)) return `${fmtNum(v * 1000, 0)} ₫`;
+    const s = fmtNum(v, inst.dp);
+    if (inst.unit === '$') return '$' + s;
     return s + (inst.unit === '%' ? '%' : '');
   };
+  const chgText = (chg) => (isNum(chg) ? `${chg >= 0 ? '+' : ''}${Number(chg).toFixed(2)}%` : '—');
 
   return (
     <div className="page">
@@ -326,12 +323,8 @@ const PageHome = ({ setActiveAsset, setPage }) => {
         <div className="row">
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
             <span style={{ width: 6, height: 6, borderRadius: '50%', background: live ? 'var(--pos)' : 'var(--accent)', animation: 'pulse 2s infinite', display: 'inline-block' }}></span>
-            {live ? 'Live feed' : 'Simulated'} · {now.toLocaleTimeString('en-US', { hour12: false })}
+            {live ? 'Live feed' : 'Offline · simulated sample prices'} · {now.toLocaleTimeString('en-US', { hour12: false })}
           </span>
-          <select value={currency} onChange={e => setCurrency(e.target.value)} title="Display currency"
-            style={{ padding: '6px 10px', fontSize: 12, fontWeight: 600, fontFamily: 'var(--font-mono)', background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text)', cursor: 'pointer' }}>
-            {Object.keys(HOME_CCY).map(c => <option key={c} value={c}>{HOME_CCY[c].symbol} {c}</option>)}
-          </select>
           <button className="btn btn-primary" onClick={() => setShowAdd(true)}><Icon name="plus" size={12} /> Add instrument</button>
         </div>
       </div>
@@ -355,12 +348,16 @@ const PageHome = ({ setActiveAsset, setPage }) => {
                 {fmtPrice(focus, focusQ.price)}
               </div>
               <div className="row" style={{ gap: 10, marginTop: 6 }}>
-                <span className={focusQ.chg >= 0 ? 'pill pill-pos' : 'pill pill-neg'} style={{ fontSize: 13 }}>
-                  {focusQ.chg >= 0 ? '▲' : '▼'} {focusQ.chg >= 0 ? '+' : ''}{focusQ.chg.toFixed(2)}%
-                </span>
-                <span className="num" style={{ color: 'var(--text-muted)', fontSize: 13 }}>
-                  {focusQ.chg >= 0 ? '+' : ''}{fmtPrice(focus, Math.abs(focusQ.price * focusQ.chg / 100)).replace(/^([^\d.-])/, '$1')} today
-                </span>
+                {isNum(focusQ.chg) ? <>
+                  <span className={focusQ.chg >= 0 ? 'pill pill-pos' : 'pill pill-neg'} style={{ fontSize: 13 }}>
+                    {focusQ.chg >= 0 ? '▲' : '▼'} {chgText(focusQ.chg)}
+                  </span>
+                  {isNum(focusQ.price) && (
+                    <span className="num" style={{ color: 'var(--text-muted)', fontSize: 13 }}>
+                      {focusQ.chg >= 0 ? '+' : '−'}{fmtPrice(focus, Math.abs(focusQ.price * focusQ.chg / 100))} today
+                    </span>
+                  )}
+                </> : <span className="pill pill-neutral" style={{ fontSize: 13 }}>—</span>}
               </div>
             </div>
             <div style={{ position: 'relative', minHeight: 220 }}>
@@ -382,7 +379,7 @@ const PageHome = ({ setActiveAsset, setPage }) => {
               const inst = INSTRUMENTS[sym];
               const q = quotes[sym];
               if (!q) return null;
-              const up = q.chg >= 0;
+              const up = !isNum(q.chg) || q.chg >= 0;
               return (
                 <div key={sym} onClick={() => setFocus(sym)}
                   className="home-tile"
@@ -413,8 +410,8 @@ const PageHome = ({ setActiveAsset, setPage }) => {
                   </div>
                   <div className="num" style={{ fontSize: 22, fontWeight: 600, marginTop: 10 }}>{fmtPrice(sym, q.price)}</div>
                   <div style={{ marginTop: 2 }}>
-                    <span className="num" style={{ fontSize: 12, fontWeight: 600, color: up ? 'var(--pos)' : 'var(--neg)' }}>
-                      {up ? '+' : ''}{q.chg.toFixed(2)}%
+                    <span className="num" style={{ fontSize: 12, fontWeight: 600, color: !isNum(q.chg) ? 'var(--text-subtle)' : up ? 'var(--pos)' : 'var(--neg)' }}>
+                      {chgText(q.chg)}
                     </span>
                   </div>
                   <div style={{ marginTop: 8, width: '100%' }}>

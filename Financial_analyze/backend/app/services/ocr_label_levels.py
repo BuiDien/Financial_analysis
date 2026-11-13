@@ -71,6 +71,21 @@ def _is_summary_label(label: str) -> bool:
     return len(letters) >= 3 and letters == letters.upper()
 
 
+def _valid_digit_grouping(integer_part: str) -> bool:
+    """Thousands groups must be well formed: "1.234.567" yes, "1.234.56" or
+    "1.2345" no (an OCR-dropped/merged digit must not become a new number)."""
+    separators = {character for character in integer_part if character in ".,"}
+    if not separators:
+        return True
+    if len(separators) > 1:
+        return False
+    first, *rest = re.split(r"[.,]", integer_part)
+    return (
+        first.isdigit()
+        and all(len(group) == 3 and group.isdigit() for group in rest)
+    )
+
+
 def parse_financial_number(value: str) -> Decimal | None:
     """Parse common Vietnamese statement numbers without binary floats."""
     value = _plain_text(value).replace("**", "").replace("__", "").strip()
@@ -105,6 +120,10 @@ def parse_financial_number(value: str) -> Decimal | None:
         last = value.rfind(separator)
         if value.count(separator) == 1 and 0 < len(value) - last - 1 <= 2:
             decimal_at = last
+
+    integer_part = value[:decimal_at] if decimal_at >= 0 else value
+    if not _valid_digit_grouping(integer_part):
+        return None
 
     normalized = "".join(
         character

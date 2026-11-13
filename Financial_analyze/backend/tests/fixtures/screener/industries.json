@@ -1,0 +1,1698 @@
+[
+ {
+  "symbol": "VCB",
+  "organ_name": "Ngân hàng Thương mại Cổ phần Ngoại thương Việt Nam",
+  "com_type_code": "NH",
+  "icb_level": 1,
+  "icb_code": "8301",
+  "icb_name": "Ngân hàng"
+ },
+ {
+  "symbol": "VCB",
+  "organ_name": "Ngân hàng Thương mại Cổ phần Ngoại thương Việt Nam",
+  "com_type_code": "NH",
+  "icb_level": 2,
+  "icb_code": "8300",
+  "icb_name": "Ngân hàng"
+ },
+ {
+  "symbol": "VCB",
+  "organ_name": "Ngân hàng Thương mại Cổ phần Ngoại thương Việt Nam",
+  "com_type_code": "NH",
+  "icb_level": 3,
+  "icb_code": "8350",
+  "icb_name": "Ngân hàng"
+ },
+ {
+  "symbol": "VCB",
+  "organ_name": "Ngân hàng Thương mại Cổ phần Ngoại thương Việt Nam",
+  "com_type_code": "NH",
+  "icb_level": 4,
+  "icb_code": "8355",
+  "icb_name": "Ngân hàng"
+ },
+ {
+  "symbol": "VHM",
+  "organ_name": "Công ty Cổ phần Vinhomes",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "8000",
+  "icb_name": "Tài chính"
+ },
+ {
+  "symbol": "VHM",
+  "organ_name": "Công ty Cổ phần Vinhomes",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "8600",
+  "icb_name": "Bất động sản"
+ },
+ {
+  "symbol": "VHM",
+  "organ_name": "Công ty Cổ phần Vinhomes",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "8630",
+  "icb_name": "Bất động sản"
+ },
+ {
+  "symbol": "VHM",
+  "organ_name": "Công ty Cổ phần Vinhomes",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "8633",
+  "icb_name": "Bất động sản"
+ },
+ {
+  "symbol": "VNM",
+  "organ_name": "Công ty Cổ phần Sữa Việt Nam",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "3000",
+  "icb_name": "Hàng Tiêu dùng"
+ },
+ {
+  "symbol": "VNM",
+  "organ_name": "Công ty Cổ phần Sữa Việt Nam",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "3500",
+  "icb_name": "Thực phẩm và đồ uống"
+ },
+ {
+  "symbol": "VNM",
+  "organ_name": "Công ty Cổ phần Sữa Việt Nam",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "3570",
+  "icb_name": "Sản xuất thực phẩm"
+ },
+ {
+  "symbol": "VNM",
+  "organ_name": "Công ty Cổ phần Sữa Việt Nam",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "3577",
+  "icb_name": "Thực phẩm"
+ },
+ {
+  "symbol": "VSP",
+  "organ_name": "Công ty Cổ phần Vận tải biển và Bất động sản Việt Hải",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "2000",
+  "icb_name": "Công nghiệp"
+ },
+ {
+  "symbol": "VSP",
+  "organ_name": "Công ty Cổ phần Vận tải biển và Bất động sản Việt Hải",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "2700",
+  "icb_name": "Hàng & Dịch vụ Công nghiệp"
+ },
+ {
+  "symbol": "VSP",
+  "organ_name": "Công ty Cổ phần Vận tải biển và Bất động sản Việt Hải",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "2770",
+  "icb_name": "Vận tải"
+ },
+ {
+  "symbol": "VSP",
+  "organ_name": "Công ty Cổ phần Vận tải biển và Bất động sản Việt Hải",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "2773",
+  "icb_name": "Vận tải Thủy"
+ },
+ {
+  "symbol": "VST",
+  "organ_name": "Công ty Cổ phần Vận tải và Thuê Tàu biển Việt Nam",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "2000",
+  "icb_name": "Công nghiệp"
+ },
+ {
+  "symbol": "VST",
+  "organ_name": "Công ty Cổ phần Vận tải và Thuê Tàu biển Việt Nam",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "2700",
+  "icb_name": "Hàng & Dịch vụ Công nghiệp"
+ },
+ {
+  "symbol": "VST",
+  "organ_name": "Công ty Cổ phần Vận tải và Thuê Tàu biển Việt Nam",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "2770",
+  "icb_name": "Vận tải"
+ },
+ {
+  "symbol": "VST",
+  "organ_name": "Công ty Cổ phần Vận tải và Thuê Tàu biển Việt Nam",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "2773",
+  "icb_name": "Vận tải Thủy"
+ },
+ {
+  "symbol": "VTA",
+  "organ_name": "Công ty Cổ phần VITALY",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "2000",
+  "icb_name": "Công nghiệp"
+ },
+ {
+  "symbol": "VTA",
+  "organ_name": "Công ty Cổ phần VITALY",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "2300",
+  "icb_name": "Xây dựng và Vật liệu"
+ },
+ {
+  "symbol": "VTA",
+  "organ_name": "Công ty Cổ phần VITALY",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "2350",
+  "icb_name": "Xây dựng và Vật liệu"
+ },
+ {
+  "symbol": "VTA",
+  "organ_name": "Công ty Cổ phần VITALY",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "2353",
+  "icb_name": "Vật liệu xây dựng & Nội thất"
+ },
+ {
+  "symbol": "VTB",
+  "organ_name": "Công ty Cổ phần Viettronics Tân Bình",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "2000",
+  "icb_name": "Công nghiệp"
+ },
+ {
+  "symbol": "VTB",
+  "organ_name": "Công ty Cổ phần Viettronics Tân Bình",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "2700",
+  "icb_name": "Hàng & Dịch vụ Công nghiệp"
+ },
+ {
+  "symbol": "VTB",
+  "organ_name": "Công ty Cổ phần Viettronics Tân Bình",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "2730",
+  "icb_name": "Điện tử & Thiết bị điện"
+ },
+ {
+  "symbol": "VTB",
+  "organ_name": "Công ty Cổ phần Viettronics Tân Bình",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "2733",
+  "icb_name": "Hàng điện & điện tử"
+ },
+ {
+  "symbol": "VTC",
+  "organ_name": "Công ty Cổ phần Viễn Thông VTC",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "9000",
+  "icb_name": "Công nghệ Thông tin"
+ },
+ {
+  "symbol": "VTC",
+  "organ_name": "Công ty Cổ phần Viễn Thông VTC",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "9500",
+  "icb_name": "Công nghệ Thông tin"
+ },
+ {
+  "symbol": "VTC",
+  "organ_name": "Công ty Cổ phần Viễn Thông VTC",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "9570",
+  "icb_name": "Thiết bị và Phần cứng"
+ },
+ {
+  "symbol": "VTC",
+  "organ_name": "Công ty Cổ phần Viễn Thông VTC",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "9578",
+  "icb_name": "Thiết bị viễn thông"
+ },
+ {
+  "symbol": "VTD",
+  "organ_name": "Công ty Cổ phần Vietourist Holdings",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "5000",
+  "icb_name": "Dịch vụ Tiêu dùng"
+ },
+ {
+  "symbol": "VTD",
+  "organ_name": "Công ty Cổ phần Vietourist Holdings",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "5700",
+  "icb_name": "Du lịch và Giải trí"
+ },
+ {
+  "symbol": "VTD",
+  "organ_name": "Công ty Cổ phần Vietourist Holdings",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "5750",
+  "icb_name": "Du lịch & Giải trí"
+ },
+ {
+  "symbol": "VTD",
+  "organ_name": "Công ty Cổ phần Vietourist Holdings",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "5759",
+  "icb_name": "Vận tải hành khách & Du lịch"
+ },
+ {
+  "symbol": "VTE",
+  "organ_name": "Công ty Cổ phần VINACAP Kim Long",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "9000",
+  "icb_name": "Công nghệ Thông tin"
+ },
+ {
+  "symbol": "VTE",
+  "organ_name": "Công ty Cổ phần VINACAP Kim Long",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "9500",
+  "icb_name": "Công nghệ Thông tin"
+ },
+ {
+  "symbol": "VTE",
+  "organ_name": "Công ty Cổ phần VINACAP Kim Long",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "9570",
+  "icb_name": "Thiết bị và Phần cứng"
+ },
+ {
+  "symbol": "VTE",
+  "organ_name": "Công ty Cổ phần VINACAP Kim Long",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "9578",
+  "icb_name": "Thiết bị viễn thông"
+ },
+ {
+  "symbol": "VTG",
+  "organ_name": "Công ty Cổ phần Du lịch tỉnh Bà Rịa - Vũng Tàu",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "5000",
+  "icb_name": "Dịch vụ Tiêu dùng"
+ },
+ {
+  "symbol": "VTG",
+  "organ_name": "Công ty Cổ phần Du lịch tỉnh Bà Rịa - Vũng Tàu",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "5700",
+  "icb_name": "Du lịch và Giải trí"
+ },
+ {
+  "symbol": "VTG",
+  "organ_name": "Công ty Cổ phần Du lịch tỉnh Bà Rịa - Vũng Tàu",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "5750",
+  "icb_name": "Du lịch & Giải trí"
+ },
+ {
+  "symbol": "VTG",
+  "organ_name": "Công ty Cổ phần Du lịch tỉnh Bà Rịa - Vũng Tàu",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "5759",
+  "icb_name": "Vận tải hành khách & Du lịch"
+ },
+ {
+  "symbol": "VTH",
+  "organ_name": "Công ty Cổ phần Dây cáp điện Việt Thái",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "2000",
+  "icb_name": "Công nghiệp"
+ },
+ {
+  "symbol": "VTH",
+  "organ_name": "Công ty Cổ phần Dây cáp điện Việt Thái",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "2700",
+  "icb_name": "Hàng & Dịch vụ Công nghiệp"
+ },
+ {
+  "symbol": "VTH",
+  "organ_name": "Công ty Cổ phần Dây cáp điện Việt Thái",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "2730",
+  "icb_name": "Điện tử & Thiết bị điện"
+ },
+ {
+  "symbol": "VTH",
+  "organ_name": "Công ty Cổ phần Dây cáp điện Việt Thái",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "2733",
+  "icb_name": "Hàng điện & điện tử"
+ },
+ {
+  "symbol": "VTI",
+  "organ_name": "Công ty Cổ phần Sản xuất - Xuất nhập khẩu Dệt may",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "3000",
+  "icb_name": "Hàng Tiêu dùng"
+ },
+ {
+  "symbol": "VTI",
+  "organ_name": "Công ty Cổ phần Sản xuất - Xuất nhập khẩu Dệt may",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "3700",
+  "icb_name": "Hàng cá nhân & Gia dụng"
+ },
+ {
+  "symbol": "VTI",
+  "organ_name": "Công ty Cổ phần Sản xuất - Xuất nhập khẩu Dệt may",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "3760",
+  "icb_name": "Hàng cá nhân"
+ },
+ {
+  "symbol": "VTI",
+  "organ_name": "Công ty Cổ phần Sản xuất - Xuất nhập khẩu Dệt may",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "3763",
+  "icb_name": "Hàng May mặc"
+ },
+ {
+  "symbol": "VTJ",
+  "organ_name": "Công ty Cổ phần Thương mại và Đầu tư VI NA TA BA",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "3000",
+  "icb_name": "Hàng Tiêu dùng"
+ },
+ {
+  "symbol": "VTJ",
+  "organ_name": "Công ty Cổ phần Thương mại và Đầu tư VI NA TA BA",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "3700",
+  "icb_name": "Hàng cá nhân & Gia dụng"
+ },
+ {
+  "symbol": "VTJ",
+  "organ_name": "Công ty Cổ phần Thương mại và Đầu tư VI NA TA BA",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "3780",
+  "icb_name": "Thuốc lá"
+ },
+ {
+  "symbol": "VTJ",
+  "organ_name": "Công ty Cổ phần Thương mại và Đầu tư VI NA TA BA",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "3785",
+  "icb_name": "Thuốc lá"
+ },
+ {
+  "symbol": "VTK",
+  "organ_name": "Công ty Cổ phần Tư vấn và Dịch vụ Viettel",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "2000",
+  "icb_name": "Công nghiệp"
+ },
+ {
+  "symbol": "VTK",
+  "organ_name": "Công ty Cổ phần Tư vấn và Dịch vụ Viettel",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "2700",
+  "icb_name": "Hàng & Dịch vụ Công nghiệp"
+ },
+ {
+  "symbol": "VTK",
+  "organ_name": "Công ty Cổ phần Tư vấn và Dịch vụ Viettel",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "2790",
+  "icb_name": "Tư vấn & Hỗ trợ Kinh doanh"
+ },
+ {
+  "symbol": "VTK",
+  "organ_name": "Công ty Cổ phần Tư vấn và Dịch vụ Viettel",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "2791",
+  "icb_name": "Tư vấn & Hỗ trợ KD"
+ },
+ {
+  "symbol": "VTL",
+  "organ_name": "Công ty Cổ phần Vang Thăng Long",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "3000",
+  "icb_name": "Hàng Tiêu dùng"
+ },
+ {
+  "symbol": "VTL",
+  "organ_name": "Công ty Cổ phần Vang Thăng Long",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "3500",
+  "icb_name": "Thực phẩm và đồ uống"
+ },
+ {
+  "symbol": "VTL",
+  "organ_name": "Công ty Cổ phần Vang Thăng Long",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "3530",
+  "icb_name": "Bia và đồ uống"
+ },
+ {
+  "symbol": "VTL",
+  "organ_name": "Công ty Cổ phần Vang Thăng Long",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "3535",
+  "icb_name": "Vang & Rượu mạnh"
+ },
+ {
+  "symbol": "VTM",
+  "organ_name": "Công ty Cổ phần Vận tải và Đưa đón thợ mỏ - Vinacomin",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "5000",
+  "icb_name": "Dịch vụ Tiêu dùng"
+ },
+ {
+  "symbol": "VTM",
+  "organ_name": "Công ty Cổ phần Vận tải và Đưa đón thợ mỏ - Vinacomin",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "5700",
+  "icb_name": "Du lịch và Giải trí"
+ },
+ {
+  "symbol": "VTM",
+  "organ_name": "Công ty Cổ phần Vận tải và Đưa đón thợ mỏ - Vinacomin",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "5750",
+  "icb_name": "Du lịch & Giải trí"
+ },
+ {
+  "symbol": "VTM",
+  "organ_name": "Công ty Cổ phần Vận tải và Đưa đón thợ mỏ - Vinacomin",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "5759",
+  "icb_name": "Vận tải hành khách & Du lịch"
+ },
+ {
+  "symbol": "VTO",
+  "organ_name": "Công ty Cổ phần Vận tải Xăng dầu VITACO",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "2000",
+  "icb_name": "Công nghiệp"
+ },
+ {
+  "symbol": "VTO",
+  "organ_name": "Công ty Cổ phần Vận tải Xăng dầu VITACO",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "2700",
+  "icb_name": "Hàng & Dịch vụ Công nghiệp"
+ },
+ {
+  "symbol": "VTO",
+  "organ_name": "Công ty Cổ phần Vận tải Xăng dầu VITACO",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "2770",
+  "icb_name": "Vận tải"
+ },
+ {
+  "symbol": "VTO",
+  "organ_name": "Công ty Cổ phần Vận tải Xăng dầu VITACO",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "2773",
+  "icb_name": "Vận tải Thủy"
+ },
+ {
+  "symbol": "VTP",
+  "organ_name": "Tổng Công ty Cổ phần Bưu chính Viettel",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "2000",
+  "icb_name": "Công nghiệp"
+ },
+ {
+  "symbol": "VTP",
+  "organ_name": "Tổng Công ty Cổ phần Bưu chính Viettel",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "2700",
+  "icb_name": "Hàng & Dịch vụ Công nghiệp"
+ },
+ {
+  "symbol": "VTP",
+  "organ_name": "Tổng Công ty Cổ phần Bưu chính Viettel",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "2770",
+  "icb_name": "Vận tải"
+ },
+ {
+  "symbol": "VTP",
+  "organ_name": "Tổng Công ty Cổ phần Bưu chính Viettel",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "2771",
+  "icb_name": "Chuyển phát nhanh"
+ },
+ {
+  "symbol": "VTQ",
+  "organ_name": "Công ty Cổ phần Việt Trung Quảng Bình",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "1000",
+  "icb_name": "Nguyên vật liệu"
+ },
+ {
+  "symbol": "VTQ",
+  "organ_name": "Công ty Cổ phần Việt Trung Quảng Bình",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "1300",
+  "icb_name": "Hóa chất"
+ },
+ {
+  "symbol": "VTQ",
+  "organ_name": "Công ty Cổ phần Việt Trung Quảng Bình",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "1350",
+  "icb_name": "Hóa chất"
+ },
+ {
+  "symbol": "VTQ",
+  "organ_name": "Công ty Cổ phần Việt Trung Quảng Bình",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "1353",
+  "icb_name": "Nhựa, cao su & sợi"
+ },
+ {
+  "symbol": "VTR",
+  "organ_name": "Công ty Cổ phần Du lịch Vietravel",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "5000",
+  "icb_name": "Dịch vụ Tiêu dùng"
+ },
+ {
+  "symbol": "VTR",
+  "organ_name": "Công ty Cổ phần Du lịch Vietravel",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "5700",
+  "icb_name": "Du lịch và Giải trí"
+ },
+ {
+  "symbol": "VTR",
+  "organ_name": "Công ty Cổ phần Du lịch Vietravel",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "5750",
+  "icb_name": "Du lịch & Giải trí"
+ },
+ {
+  "symbol": "VTR",
+  "organ_name": "Công ty Cổ phần Du lịch Vietravel",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "5759",
+  "icb_name": "Vận tải hành khách & Du lịch"
+ },
+ {
+  "symbol": "VTS",
+  "organ_name": "Công ty Cổ phần Gạch Ngói Từ Sơn",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "2000",
+  "icb_name": "Công nghiệp"
+ },
+ {
+  "symbol": "VTS",
+  "organ_name": "Công ty Cổ phần Gạch Ngói Từ Sơn",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "2300",
+  "icb_name": "Xây dựng và Vật liệu"
+ },
+ {
+  "symbol": "VTS",
+  "organ_name": "Công ty Cổ phần Gạch Ngói Từ Sơn",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "2350",
+  "icb_name": "Xây dựng và Vật liệu"
+ },
+ {
+  "symbol": "VTS",
+  "organ_name": "Công ty Cổ phần Gạch Ngói Từ Sơn",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "2353",
+  "icb_name": "Vật liệu xây dựng & Nội thất"
+ },
+ {
+  "symbol": "VTV",
+  "organ_name": "Công ty Cổ phần Năng lượng và Môi trường VICEM",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "2000",
+  "icb_name": "Công nghiệp"
+ },
+ {
+  "symbol": "VTV",
+  "organ_name": "Công ty Cổ phần Năng lượng và Môi trường VICEM",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "2300",
+  "icb_name": "Xây dựng và Vật liệu"
+ },
+ {
+  "symbol": "VTV",
+  "organ_name": "Công ty Cổ phần Năng lượng và Môi trường VICEM",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "2350",
+  "icb_name": "Xây dựng và Vật liệu"
+ },
+ {
+  "symbol": "VTV",
+  "organ_name": "Công ty Cổ phần Năng lượng và Môi trường VICEM",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "2353",
+  "icb_name": "Vật liệu xây dựng & Nội thất"
+ },
+ {
+  "symbol": "VTX",
+  "organ_name": "Công ty Cổ phần Vận tải Đa phương thức VIETRANSTIMEX",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "2000",
+  "icb_name": "Công nghiệp"
+ },
+ {
+  "symbol": "VTX",
+  "organ_name": "Công ty Cổ phần Vận tải Đa phương thức VIETRANSTIMEX",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "2700",
+  "icb_name": "Hàng & Dịch vụ Công nghiệp"
+ },
+ {
+  "symbol": "VTX",
+  "organ_name": "Công ty Cổ phần Vận tải Đa phương thức VIETRANSTIMEX",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "2770",
+  "icb_name": "Vận tải"
+ },
+ {
+  "symbol": "VTX",
+  "organ_name": "Công ty Cổ phần Vận tải Đa phương thức VIETRANSTIMEX",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "2779",
+  "icb_name": "Dịch vụ vận tải"
+ },
+ {
+  "symbol": "VTZ",
+  "organ_name": "Công ty Cổ phần Sản xuất và Thương mại Nhựa Việt Thành",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "1000",
+  "icb_name": "Nguyên vật liệu"
+ },
+ {
+  "symbol": "VTZ",
+  "organ_name": "Công ty Cổ phần Sản xuất và Thương mại Nhựa Việt Thành",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "1300",
+  "icb_name": "Hóa chất"
+ },
+ {
+  "symbol": "VTZ",
+  "organ_name": "Công ty Cổ phần Sản xuất và Thương mại Nhựa Việt Thành",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "1350",
+  "icb_name": "Hóa chất"
+ },
+ {
+  "symbol": "VTZ",
+  "organ_name": "Công ty Cổ phần Sản xuất và Thương mại Nhựa Việt Thành",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "1353",
+  "icb_name": "Nhựa, cao su & sợi"
+ },
+ {
+  "symbol": "VUA",
+  "organ_name": "Công ty Cổ phần Chứng khoán Stanley Brothers",
+  "com_type_code": "CK",
+  "icb_level": 1,
+  "icb_code": "8000",
+  "icb_name": "Tài chính"
+ },
+ {
+  "symbol": "VUA",
+  "organ_name": "Công ty Cổ phần Chứng khoán Stanley Brothers",
+  "com_type_code": "CK",
+  "icb_level": 2,
+  "icb_code": "8700",
+  "icb_name": "Dịch vụ tài chính"
+ },
+ {
+  "symbol": "VUA",
+  "organ_name": "Công ty Cổ phần Chứng khoán Stanley Brothers",
+  "com_type_code": "CK",
+  "icb_level": 3,
+  "icb_code": "8770",
+  "icb_name": "Dịch vụ tài chính"
+ },
+ {
+  "symbol": "VUA",
+  "organ_name": "Công ty Cổ phần Chứng khoán Stanley Brothers",
+  "com_type_code": "CK",
+  "icb_level": 4,
+  "icb_code": "8777",
+  "icb_name": "Môi giới chứng khoán"
+ },
+ {
+  "symbol": "VUG",
+  "organ_name": "Công ty Cổ phần Thủy sản Việt Úc",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "3000",
+  "icb_name": "Hàng Tiêu dùng"
+ },
+ {
+  "symbol": "VUG",
+  "organ_name": "Công ty Cổ phần Thủy sản Việt Úc",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "3500",
+  "icb_name": "Thực phẩm và đồ uống"
+ },
+ {
+  "symbol": "VUG",
+  "organ_name": "Công ty Cổ phần Thủy sản Việt Úc",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "3570",
+  "icb_name": "Sản xuất thực phẩm"
+ },
+ {
+  "symbol": "VUG",
+  "organ_name": "Công ty Cổ phần Thủy sản Việt Úc",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "3573",
+  "icb_name": "Nuôi trồng nông & hải sản"
+ },
+ {
+  "symbol": "VVN",
+  "organ_name": "Tổng Công ty Cổ phần Xây dựng Công nghiệp Việt Nam",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "2000",
+  "icb_name": "Công nghiệp"
+ },
+ {
+  "symbol": "VVN",
+  "organ_name": "Tổng Công ty Cổ phần Xây dựng Công nghiệp Việt Nam",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "2300",
+  "icb_name": "Xây dựng và Vật liệu"
+ },
+ {
+  "symbol": "VVN",
+  "organ_name": "Tổng Công ty Cổ phần Xây dựng Công nghiệp Việt Nam",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "2350",
+  "icb_name": "Xây dựng và Vật liệu"
+ },
+ {
+  "symbol": "VVN",
+  "organ_name": "Tổng Công ty Cổ phần Xây dựng Công nghiệp Việt Nam",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "2357",
+  "icb_name": "Xây dựng"
+ },
+ {
+  "symbol": "VVS",
+  "organ_name": "Công ty Cổ phần Đầu tư Phát triển Máy Việt Nam",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "3000",
+  "icb_name": "Hàng Tiêu dùng"
+ },
+ {
+  "symbol": "VVS",
+  "organ_name": "Công ty Cổ phần Đầu tư Phát triển Máy Việt Nam",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "3300",
+  "icb_name": "Ô tô và phụ tùng"
+ },
+ {
+  "symbol": "VVS",
+  "organ_name": "Công ty Cổ phần Đầu tư Phát triển Máy Việt Nam",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "3350",
+  "icb_name": "Ô tô và phụ tùng"
+ },
+ {
+  "symbol": "VVS",
+  "organ_name": "Công ty Cổ phần Đầu tư Phát triển Máy Việt Nam",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "3353",
+  "icb_name": "Sản xuất ô tô"
+ },
+ {
+  "symbol": "VW3",
+  "organ_name": "Công ty Cổ phần VIWASEEN3",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "2000",
+  "icb_name": "Công nghiệp"
+ },
+ {
+  "symbol": "VW3",
+  "organ_name": "Công ty Cổ phần VIWASEEN3",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "2300",
+  "icb_name": "Xây dựng và Vật liệu"
+ },
+ {
+  "symbol": "VW3",
+  "organ_name": "Công ty Cổ phần VIWASEEN3",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "2350",
+  "icb_name": "Xây dựng và Vật liệu"
+ },
+ {
+  "symbol": "VW3",
+  "organ_name": "Công ty Cổ phần VIWASEEN3",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "2357",
+  "icb_name": "Xây dựng"
+ },
+ {
+  "symbol": "VWS",
+  "organ_name": "Công ty Cổ phần Nước và Môi trường Việt Nam",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "7000",
+  "icb_name": "Tiện ích Cộng đồng"
+ },
+ {
+  "symbol": "VWS",
+  "organ_name": "Công ty Cổ phần Nước và Môi trường Việt Nam",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "7500",
+  "icb_name": "Điện, nước & xăng dầu khí đốt"
+ },
+ {
+  "symbol": "VWS",
+  "organ_name": "Công ty Cổ phần Nước và Môi trường Việt Nam",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "7570",
+  "icb_name": "Nước & Khí đốt"
+ },
+ {
+  "symbol": "VWS",
+  "organ_name": "Công ty Cổ phần Nước và Môi trường Việt Nam",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "7577",
+  "icb_name": "Nước"
+ },
+ {
+  "symbol": "VXB",
+  "organ_name": "Công ty Cổ phần Vật liệu xây dựng Bến Tre",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "2000",
+  "icb_name": "Công nghiệp"
+ },
+ {
+  "symbol": "VXB",
+  "organ_name": "Công ty Cổ phần Vật liệu xây dựng Bến Tre",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "2300",
+  "icb_name": "Xây dựng và Vật liệu"
+ },
+ {
+  "symbol": "VXB",
+  "organ_name": "Công ty Cổ phần Vật liệu xây dựng Bến Tre",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "2350",
+  "icb_name": "Xây dựng và Vật liệu"
+ },
+ {
+  "symbol": "VXB",
+  "organ_name": "Công ty Cổ phần Vật liệu xây dựng Bến Tre",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "2353",
+  "icb_name": "Vật liệu xây dựng & Nội thất"
+ },
+ {
+  "symbol": "VXP",
+  "organ_name": "Công ty Cổ phần Thuốc Thú y Trung ương VETVACO",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "1000",
+  "icb_name": "Nguyên vật liệu"
+ },
+ {
+  "symbol": "VXP",
+  "organ_name": "Công ty Cổ phần Thuốc Thú y Trung ương VETVACO",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "1300",
+  "icb_name": "Hóa chất"
+ },
+ {
+  "symbol": "VXP",
+  "organ_name": "Công ty Cổ phần Thuốc Thú y Trung ương VETVACO",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "1350",
+  "icb_name": "Hóa chất"
+ },
+ {
+  "symbol": "VXP",
+  "organ_name": "Công ty Cổ phần Thuốc Thú y Trung ương VETVACO",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "1357",
+  "icb_name": "Sản phẩm hóa dầu, Nông dược & Hóa chất khác"
+ },
+ {
+  "symbol": "VXT",
+  "organ_name": "Công ty Cổ phần Kho vận và dịch vụ thương mại",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "2000",
+  "icb_name": "Công nghiệp"
+ },
+ {
+  "symbol": "VXT",
+  "organ_name": "Công ty Cổ phần Kho vận và dịch vụ thương mại",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "2700",
+  "icb_name": "Hàng & Dịch vụ Công nghiệp"
+ },
+ {
+  "symbol": "VXT",
+  "organ_name": "Công ty Cổ phần Kho vận và dịch vụ thương mại",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "2790",
+  "icb_name": "Tư vấn & Hỗ trợ Kinh doanh"
+ },
+ {
+  "symbol": "VXT",
+  "organ_name": "Công ty Cổ phần Kho vận và dịch vụ thương mại",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "2797",
+  "icb_name": "Nhà cung cấp thiết bị"
+ },
+ {
+  "symbol": "WCS",
+  "organ_name": "Công ty Cổ phần Bến xe Miền Tây",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "2000",
+  "icb_name": "Công nghiệp"
+ },
+ {
+  "symbol": "WCS",
+  "organ_name": "Công ty Cổ phần Bến xe Miền Tây",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "2700",
+  "icb_name": "Hàng & Dịch vụ Công nghiệp"
+ },
+ {
+  "symbol": "WCS",
+  "organ_name": "Công ty Cổ phần Bến xe Miền Tây",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "2770",
+  "icb_name": "Vận tải"
+ },
+ {
+  "symbol": "WCS",
+  "organ_name": "Công ty Cổ phần Bến xe Miền Tây",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "2777",
+  "icb_name": "Kho bãi, hậu cần và bảo dưỡng"
+ },
+ {
+  "symbol": "WSB",
+  "organ_name": "Công ty Cổ phần Bia Sài Gòn - Miền Tây",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "3000",
+  "icb_name": "Hàng Tiêu dùng"
+ },
+ {
+  "symbol": "WSB",
+  "organ_name": "Công ty Cổ phần Bia Sài Gòn - Miền Tây",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "3500",
+  "icb_name": "Thực phẩm và đồ uống"
+ },
+ {
+  "symbol": "WSB",
+  "organ_name": "Công ty Cổ phần Bia Sài Gòn - Miền Tây",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "3530",
+  "icb_name": "Bia và đồ uống"
+ },
+ {
+  "symbol": "WSB",
+  "organ_name": "Công ty Cổ phần Bia Sài Gòn - Miền Tây",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "3533",
+  "icb_name": "Sản xuất bia"
+ },
+ {
+  "symbol": "WSS",
+  "organ_name": "Công ty Cổ phần Chứng khoán Phố Wall",
+  "com_type_code": "CK",
+  "icb_level": 1,
+  "icb_code": "8000",
+  "icb_name": "Tài chính"
+ },
+ {
+  "symbol": "WSS",
+  "organ_name": "Công ty Cổ phần Chứng khoán Phố Wall",
+  "com_type_code": "CK",
+  "icb_level": 2,
+  "icb_code": "8700",
+  "icb_name": "Dịch vụ tài chính"
+ },
+ {
+  "symbol": "WSS",
+  "organ_name": "Công ty Cổ phần Chứng khoán Phố Wall",
+  "com_type_code": "CK",
+  "icb_level": 3,
+  "icb_code": "8770",
+  "icb_name": "Dịch vụ tài chính"
+ },
+ {
+  "symbol": "WSS",
+  "organ_name": "Công ty Cổ phần Chứng khoán Phố Wall",
+  "com_type_code": "CK",
+  "icb_level": 4,
+  "icb_code": "8777",
+  "icb_name": "Môi giới chứng khoán"
+ },
+ {
+  "symbol": "WTC",
+  "organ_name": "Công ty Cổ phần Vận tải thủy - Vinacomin",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "2000",
+  "icb_name": "Công nghiệp"
+ },
+ {
+  "symbol": "WTC",
+  "organ_name": "Công ty Cổ phần Vận tải thủy - Vinacomin",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "2700",
+  "icb_name": "Hàng & Dịch vụ Công nghiệp"
+ },
+ {
+  "symbol": "WTC",
+  "organ_name": "Công ty Cổ phần Vận tải thủy - Vinacomin",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "2770",
+  "icb_name": "Vận tải"
+ },
+ {
+  "symbol": "WTC",
+  "organ_name": "Công ty Cổ phần Vận tải thủy - Vinacomin",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "2773",
+  "icb_name": "Vận tải Thủy"
+ },
+ {
+  "symbol": "X20",
+  "organ_name": "Công ty Cổ phần X20",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "3000",
+  "icb_name": "Hàng Tiêu dùng"
+ },
+ {
+  "symbol": "X20",
+  "organ_name": "Công ty Cổ phần X20",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "3700",
+  "icb_name": "Hàng cá nhân & Gia dụng"
+ },
+ {
+  "symbol": "X20",
+  "organ_name": "Công ty Cổ phần X20",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "3760",
+  "icb_name": "Hàng cá nhân"
+ },
+ {
+  "symbol": "X20",
+  "organ_name": "Công ty Cổ phần X20",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "3763",
+  "icb_name": "Hàng May mặc"
+ },
+ {
+  "symbol": "X26",
+  "organ_name": "Công ty Cổ phần 26",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "3000",
+  "icb_name": "Hàng Tiêu dùng"
+ },
+ {
+  "symbol": "X26",
+  "organ_name": "Công ty Cổ phần 26",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "3700",
+  "icb_name": "Hàng cá nhân & Gia dụng"
+ },
+ {
+  "symbol": "X26",
+  "organ_name": "Công ty Cổ phần 26",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "3760",
+  "icb_name": "Hàng cá nhân"
+ },
+ {
+  "symbol": "X26",
+  "organ_name": "Công ty Cổ phần 26",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "3763",
+  "icb_name": "Hàng May mặc"
+ },
+ {
+  "symbol": "X77",
+  "organ_name": "Công ty Cổ phần Thành An 77",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "2000",
+  "icb_name": "Công nghiệp"
+ },
+ {
+  "symbol": "X77",
+  "organ_name": "Công ty Cổ phần Thành An 77",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "2300",
+  "icb_name": "Xây dựng và Vật liệu"
+ },
+ {
+  "symbol": "X77",
+  "organ_name": "Công ty Cổ phần Thành An 77",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "2350",
+  "icb_name": "Xây dựng và Vật liệu"
+ },
+ {
+  "symbol": "X77",
+  "organ_name": "Công ty Cổ phần Thành An 77",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "2353",
+  "icb_name": "Vật liệu xây dựng & Nội thất"
+ },
+ {
+  "symbol": "XDC",
+  "organ_name": "Công ty Cổ phần Xây dựng Công trình Tân Cảng",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "2000",
+  "icb_name": "Công nghiệp"
+ },
+ {
+  "symbol": "XDC",
+  "organ_name": "Công ty Cổ phần Xây dựng Công trình Tân Cảng",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "2300",
+  "icb_name": "Xây dựng và Vật liệu"
+ },
+ {
+  "symbol": "XDC",
+  "organ_name": "Công ty Cổ phần Xây dựng Công trình Tân Cảng",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "2350",
+  "icb_name": "Xây dựng và Vật liệu"
+ },
+ {
+  "symbol": "XDC",
+  "organ_name": "Công ty Cổ phần Xây dựng Công trình Tân Cảng",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "2357",
+  "icb_name": "Xây dựng"
+ },
+ {
+  "symbol": "XDH",
+  "organ_name": "Công ty Cổ phần Đầu tư Xây dựng Dân dụng Hà Nội",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "8000",
+  "icb_name": "Tài chính"
+ },
+ {
+  "symbol": "XDH",
+  "organ_name": "Công ty Cổ phần Đầu tư Xây dựng Dân dụng Hà Nội",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "8600",
+  "icb_name": "Bất động sản"
+ },
+ {
+  "symbol": "XDH",
+  "organ_name": "Công ty Cổ phần Đầu tư Xây dựng Dân dụng Hà Nội",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "8630",
+  "icb_name": "Bất động sản"
+ },
+ {
+  "symbol": "XDH",
+  "organ_name": "Công ty Cổ phần Đầu tư Xây dựng Dân dụng Hà Nội",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "8633",
+  "icb_name": "Bất động sản"
+ },
+ {
+  "symbol": "XHC",
+  "organ_name": "Công ty Cổ phần Xuân Hòa Việt Nam",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "3000",
+  "icb_name": "Hàng Tiêu dùng"
+ },
+ {
+  "symbol": "XHC",
+  "organ_name": "Công ty Cổ phần Xuân Hòa Việt Nam",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "3700",
+  "icb_name": "Hàng cá nhân & Gia dụng"
+ },
+ {
+  "symbol": "XHC",
+  "organ_name": "Công ty Cổ phần Xuân Hòa Việt Nam",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "3720",
+  "icb_name": "Hàng gia dụng"
+ },
+ {
+  "symbol": "XHC",
+  "organ_name": "Công ty Cổ phần Xuân Hòa Việt Nam",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "3726",
+  "icb_name": "Thiết bị gia dụng"
+ },
+ {
+  "symbol": "XLV",
+  "organ_name": "Công ty Cổ phần Xây lắp và Dịch vụ Sông Đà",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "2000",
+  "icb_name": "Công nghiệp"
+ },
+ {
+  "symbol": "XLV",
+  "organ_name": "Công ty Cổ phần Xây lắp và Dịch vụ Sông Đà",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "2300",
+  "icb_name": "Xây dựng và Vật liệu"
+ },
+ {
+  "symbol": "XLV",
+  "organ_name": "Công ty Cổ phần Xây lắp và Dịch vụ Sông Đà",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "2350",
+  "icb_name": "Xây dựng và Vật liệu"
+ },
+ {
+  "symbol": "XLV",
+  "organ_name": "Công ty Cổ phần Xây lắp và Dịch vụ Sông Đà",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "2357",
+  "icb_name": "Xây dựng"
+ },
+ {
+  "symbol": "XMC",
+  "organ_name": "Công ty cổ phần Đầu tư và Xây dựng Xuân Mai",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "2000",
+  "icb_name": "Công nghiệp"
+ },
+ {
+  "symbol": "XMC",
+  "organ_name": "Công ty cổ phần Đầu tư và Xây dựng Xuân Mai",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "2300",
+  "icb_name": "Xây dựng và Vật liệu"
+ },
+ {
+  "symbol": "XMC",
+  "organ_name": "Công ty cổ phần Đầu tư và Xây dựng Xuân Mai",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "2350",
+  "icb_name": "Xây dựng và Vật liệu"
+ },
+ {
+  "symbol": "XMC",
+  "organ_name": "Công ty cổ phần Đầu tư và Xây dựng Xuân Mai",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "2353",
+  "icb_name": "Vật liệu xây dựng & Nội thất"
+ },
+ {
+  "symbol": "XMD",
+  "organ_name": "Công ty Cổ phần Xuân Mai - Đạo Tú",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "2000",
+  "icb_name": "Công nghiệp"
+ },
+ {
+  "symbol": "XMD",
+  "organ_name": "Công ty Cổ phần Xuân Mai - Đạo Tú",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "2300",
+  "icb_name": "Xây dựng và Vật liệu"
+ },
+ {
+  "symbol": "XMD",
+  "organ_name": "Công ty Cổ phần Xuân Mai - Đạo Tú",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "2350",
+  "icb_name": "Xây dựng và Vật liệu"
+ },
+ {
+  "symbol": "XMD",
+  "organ_name": "Công ty Cổ phần Xuân Mai - Đạo Tú",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "2353",
+  "icb_name": "Vật liệu xây dựng & Nội thất"
+ },
+ {
+  "symbol": "XMP",
+  "organ_name": "Công ty Cổ phần Thủy điện Xuân Minh",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "7000",
+  "icb_name": "Tiện ích Cộng đồng"
+ },
+ {
+  "symbol": "XMP",
+  "organ_name": "Công ty Cổ phần Thủy điện Xuân Minh",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "7500",
+  "icb_name": "Điện, nước & xăng dầu khí đốt"
+ },
+ {
+  "symbol": "XMP",
+  "organ_name": "Công ty Cổ phần Thủy điện Xuân Minh",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "7530",
+  "icb_name": "Sản xuất & Phân phối Điện"
+ },
+ {
+  "symbol": "XMP",
+  "organ_name": "Công ty Cổ phần Thủy điện Xuân Minh",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "7535",
+  "icb_name": "Sản xuất & Phân phối Điện"
+ },
+ {
+  "symbol": "XPH",
+  "organ_name": "Công ty Cổ phần Xà phòng Hà Nội",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "3000",
+  "icb_name": "Hàng Tiêu dùng"
+ },
+ {
+  "symbol": "XPH",
+  "organ_name": "Công ty Cổ phần Xà phòng Hà Nội",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "3700",
+  "icb_name": "Hàng cá nhân & Gia dụng"
+ },
+ {
+  "symbol": "XPH",
+  "organ_name": "Công ty Cổ phần Xà phòng Hà Nội",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "3760",
+  "icb_name": "Hàng cá nhân"
+ },
+ {
+  "symbol": "XPH",
+  "organ_name": "Công ty Cổ phần Xà phòng Hà Nội",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "3767",
+  "icb_name": "Hàng cá nhân"
+ },
+ {
+  "symbol": "YBC",
+  "organ_name": "Công ty Cổ phần Xi măng và Khoáng sản Yên Bái",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "2000",
+  "icb_name": "Công nghiệp"
+ },
+ {
+  "symbol": "YBC",
+  "organ_name": "Công ty Cổ phần Xi măng và Khoáng sản Yên Bái",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "2300",
+  "icb_name": "Xây dựng và Vật liệu"
+ },
+ {
+  "symbol": "YBC",
+  "organ_name": "Công ty Cổ phần Xi măng và Khoáng sản Yên Bái",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "2350",
+  "icb_name": "Xây dựng và Vật liệu"
+ },
+ {
+  "symbol": "YBC",
+  "organ_name": "Công ty Cổ phần Xi măng và Khoáng sản Yên Bái",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "2353",
+  "icb_name": "Vật liệu xây dựng & Nội thất"
+ },
+ {
+  "symbol": "YBM",
+  "organ_name": "Công ty Cổ phần Khoáng sản Công nghiệp Yên Bái",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "1000",
+  "icb_name": "Nguyên vật liệu"
+ },
+ {
+  "symbol": "YBM",
+  "organ_name": "Công ty Cổ phần Khoáng sản Công nghiệp Yên Bái",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "1700",
+  "icb_name": "Tài nguyên Cơ bản"
+ },
+ {
+  "symbol": "YBM",
+  "organ_name": "Công ty Cổ phần Khoáng sản Công nghiệp Yên Bái",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "1770",
+  "icb_name": "Khai khoáng"
+ },
+ {
+  "symbol": "YBM",
+  "organ_name": "Công ty Cổ phần Khoáng sản Công nghiệp Yên Bái",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "1775",
+  "icb_name": "Khai khoáng"
+ },
+ {
+  "symbol": "YEG",
+  "organ_name": "Công ty Cổ phần Tập đoàn Yeah1",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "5000",
+  "icb_name": "Dịch vụ Tiêu dùng"
+ },
+ {
+  "symbol": "YEG",
+  "organ_name": "Công ty Cổ phần Tập đoàn Yeah1",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "5500",
+  "icb_name": "Truyền thông"
+ },
+ {
+  "symbol": "YEG",
+  "organ_name": "Công ty Cổ phần Tập đoàn Yeah1",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "5550",
+  "icb_name": "Truyền thông"
+ },
+ {
+  "symbol": "YEG",
+  "organ_name": "Công ty Cổ phần Tập đoàn Yeah1",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "5553",
+  "icb_name": "Giải trí & Truyền thông"
+ },
+ {
+  "symbol": "YTC",
+  "organ_name": "Công ty Cổ phần Xuất nhập khẩu Y tế Thành phố Hồ Chí Minh",
+  "com_type_code": "CT",
+  "icb_level": 1,
+  "icb_code": "4000",
+  "icb_name": "Dược phẩm và Y tế"
+ },
+ {
+  "symbol": "YTC",
+  "organ_name": "Công ty Cổ phần Xuất nhập khẩu Y tế Thành phố Hồ Chí Minh",
+  "com_type_code": "CT",
+  "icb_level": 2,
+  "icb_code": "4500",
+  "icb_name": "Y tế"
+ },
+ {
+  "symbol": "YTC",
+  "organ_name": "Công ty Cổ phần Xuất nhập khẩu Y tế Thành phố Hồ Chí Minh",
+  "com_type_code": "CT",
+  "icb_level": 3,
+  "icb_code": "4530",
+  "icb_name": "Thiết bị và Dịch vụ Y tế"
+ },
+ {
+  "symbol": "YTC",
+  "organ_name": "Công ty Cổ phần Xuất nhập khẩu Y tế Thành phố Hồ Chí Minh",
+  "com_type_code": "CT",
+  "icb_level": 4,
+  "icb_code": "4537",
+  "icb_name": "Dụng cụ y tế"
+ }
+]

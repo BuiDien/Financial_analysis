@@ -1,4 +1,4 @@
-// Charts — candlestick / area / line, all hand-rolled SVG
+// Charts — area line + allocation donut, hand-rolled SVG
 
 // Redraw the line from left to right whenever its data changes (e.g. a new
 // live quote lands) — pathLength normalizes stroke-dasharray to a fixed
@@ -13,97 +13,18 @@ if (!document.getElementById('helix-linedraw-style')) {
   document.head.appendChild(s);
 }
 
-// Generate plausible OHLC data
-const genOHLC = (n, basePrice = 100, volatility = 0.02, seed = 1) => {
-  let s = seed * 9999;
-  const rnd = () => {
-    s = (s * 9301 + 49297) % 233280;
-    return s / 233280;
-  };
-  const data = [];
-  let price = basePrice;
-  for (let i = 0; i < n; i++) {
-    const open = price;
-    const change = (rnd() - 0.48) * volatility * price;
-    const close = open + change;
-    const high = Math.max(open, close) + rnd() * volatility * price * 0.5;
-    const low = Math.min(open, close) - rnd() * volatility * price * 0.5;
-    const volume = Math.round(rnd() * 5000000 + 1000000);
-    data.push({ open, high, low, close, volume, idx: i });
-    price = close;
-  }
-  return data;
-};
-
-const Candlestick = ({ data, width = 760, height = 320, padding = { t: 10, r: 50, b: 30, l: 0 } }) => {
-  if (!data || !data.length) return null;
-  const W = width - padding.l - padding.r;
-  const H = height - padding.t - padding.b;
-
-  const allPrices = data.flatMap(d => [d.high, d.low]);
-  const min = Math.min(...allPrices);
-  const max = Math.max(...allPrices);
-  const range = max - min;
-  const pad = range * 0.08;
-  const yMin = min - pad;
-  const yMax = max + pad;
-  const yRange = yMax - yMin;
-
-  const xScale = i => padding.l + (i / (data.length - 1)) * W;
-  const yScale = v => padding.t + ((yMax - v) / yRange) * H;
-
-  const candleWidth = Math.max(2, (W / data.length) * 0.7);
-
-  // y-axis ticks
-  const ticks = 5;
-  const tickValues = Array.from({ length: ticks }, (_, i) => yMin + (yRange * i) / (ticks - 1));
-
-  return (
-    <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" width="100%" height="100%">
-      {/* gridlines */}
-      {tickValues.map((v, i) => (
-        <line key={i} x1={padding.l} x2={width - padding.r} y1={yScale(v)} y2={yScale(v)}
-          stroke="var(--border)" strokeWidth="1" strokeDasharray={i === 0 ? "0" : "2,3"} />
-      ))}
-      {/* y-axis labels */}
-      {tickValues.map((v, i) => (
-        <text key={i} x={width - padding.r + 6} y={yScale(v) + 3}
-          fill="var(--text-subtle)" fontSize="10" fontFamily="var(--font-mono)">
-          {v.toFixed(2)}
-        </text>
-      ))}
-      {/* candles */}
-      {data.map((d, i) => {
-        const x = xScale(i);
-        const isUp = d.close >= d.open;
-        const color = isUp ? 'var(--pos)' : 'var(--neg)';
-        const yOpen = yScale(d.open);
-        const yClose = yScale(d.close);
-        const yHigh = yScale(d.high);
-        const yLow = yScale(d.low);
-        const bodyTop = Math.min(yOpen, yClose);
-        const bodyHeight = Math.max(1, Math.abs(yClose - yOpen));
-        return (
-          <g key={i}>
-            <line x1={x} x2={x} y1={yHigh} y2={yLow} stroke={color} strokeWidth="1" />
-            <rect x={x - candleWidth / 2} y={bodyTop} width={candleWidth} height={bodyHeight}
-              fill={isUp ? color : color} opacity={isUp ? 1 : 1} />
-          </g>
-        );
-      })}
-    </svg>
-  );
-};
-
 const AreaChart = ({ data, width = 760, height = 320, padding = { t: 10, r: 50, b: 30, l: 0 }, color, drawKey }) => {
   if (!data || !data.length) return null;
   const W = width - padding.l - padding.r;
   const H = height - padding.t - padding.b;
 
-  const values = data.map(d => typeof d === 'number' ? d : d.close);
+  const values = data.map(d => typeof d === 'number' ? d : d?.close).filter(v => Number.isFinite(v));
+  if (values.length < 2) return null;
   const min = Math.min(...values);
   const max = Math.max(...values);
-  const pad = (max - min) * 0.08;
+  // A flat series (closed market, unchanged price) would give a zero range
+  // and NaN paths — pad around the value instead.
+  const pad = max > min ? (max - min) * 0.08 : (Math.abs(max) * 0.01 || 1);
   const yMin = min - pad;
   const yMax = max + pad;
   const yRange = yMax - yMin;
@@ -150,39 +71,16 @@ const AreaChart = ({ data, width = 760, height = 320, padding = { t: 10, r: 50, 
   );
 };
 
-const VolumeBars = ({ data, width = 760, height = 60, padding = { t: 4, r: 50, b: 4, l: 0 } }) => {
-  if (!data || !data.length) return null;
-  const W = width - padding.l - padding.r;
-  const H = height - padding.t - padding.b;
-
-  const max = Math.max(...data.map(d => d.volume));
-  const xScale = i => padding.l + (i / (data.length - 1)) * W;
-  const barWidth = Math.max(2, (W / data.length) * 0.7);
-
-  return (
-    <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" width="100%" height="100%">
-      {data.map((d, i) => {
-        const h = (d.volume / max) * H;
-        const x = xScale(i);
-        const isUp = d.close >= d.open;
-        return (
-          <rect key={i} x={x - barWidth / 2} y={padding.t + H - h}
-            width={barWidth} height={h}
-            fill={isUp ? 'var(--pos)' : 'var(--neg)'} opacity="0.4" />
-        );
-      })}
-    </svg>
-  );
-};
-
 // Donut for portfolio allocation
 const Donut = ({ segments, size = 140, thickness = 22 }) => {
   const r = size / 2 - thickness / 2;
   const cx = size / 2;
   const cy = size / 2;
+  segments = (segments || []).filter(x => Number.isFinite(x.value) && x.value > 0);
   const total = segments.reduce((s, x) => s + x.value, 0);
   let acc = 0;
-  const arcs = segments.map((seg, i) => {
+  // A single 100% slice is a full circle — an SVG arc with equal endpoints draws nothing.
+  const arcs = segments.length === 1 ? [] : segments.map((seg, i) => {
     const start = (acc / total) * 360 - 90;
     acc += seg.value;
     const end = (acc / total) * 360 - 90;
@@ -195,7 +93,7 @@ const Donut = ({ segments, size = 140, thickness = 22 }) => {
   });
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-      <circle cx={cx} cy={cy} r={r} fill="none" stroke="var(--border)" strokeWidth={thickness} />
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke={segments.length === 1 ? segments[0].color : 'var(--border)'} strokeWidth={thickness} />
       {arcs.map((a, i) => (
         <path key={i} d={a.d} fill="none" stroke={a.color} strokeWidth={thickness} strokeLinecap="butt" />
       ))}
@@ -203,8 +101,5 @@ const Donut = ({ segments, size = 140, thickness = 22 }) => {
   );
 };
 
-window.genOHLC = genOHLC;
-window.Candlestick = Candlestick;
 window.AreaChart = AreaChart;
-window.VolumeBars = VolumeBars;
 window.Donut = Donut;

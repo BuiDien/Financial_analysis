@@ -166,9 +166,105 @@ def test_search_web_raises_when_unreachable(monkeypatch):
         news.search_web("test")
 
 
+def _page(body: bytes, charset: str | None = "utf-8") -> dict:
+    return {"status": 200, "location": None, "body": body, "charset": charset}
+
+
+def _redirect(location: str, status: int = 302) -> dict:
+    return {"status": status, "location": location, "body": b"", "charset": None}
+
+
+def _network_down(url):
+    raise OSError("connection refused")
+
+
+def _public_dns(hostname):
+    return {"10.0.0.9"} if hostname.startswith("intranet") else {"93.184.216.34"}
+
+
+def test_read_article_rejects_redirect_to_loopback(monkeypatch):
+    monkeypatch.setattr(news, "_resolved_addresses", _public_dns)
+    hops = []
+
+    def open_once(url):
+        hops.append(url)
+        return _redirect("http://127.0.0.1:8000/api/sync/status")
+
+    monkeypatch.setattr(news, "_open_once", open_once)
+    with pytest.raises(RuntimeError, match="public"):
+        news.read_article("https://example.test/a")
+    assert hops == ["https://example.test/a"]
+
+
+def test_read_article_rejects_relative_redirect_chain_into_lan(monkeypatch):
+    monkeypatch.setattr(news, "_resolved_addresses", _public_dns)
+    responses = {
+        "https://example.test/a": _redirect("/b"),
+        "https://example.test/b": _redirect("http://intranet.corp/secret", 301),
+    }
+    monkeypatch.setattr(news, "_open_once", lambda url: responses[url])
+    with pytest.raises(RuntimeError, match="public"):
+        news.read_article("https://example.test/a")
+
+
+def test_read_article_follows_public_redirects(monkeypatch):
+    monkeypatch.setattr(news, "_resolved_addresses", _public_dns)
+    responses = {
+        "https://example.test/a": _redirect("https://www.example.test/a"),
+        "https://www.example.test/a": _page("<p>Tin tức</p>".encode("utf-8")),
+    }
+    monkeypatch.setattr(news, "_open_once", lambda url: responses[url])
+    monkeypatch.setattr(news.trafilatura, "extract", lambda html: html)
+    monkeypatch.setattr(news.trafilatura, "extract_metadata", lambda html: None)
+    assert news.read_article("https://example.test/a")["text"] == "<p>Tin tức</p>"
+
+
+def test_read_article_caps_redirect_hops(monkeypatch):
+    monkeypatch.setattr(news, "_resolved_addresses", _public_dns)
+    count = iter(range(100))
+    monkeypatch.setattr(
+        news, "_open_once", lambda url: _redirect(f"https://example.test/{next(count)}"),
+    )
+    with pytest.raises(RuntimeError, match="redirects"):
+        news.read_article("https://example.test/start")
+
+
+def test_read_article_rejects_oversized_body(monkeypatch):
+    monkeypatch.setattr(news, "_resolved_addresses", _public_dns)
+    big = b"x" * (news.MAX_ARTICLE_BYTES + 1)
+    monkeypatch.setattr(news, "_open_once", lambda url: _page(big))
+    with pytest.raises(RuntimeError, match="larger than"):
+        news.read_article("https://example.test/huge")
+
+
+def test_open_once_does_not_follow_redirects():
+    import http.server
+    import threading
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(302)
+            self.send_header("Location", "http://127.0.0.1:1/never")
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.handle_request, daemon=True)
+    thread.start()
+    try:
+        response = news._open_once(f"http://127.0.0.1:{server.server_port}/x")
+    finally:
+        thread.join(timeout=5)
+        server.server_close()
+    assert response["status"] == 302
+    assert response["location"] == "http://127.0.0.1:1/never"
+
+
 def test_read_article_extracts_text(monkeypatch):
     monkeypatch.setattr(news, "_resolved_addresses", lambda hostname: {"93.184.216.34"})
-    monkeypatch.setattr(news.trafilatura, "fetch_url", lambda url: "<html>raw</html>")
+    monkeypatch.setattr(news, "_open_once", lambda url: _page(b"<html>raw</html>"))
     monkeypatch.setattr(news.trafilatura, "extract", lambda html: "Article body text.")
 
     class _Meta:
@@ -182,7 +278,7 @@ def test_read_article_extracts_text(monkeypatch):
 
 def test_read_article_raises_when_fetch_fails(monkeypatch):
     monkeypatch.setattr(news, "_resolved_addresses", lambda hostname: {"93.184.216.34"})
-    monkeypatch.setattr(news.trafilatura, "fetch_url", lambda url: None)
+    monkeypatch.setattr(news, "_open_once", _network_down)
 
     with pytest.raises(RuntimeError, match="Could not fetch"):
         news.read_article("https://example.test/dead")
@@ -190,7 +286,7 @@ def test_read_article_raises_when_fetch_fails(monkeypatch):
 
 def test_read_article_raises_when_no_text_extracted(monkeypatch):
     monkeypatch.setattr(news, "_resolved_addresses", lambda hostname: {"93.184.216.34"})
-    monkeypatch.setattr(news.trafilatura, "fetch_url", lambda url: "<html>raw</html>")
+    monkeypatch.setattr(news, "_open_once", lambda url: _page(b"<html>raw</html>"))
     monkeypatch.setattr(news.trafilatura, "extract", lambda html: None)
 
     with pytest.raises(RuntimeError, match="no extractable"):
@@ -208,7 +304,7 @@ def test_read_article_rejects_non_public_targets(monkeypatch, url):
     def fetch(target):
         pytest.fail(f"unexpected fetch: {target}")
 
-    monkeypatch.setattr(news.trafilatura, "fetch_url", fetch)
+    monkeypatch.setattr(news, "_open_once", fetch)
 
     with pytest.raises(RuntimeError, match="public|http or https"):
         news.read_article(url)
@@ -217,10 +313,31 @@ def test_read_article_rejects_non_public_targets(monkeypatch, url):
 def test_read_article_rejects_hostname_resolving_to_private_ip(monkeypatch):
     monkeypatch.setattr(news, "_resolved_addresses", lambda hostname: {"10.0.0.4"})
     monkeypatch.setattr(
-        news.trafilatura,
-        "fetch_url",
+        news,
+        "_open_once",
         lambda target: pytest.fail(f"unexpected fetch: {target}"),
     )
 
     with pytest.raises(RuntimeError, match="public"):
         news.read_article("https://internal.example/report")
+
+
+def test_extract_vn_tickers_skips_words_inside_longer_tokens():
+    assert news.extract_vn_tickers("HOSE: VNM, MWG; VNINDEX and ĐHGVNM") == ["VNM", "MWG"]
+    assert news.extract_vn_tickers("VN30 ETF USD") == []
+
+
+def test_fetch_vn_rss_includes_plain_summary(monkeypatch):
+    feeds = {
+        "https://cafef.vn/thi-truong-chung-khoan.rss": MARKET_RSS,
+        "https://cafef.vn/doanh-nghiep.rss": COMPANIES_RSS,
+    }
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen(feeds))
+    items = news.fetch_vn_rss(limit=10)
+    assert items[0]["summary"] == "VNM tang 2% trong phien sang nay"
+
+
+def test_searxng_url_comes_from_settings():
+    from app.config import get_settings
+
+    assert news.SEARXNG_URL == get_settings().searxng_url

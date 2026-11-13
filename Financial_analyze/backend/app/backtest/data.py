@@ -1,9 +1,11 @@
-"""Daily OHLCV loader for backtests (VN via vnstock, others via yfinance)."""
+"""Daily OHLCV loader for backtests (VN via the market-data provider, others via
+yfinance). VN bars come out in full VND (index points for an index)."""
 import math
 from datetime import date, timedelta
 
 import yfinance as yf
 
+from app.screener.provider import ProviderRateLimited, drop_partial_bar, get_provider
 from app.services import market
 
 WARMUP_DAYS = 650  # (~440 sessions, covers slow SMA 400)
@@ -27,17 +29,21 @@ def _bar(day, row) -> dict | None:
 
 
 def load_daily_bars(ticker: str, start: date, end: date) -> list[dict]:
-    key = f"bt:{ticker}:{start}:{end}"
+    key = f"bt:v2:{ticker}:{start}:{end}"  # v2: VN bars switched to full VND
     cached = market._cache_get(key)
     if cached:
         return cached
 
     bars: list[dict] = []
     if ticker.startswith(market.VN_PREFIX):
-        df = market._vn_history(ticker[len(market.VN_PREFIX):], start=start.isoformat(),
-                                end=end.isoformat(), interval="1D")
-        for _, row in df.iterrows():
-            b = _bar(str(row["time"])[:10], row)
+        try:
+            raw = get_provider().fetch_ohlc(ticker[len(market.VN_PREFIX):], start, end, "1d",
+                                            priority="interactive")
+        except ProviderRateLimited as e:
+            raise market.VnRateLimited(str(e)) from None
+        # Today's bar before the close is still forming: never backtest on it.
+        for row in drop_partial_bar(raw):
+            b = _bar(str(row["date"])[:10], row)
             if b:
                 bars.append(b)
     else:

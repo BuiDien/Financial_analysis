@@ -1,29 +1,10 @@
-version: "3.9"
-
+# Local-only: SQLite file + uploads live in this folder; no Postgres/Redis.
+# The API is published on 127.0.0.1 only (it has no auth).
 services:
   api:
     build: .
-    ports: ["8000:8000"]
+    ports: ["127.0.0.1:8000:8000"]
     env_file: .env
     volumes:
-      - ./uploads:/app/uploads
       - .:/app
-    depends_on: [db, redis]
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-
-  db:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: helix
-      POSTGRES_PASSWORD: helix
-      POSTGRES_DB: helix
-    ports: ["5432:5432"]
-    volumes:
-      - pg:/var/lib/postgresql/data
-
-  redis:
-    image: redis:7-alpine
-    ports: ["6379:6379"]
-
-volumes:
-  pg:

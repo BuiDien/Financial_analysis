@@ -18,8 +18,11 @@ Financial_analyze/searxng/
 
 # Local data
 *.db
+*.db-wal
+*.db-shm
 uploads/
-helix.db
+helix.db*
+*.db.bak-*
 
 # Redundant export archive (the unzipped folder is committed)
 *.zip

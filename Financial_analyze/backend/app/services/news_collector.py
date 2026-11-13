@@ -24,6 +24,7 @@ import xml.etree.ElementTree as ET
 from urllib.request import Request, urlopen
 
 from . import news
+from ..config import get_settings
 
 FULL_TEXT_WORKERS = 8
 MAX_FULL_TEXT_CHARS = 4_000
@@ -162,10 +163,8 @@ SOURCE_LIMITS = {
     "yfinance": 20,
 }
 
-VAULT_NEWS_DIR = os.environ.get(
-    "VAULT_NEWS_DIR",
-    "/Users/dien/Obsidian/Projects/Financial_Automation/News",
-)
+# From Settings so backend/.env applies (VAULT_NEWS_DIR there or in the env).
+VAULT_NEWS_DIR = get_settings().vault_news_dir
 
 
 class RedditRateLimited(Exception):

@@ -3,12 +3,7 @@
 const PORTFOLIO_CURRENCIES = ['USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF', 'CNY', 'VND'];
 const TX_TYPES = ['BUY', 'SELL', 'DIVIDEND', 'DEPOSIT', 'WITHDRAWAL', 'FEE', 'TAX'];
 
-const pfMoney = (value, currency = 'USD', digits = 2) => {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return '—';
-  try { return new Intl.NumberFormat(undefined, { style: 'currency', currency, minimumFractionDigits: digits, maximumFractionDigits: digits }).format(n); }
-  catch { return `${currency} ${n.toLocaleString(undefined, { maximumFractionDigits: digits })}`; }
-};
+const pfMoney = fmtMoney;   // shared formatter (primitives.jsx)
 
 const pfLocalDateTime = (value = new Date()) => {
   const date = new Date(value);
@@ -59,19 +54,24 @@ const PagePortfolio = ({ data, setActiveAsset, setPage }) => {
   const [showImport, setShowImport] = React.useState(false);
   const [historyTicker, setHistoryTicker] = React.useState(null);
   const [busy, setBusy] = React.useState('');
+  const portfolioRef = React.useRef(null);
+  portfolioRef.current = portfolio;
+  const dataRef = React.useRef(data);   // demo snapshot; read lazily so live re-hydration doesn't refetch
+  dataRef.current = data;
 
   const loadPortfolio = React.useCallback(async () => {
     setError('');
-    if (!window.HelixAPI) { delete window.__livePortfolioContext; setPortfolio(demoPortfolio(data)); setLive(false); setLoading(false); return; }
+    setLoading(l => l || !portfolioRef.current);
+    if (!window.HelixAPI) { delete window.__livePortfolioContext; setPortfolio(demoPortfolio(dataRef.current)); setLive(false); setLoading(false); return; }
     if (!window.HelixAPI.checked) await window.HelixAPI.detect();
-    if (!window.HelixAPI.live) { delete window.__livePortfolioContext; setPortfolio(demoPortfolio(data)); setLive(false); setLoading(false); return; }
+    if (!window.HelixAPI.live) { delete window.__livePortfolioContext; setPortfolio(demoPortfolio(dataRef.current)); setLive(false); setLoading(false); return; }
     try {
       const pf = await window.HelixAPI.portfolio();
       window.__livePortfolioContext = pf;
       setPortfolio(pf); setLive(true);
     } catch (e) { setError(e.message || String(e)); }
     setLoading(false);
-  }, [data]);
+  }, [data.demo]);
 
   const loadPerformance = React.useCallback(async () => {
     if (!window.HelixAPI?.live) { setPerformance([]); return; }
@@ -140,6 +140,16 @@ const PagePortfolio = ({ data, setActiveAsset, setPage }) => {
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'portfolio_holdings.csv'; a.click(); URL.revokeObjectURL(a.href);
   };
 
+  // A failed first load must show the error, not an endless skeleton.
+  if (!portfolio && error && !loading) return (
+    <div className="page">
+      <div className="card" style={{ padding: 24 }}>
+        <div style={{ fontWeight: 600, marginBottom: 6 }}>Could not load the portfolio.</div>
+        <div className="num" style={{ fontSize: 12, color: 'var(--neg)', marginBottom: 14 }}>{error}</div>
+        <button className="btn btn-primary" onClick={() => loadPortfolio()}>Retry</button>
+      </div>
+    </div>
+  );
   if (loading || !portfolio) return <div className="page"><div className="skeleton" style={{ height: 220 }} /></div>;
   const currency = portfolio.display_currency;
   const colors = ['#C2410C', '#1D4ED8', '#15803D', '#7C3AED', '#A16207', '#0E7490', '#BE185D'];
@@ -219,14 +229,17 @@ const EVENT_STYLE = {
   DIVIDEND: { label: 'Cash dividend', color: 'var(--pos)' },
 };
 
-const tkMoney = (v, c = 'VND') => v == null ? '—' : pfMoney(v, c, 0);
+// Amounts are in the ticker's own currency (t.currency); VND has no minor unit.
+const tkDigits = c => (String(c || '').toUpperCase() === 'VND' ? 0 : 2);
+const tkMoney = (v, c) => v == null ? '—' : fmtMoney(v, c || 'VND', tkDigits(c || 'VND'));
 const tkNum = v => v ? Number(v).toLocaleString() : '—';
-const tkPL = (v, pct) => v == null ? '—' : <><span className={v >= 0 ? 'pos num' : 'neg num'}>{tkMoney(v)}</span>{pct != null && <div><Pill value={pct} /></div>}</>;
+const tkPL = (v, pct, c) => v == null ? '—' : <><span className={v >= 0 ? 'pos num' : 'neg num'}>{tkMoney(v, c)}</span>{pct != null && <div><Pill value={pct} /></div>}</>;
 
 // Every order and share event for one ticker (shared by the By-ticker tab and the holdings popup).
 const TickerEvents = ({ t }) => {
   const [openEvent, setOpenEvent] = React.useState(null);
-  const m = tkMoney, n = tkNum, pl = tkPL;
+  const c = t.currency;
+  const m = v => tkMoney(v, c), n = tkNum, pl = (v, pct) => tkPL(v, pct, c);
   return <>
     <div style={{ padding: '10px 16px', fontSize: 12, color: 'var(--text-muted)' }}>
       <strong style={{ color: 'var(--text)' }}>{t.ticker}</strong>: {t.orders_buy} buy orders ({n(t.shares_bought)} shares) · {t.orders_sell} sell orders ({n(t.shares_sold)} shares)
@@ -266,8 +279,8 @@ const TickerHistoryModal = ({ ticker, revision, price, onClose, onChart }) => {
   const net = t && value != null ? t.received + t.dividends + value - t.paid : null;
   return <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,.45)', display: 'grid', placeItems: 'center', padding: 20 }}>
     <div onClick={e => e.stopPropagation()} className="card" style={{ width: '100%', maxWidth: 960, maxHeight: '88vh', overflow: 'auto' }}>
-      <div className="card-header"><div><h3 className="card-title"><span className="ticker">{ticker}</span> · my orders</h3>{t && <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>Paid {tkMoney(t.paid)} · from sells {tkMoney(t.received)} · dividends {tkMoney(t.dividends)} · value now {tkMoney(value)}</span>}</div>
-        <div className="row">{net != null && <span>Net P/L {tkPL(net, t.paid ? net / t.paid * 100 : null)}</span>}<button className="btn" onClick={onChart}>Open chart</button><button className="icon-btn" onClick={onClose}><Icon name="close" size={12} /></button></div></div>
+      <div className="card-header"><div><h3 className="card-title"><span className="ticker">{ticker}</span> · my orders</h3>{t && <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>Paid {tkMoney(t.paid, t.currency)} · from sells {tkMoney(t.received, t.currency)} · dividends {tkMoney(t.dividends, t.currency)} · value now {tkMoney(value, t.currency)}</span>}</div>
+        <div className="row">{net != null && <span>Net P/L {tkPL(net, t.paid ? net / t.paid * 100 : null, t.currency)}</span>}<button className="btn" onClick={onChart}>Open chart</button><button className="icon-btn" onClick={onClose}><Icon name="close" size={12} /></button></div></div>
       <div className="card-body flush" style={{ overflowX: 'auto' }}>
         {error ? <div style={{ padding: 24, color: 'var(--text-muted)' }}>{error}</div> : !t ? <div style={{ padding: 24, color: 'var(--text-muted)' }}>Loading…</div> : <TickerEvents t={t} />}
       </div>
@@ -287,24 +300,37 @@ const TickerPanel = ({ live, revision, holdings }) => {
   if (error) return <div className="card" style={{ padding: 12, color: 'var(--neg)' }}>{error}</div>;
   if (!data) return <div className="card" style={{ padding: 24, color: 'var(--text-muted)' }}>Loading tickers…</div>;
 
-  const price = Object.fromEntries((holdings || []).map(h => [h.ticker, h.price]));
+  // Holding prices are native-currency; match on ticker + currency.
+  const price = Object.fromEntries((holdings || []).map(h => [`${h.ticker}|${h.currency}`, h.price]));
   const rows = data.tickers.map(t => {
-    const value = t.shares_now > 0 ? (price[t.ticker] != null ? price[t.ticker] * t.shares_now : null) : 0;
+    const px = price[`${t.ticker}|${t.currency}`];
+    const value = t.shares_now > 0 ? (px != null ? px * t.shares_now : null) : 0;
     const net = value == null ? null : t.received + t.dividends + value - t.paid;
     return { ...t, value, net, net_pct: net != null && t.paid ? net / t.paid * 100 : null };
   });
-  const tot = rows.reduce((a, r) => ({ paid: a.paid + r.paid, received: a.received + r.received, dividends: a.dividends + r.dividends, value: a.value + (r.value || 0), net: a.net + (r.net || 0), orders: a.orders + r.orders_buy + r.orders_sell }), { paid: 0, received: 0, dividends: 0, value: 0, net: 0, orders: 0 });
-  const m = (v, c = 'VND') => v == null ? '—' : pfMoney(v, c, 0);
-  const n = v => v ? Number(v).toLocaleString() : '—';
-  const pl = (v, pct) => v == null ? '—' : <><span className={v >= 0 ? 'pos num' : 'neg num'}>{m(v)}</span>{pct != null && <div><Pill value={pct} /></div>}</>;
+  // Totals are per currency — amounts in different currencies are never summed.
+  const totals = {};
+  rows.forEach(r => {
+    const c = r.currency || 'VND';
+    const a = totals[c] || (totals[c] = { paid: 0, received: 0, dividends: 0, value: 0, net: 0, orders: 0, missing: false });
+    a.paid += r.paid; a.received += r.received; a.dividends += r.dividends;
+    a.value += r.value || 0; a.net += r.net || 0; a.orders += r.orders_buy + r.orders_sell;
+    if (r.net == null) a.missing = true;
+  });
+  const ccys = Object.keys(totals).sort();
+  const single = ccys.length === 1 ? totals[ccys[0]] : null;
+  const perCcy = (fn) => ccys.length ? ccys.map(c => <div key={c}>{fn(totals[c], c)}</div>) : '—';
+  const n = tkNum;
+  const totalOrders = rows.reduce((s, r) => s + r.orders_buy + r.orders_sell, 0);
 
   return <>
     <div className="stat-grid" style={{ marginBottom: 20 }}>
-      <PortfolioMetric label="Net P/L, all tickers" value={m(tot.net)} delta={tot.paid ? tot.net / tot.paid * 100 : undefined} />
-      <PortfolioMetric label="Paid for shares" value={m(tot.paid)} />
-      <PortfolioMetric label="Received (sells + dividends)" value={m(tot.received + tot.dividends)} />
-      <PortfolioMetric label="Orders" value={tot.orders.toLocaleString()} />
+      <PortfolioMetric label="Net P/L, all tickers" value={perCcy((a, c) => tkMoney(a.net, c))} delta={single && single.paid && !single.missing ? single.net / single.paid * 100 : undefined} />
+      <PortfolioMetric label="Paid for shares" value={perCcy((a, c) => tkMoney(a.paid, c))} />
+      <PortfolioMetric label="Received (sells + dividends)" value={perCcy((a, c) => tkMoney(a.received + a.dividends, c))} />
+      <PortfolioMetric label="Orders" value={totalOrders.toLocaleString()} />
     </div>
+    {Object.values(totals).some(a => a.missing) && <div className="card" style={{ padding: 10, marginBottom: 16, color: 'var(--text-muted)' }}>Some open positions have no current price, so their value and net P/L are left out of the totals.</div>}
     <div className="card">
       <div className="card-header"><div><h3 className="card-title">By ticker</h3><span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>Net P/L = money from sells + dividends + value now − money paid (fees &amp; taxes included). Same result for FIFO or average. Click a ticker for every order and share event.</span></div></div>
       <div className="card-body flush" style={{ overflowX: 'auto' }}>
@@ -315,9 +341,9 @@ const TickerPanel = ({ live, revision, holdings }) => {
             <th className="right">Paid</th><th className="right">From sells</th><th className="right">Dividends</th><th className="right">Value now</th>
             <th className="right">Net P/L</th><th className="right">FIFO realized</th>
           </tr></thead>
-          <tbody>{rows.map(t => <React.Fragment key={t.ticker}>
+          <tbody>{rows.map(t => { const m = v => tkMoney(v, t.currency); const pl = (v, pct) => tkPL(v, pct, t.currency); return <React.Fragment key={`${t.ticker}|${t.currency}`}>
             <tr onClick={() => { setOpen(open === t.ticker ? null : t.ticker); }} style={{ cursor: 'pointer', opacity: t.shares_now > 0 ? 1 : 0.75 }}>
-              <td><span className="ticker">{open === t.ticker ? '▾' : '▸'} {t.ticker}</span></td>
+              <td><span className="ticker">{open === t.ticker ? '▾' : '▸'} {t.ticker}</span>{ccys.length > 1 && <span style={{ fontSize: 10, color: 'var(--text-subtle)', marginLeft: 6 }}>{t.currency}</span>}</td>
               <td className="right num">{t.orders_buy} / {t.orders_sell}</td>
               <td className="right num">{n(t.shares_bought)}</td>
               <td className="right num" style={{ color: t.shares_received ? 'var(--pos)' : undefined }}>{t.shares_received ? '+' + n(t.shares_received) : '—'}</td>
@@ -331,8 +357,8 @@ const TickerPanel = ({ live, revision, holdings }) => {
               <td className="right">{t.orders_sell ? pl(t.realized_fifo) : '—'}</td>
             </tr>
             {open === t.ticker && <tr><td colSpan={12} style={{ background: 'var(--bg-sunken)', padding: 0 }}><TickerEvents t={t} /></td></tr>}
-          </React.Fragment>)}</tbody>
-          <tfoot><tr style={{ fontWeight: 600 }}><td>Total</td><td className="right num">{tot.orders}</td><td colSpan={4}></td><td className="right num">{m(tot.paid)}</td><td className="right num">{m(tot.received)}</td><td className="right num">{m(tot.dividends)}</td><td className="right num">{m(tot.value)}</td><td className="right">{pl(tot.net)}</td><td></td></tr></tfoot>
+          </React.Fragment>; })}</tbody>
+          <tfoot>{ccys.map(c => { const a = totals[c]; return <tr key={c} style={{ fontWeight: 600 }}><td>Total{ccys.length > 1 ? ` · ${c}` : ''}</td><td className="right num">{a.orders}</td><td colSpan={4}></td><td className="right num">{tkMoney(a.paid, c)}</td><td className="right num">{tkMoney(a.received, c)}</td><td className="right num">{tkMoney(a.dividends, c)}</td><td className="right num">{tkMoney(a.value, c)}</td><td className="right">{tkPL(a.net, null, c)}</td><td></td></tr>; })}</tfoot>
         </table>
       </div>
     </div>

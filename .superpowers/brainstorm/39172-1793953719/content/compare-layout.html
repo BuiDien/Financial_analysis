@@ -1,0 +1,62 @@
+<h2>How should you pick what to compare?</h2>
+<p class="subtitle">MBB, consolidated (hợp nhất), Balance sheet. Numbers in triệu đồng are taken from the MBB Q3 2026 statement you OCR'd; the other periods are made up for the mockup.</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Two pickers: "Base" vs "Compare to"</h3>
+      <p>You pick exactly two statements. Every line shows both values, the change, and the % change.</p>
+      <div class="mockup" style="margin-top:10px">
+        <div class="mockup-header">Compare</div>
+        <div class="mockup-body" style="font-size:12px">
+          <div style="display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+            <span>Base <select class="mock-input" style="width:auto"><option>Q3 2026</option></select></span>
+            <span>Compare to <select class="mock-input" style="width:auto"><option>Q4 2025</option></select></span>
+          </div>
+          <table style="width:100%;border-collapse:collapse">
+            <tr style="text-align:right;opacity:.7"><td style="text-align:left">Line</td><td>Q3 2026</td><td>Q4 2025</td><td>Change</td><td>%</td></tr>
+            <tr style="text-align:right"><td style="text-align:left">Các khoản phải thu</td><td>22.120.894</td><td>28.125.764</td><td style="color:#d55">(6.004.870)</td><td style="color:#d55">−21,4%</td></tr>
+            <tr style="text-align:right"><td style="text-align:left">Tài sản Có khác</td><td>51.804.488</td><td>49.531.482</td><td style="color:#3a3">2.273.006</td><td style="color:#3a3">+4,6%</td></tr>
+            <tr style="text-align:right"><td style="text-align:left">Bất động sản đầu tư</td><td>213.258</td><td>222.813</td><td style="color:#d55">(9.555)</td><td style="color:#d55">−4,3%</td></tr>
+            <tr style="text-align:right;font-weight:bold"><td style="text-align:left">TỔNG TÀI SẢN CÓ</td><td>1.837.857.452</td><td>1.615.763.927</td><td style="color:#3a3">222.093.525</td><td style="color:#3a3">+13,7%</td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Tick any periods: they become columns</h3>
+      <p>You tick 2 or more statements. Each one becomes a column and you read the trend across. No change column; click a line to see it as a small chart.</p>
+      <div class="mockup" style="margin-top:10px">
+        <div class="mockup-header">Compare</div>
+        <div class="mockup-body" style="font-size:12px">
+          <div style="display:flex;gap:12px;margin-bottom:10px;flex-wrap:wrap">
+            <label><input type="checkbox" checked> Q4 2025</label>
+            <label><input type="checkbox" checked> Q1 2026</label>
+            <label><input type="checkbox" checked> Q2 2026</label>
+            <label><input type="checkbox" checked> Q3 2026</label>
+          </div>
+          <table style="width:100%;border-collapse:collapse">
+            <tr style="text-align:right;opacity:.7"><td style="text-align:left">Line</td><td>Q4 25</td><td>Q1 26</td><td>Q2 26</td><td>Q3 26</td></tr>
+            <tr style="text-align:right"><td style="text-align:left">Các khoản phải thu</td><td>28.125.764</td><td>26.410.002</td><td>24.077.315</td><td>22.120.894</td></tr>
+            <tr style="text-align:right"><td style="text-align:left">Tài sản Có khác</td><td>49.531.482</td><td>50.102.774</td><td>50.966.130</td><td>51.804.488</td></tr>
+            <tr style="text-align:right"><td style="text-align:left">Bất động sản đầu tư</td><td>222.813</td><td>219.600</td><td>216.402</td><td>213.258</td></tr>
+            <tr style="text-align:right;font-weight:bold"><td style="text-align:left">TỔNG TÀI SẢN CÓ</td><td>1.615.763.927</td><td>1.688.214.006</td><td>1.760.552.381</td><td>1.837.857.452</td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Both: tick columns, then pick one as "Base"</h3>
+      <p>Like B, but one ticked column is the base and every other column also shows its % change against the base.</p>
+    </div>
+  </div>
+</div>

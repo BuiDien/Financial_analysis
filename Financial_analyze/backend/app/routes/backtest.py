@@ -1,23 +1,25 @@
 from datetime import date, timedelta
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.backtest import data
-from app.backtest.engine import run_backtest
+from app.backtest.engine import VN_LIMIT_PCT, run_backtest, vn_tick
 from app.backtest.metrics import compute_metrics
 from app.backtest.strategies import get_strategy, list_strategies, resolve_params
+from app.screener.provider import VN_INDEX_SYMBOLS
 from app.services import market
 
 router = APIRouter()
 
+# Bars from data.load_daily_bars are in full currency units (VND for VN), so
+# price_scale is 1 everywhere; it stays in `settings` for the frontend.
 VN_DEFAULTS = dict(currency="VND", initial_capital=100_000_000, fee_pct=0.15, sell_tax_pct=0.1,
-                   lot_size=100, price_scale=1000, min_hold_bars=3)
+                   lot_size=100, price_scale=1, min_hold_bars=3)
 US_DEFAULTS = dict(currency="USD", initial_capital=10_000, fee_pct=0.0, sell_tax_pct=0.0,
                    lot_size=1, price_scale=1, min_hold_bars=0)
-
-
-VN_INDEX_SYMBOLS = {"VNINDEX", "VN30", "HNXINDEX", "HNX30", "UPCOMINDEX"}  # mirrors VN_INDEXES in page-detail.jsx
+DEFAULT_SLIPPAGE_PCT = 0.1     # adverse, per fill
+DEFAULT_MAX_VOLUME_PCT = 10.0  # of the fill bar's volume
 
 
 class BacktestRequest(BaseModel):
@@ -26,9 +28,24 @@ class BacktestRequest(BaseModel):
     params: dict[str, float] = {}
     start: date
     end: date
-    initial_capital: float | None = None
-    fee_pct: float | None = None
-    sell_tax_pct: float | None = None
+    initial_capital: float | None = Field(None, gt=0)
+    fee_pct: float | None = Field(None, ge=0)
+    sell_tax_pct: float | None = Field(None, ge=0)
+    slippage_pct: float = Field(DEFAULT_SLIPPAGE_PCT, ge=0)
+    max_volume_pct: float = Field(DEFAULT_MAX_VOLUME_PCT, gt=0, le=100)
+    exchange: str | None = None  # VN: HOSE/HNX/UPCOM; looked up when omitted
+
+
+def _vn_exchange(symbol: str) -> str | None:
+    """Exchange from the screener's ticker table, None if unknown."""
+    try:
+        from app.db import SessionLocal
+        from app.models.screener import TickerMetrics
+        with SessionLocal() as db:
+            row = db.get(TickerMetrics, symbol)
+            return (row.exchange or None) if row is not None else None
+    except Exception:
+        return None
 
 
 @router.get("/backtest/strategies")
@@ -37,12 +54,16 @@ def strategies():
 
 
 def _simulate(bars, targets, start_index, s):
+    exchange = s.get("exchange")
     result = run_backtest(
         bars, targets,
         initial_capital=s["initial_capital"], fee_rate=s["fee_pct"] / 100,
         sell_tax_rate=s["sell_tax_pct"] / 100, lot_size=s["lot_size"],
         price_scale=s["price_scale"], min_hold_bars=s["min_hold_bars"],
-        start_index=start_index,
+        start_index=start_index, slippage_rate=s["slippage_pct"] / 100,
+        lock_check=s["lock_check"], limit_pct=s["limit_pct"],
+        tick_fn=lambda p: vn_tick(p, exchange),
+        max_volume_frac=s["max_volume_pct"] / 100,
     )
     return result, compute_metrics(result, s["initial_capital"])
 
@@ -61,14 +82,23 @@ def run(req: BacktestRequest):
     except ValueError as e:
         raise HTTPException(400, str(e))
 
-    s = dict(VN_DEFAULTS if ticker.startswith(market.VN_PREFIX) else US_DEFAULTS)
-    if ticker.startswith(market.VN_PREFIX) and ticker[len(market.VN_PREFIX):] in VN_INDEX_SYMBOLS:
-        # VCI index prices are not in 1000-VND units, and an index is not lot-traded.
-        s["price_scale"], s["lot_size"] = 1, 1
+    is_vn = ticker.startswith(market.VN_PREFIX)
+    symbol = ticker[len(market.VN_PREFIX):] if is_vn else ticker
+    is_index = is_vn and symbol in VN_INDEX_SYMBOLS
+    s = dict(VN_DEFAULTS if is_vn else US_DEFAULTS)
+    if is_index:
+        s["lot_size"] = 1  # an index is not lot-traded
     for k, v in (("initial_capital", req.initial_capital), ("fee_pct", req.fee_pct),
                  ("sell_tax_pct", req.sell_tax_pct)):
         if v is not None:
             s[k] = v
+    exchange = None
+    if is_vn and not is_index:
+        exchange = (req.exchange or _vn_exchange(symbol) or "").upper() or None
+    s.update(slippage_pct=req.slippage_pct, max_volume_pct=req.max_volume_pct,
+             exchange=exchange, limit_pct=VN_LIMIT_PCT.get(exchange) if exchange else None,
+             # A one-price bar is a locked limit move on VN; US/index bars never lock.
+             lock_check=is_vn and not is_index)
     currency = s.pop("currency")
 
     try:
@@ -96,5 +126,7 @@ def run(req: BacktestRequest):
         "settings": {**s, "initial_capital": s["initial_capital"]},
         "bars": bars[start_index:],
         "equity": result["equity"], "benchmark_equity": bench["equity"],
-        "trades": result["trades"], "skipped_buys": result["skipped_buys"], "metrics": metrics, "benchmark_metrics": bench_metrics,
+        "trades": result["trades"], "skipped_buys": result["skipped_buys"],
+        "blocked_fills": result["blocked_fills"],
+        "metrics": metrics, "benchmark_metrics": bench_metrics,
     }

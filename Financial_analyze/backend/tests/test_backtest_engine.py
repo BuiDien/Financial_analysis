@@ -69,3 +69,56 @@ def test_pending_sell_cancelled_when_target_returns_to_one():
     r = run_backtest(mk([10] * 6), [1, 0, 1, 1, 1, 1], **kw)
     assert len(r["trades"]) == 1 and r["trades"][0]["open"]
     assert r["exposure_bars"] == 5
+
+
+# ---- fill realism ----------------------------------------------------------
+
+def bar(d, o, h, l, c, v=1_000_000):
+    return {"date": f"2021-01-{d:02d}", "open": o, "high": h, "low": l, "close": c, "volume": v}
+
+
+def test_slippage_is_adverse_on_both_sides():
+    r = run_backtest(mk([100, 100, 100]), [1, 0, 0], **{**KW, "slippage_rate": 0.01})
+    t = r["trades"][0]
+    assert t["entry_price"] == 101 and t["exit_price"] == 99
+    assert t["shares"] == 99 and round(t["pnl"], 6) == round(99 * 99 - 99 * 101, 6)
+
+
+def test_lock_check_skips_one_price_bar_both_sides():
+    bars = [bar(1, 10, 11, 9, 10), bar(2, 10, 10, 10, 10), bar(3, 10, 11, 9, 10),
+            bar(4, 12, 12, 12, 12), bar(5, 12, 13, 11, 12)]
+    r = run_backtest(bars, [1, 1, 0, 0, 0], lock_check=True, **KW)
+    t = r["trades"][0]
+    assert t["entry_date"] == "2021-01-03"   # 01-02 was locked
+    assert t["exit_date"] == "2021-01-05"    # 01-04 was locked
+    assert r["blocked_fills"] == 2
+
+
+def test_lock_check_off_by_default():
+    r = run_backtest(mk([100, 100, 100]), [1, 0, 0], **KW)
+    assert r["trades"][0]["entry_date"] == "2021-01-02" and r["blocked_fills"] == 0
+
+
+def test_ceiling_and_floor_block_with_limit():
+    from app.backtest.engine import vn_tick
+    kw = {**KW, "initial_capital": 100_000_000, "lot_size": 100, "lock_check": True,
+          "limit_pct": 0.07, "tick_fn": lambda p: vn_tick(p, "HOSE")}
+    # 23_450 * 1.07 = 25_091.5 -> ceiling 25_050 (50-dong tick); opens there
+    bars = [bar(1, 23_450, 23_500, 23_400, 23_450), bar(2, 25_050, 25_050, 24_800, 24_900),
+            bar(3, 24_900, 25_000, 24_800, 24_900),
+            bar(4, 23_200, 23_400, 23_200, 23_300),   # 24_900*0.93=23_157 -> floor 23_200
+            bar(5, 23_300, 23_500, 23_200, 23_400)]
+    r = run_backtest(bars, [1, 1, 0, 0, 0], **kw)
+    t = r["trades"][0]
+    assert t["entry_date"] == "2021-01-03" and t["exit_date"] == "2021-01-05"
+    assert r["blocked_fills"] == 2
+
+
+def test_volume_cap_limits_buy_and_splits_sell():
+    bars = [bar(1, 10, 11, 9, 10, 1000), bar(2, 10, 11, 9, 10, 1000),
+            bar(3, 10, 11, 9, 10, 500), bar(4, 10, 11, 9, 10, 500), bar(5, 10, 11, 9, 10, 500)]
+    r = run_backtest(bars, [1, 0, 0, 0, 0], max_volume_frac=0.1, **KW)
+    t = r["trades"][0]
+    assert t["shares"] == 100                      # 10% of 1000
+    assert t["exit_date"] == "2021-01-04" and not t["open"]  # 50 + 50 over two bars
+    assert t["exit_price"] == 10 and t["pnl"] == 0

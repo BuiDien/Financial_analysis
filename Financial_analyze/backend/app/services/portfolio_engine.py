@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import secrets
+import threading
 from collections import defaultdict, deque
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -24,6 +25,64 @@ from . import market
 
 ZERO = Decimal("0")
 TX_TYPES = {"BUY", "SELL", "DIVIDEND", "DEPOSIT", "WITHDRAWAL", "FEE", "TAX"}
+
+# The ledger's calendar is Vietnam's: a trade at 06:30 in Hanoi (23:30 UTC the
+# previous day) belongs to the Hanoi day, which is also the HOSE trading day.
+VN_TZ = timezone(timedelta(hours=7))
+
+# Bonus shares / stock dividends: BUY at price 0 booked from an SSI statement.
+BONUS_SOURCES = {"ssi_corporate"}
+
+
+def local_day(dt: datetime) -> date:
+    """Calendar day of a stored timestamp in Asia/Ho_Chi_Minh (naive = UTC)."""
+    return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).astimezone(VN_TZ).date()
+
+
+def utc_naive(dt: datetime) -> datetime:
+    return dt.astimezone(timezone.utc).replace(tzinfo=None) if dt.tzinfo else dt
+
+
+def is_bonus(tx) -> bool:
+    """A free share allocation (bonus issue / stock dividend), not a purchase.
+
+    It does not create a zero-cost lot: the shares already held are split, so
+    their total cost is spread over more shares (see rebuild / realized_fifo).
+    """
+    return (
+        tx.type == "BUY"
+        and tx.source in BONUS_SOURCES
+        and dec(tx.unit_price) == 0
+        and dec(tx.fees) == 0
+        and dec(tx.taxes) == 0
+    )
+
+
+def _scale_lots(queue, bonus_qty: Decimal, qty_of, set_qty) -> bool:
+    """Spread `bonus_qty` new shares over the open lots pro rata, cost unchanged.
+    Returns False when nothing is held (caller books a zero-cost lot instead)."""
+    held = sum((qty_of(lot) for lot in queue), ZERO)
+    if held <= 0:
+        return False
+    target = held + bonus_qty
+    ratio = target / held
+    scaled = ZERO
+    for index, lot in enumerate(queue):
+        # the last lot absorbs rounding so the total stays exact (no phantom oversell)
+        q = target - scaled if index == len(queue) - 1 else qty_of(lot) * ratio
+        set_qty(lot, q)
+        scaled += q
+    return True
+
+
+_rebuild_locks: dict[int, threading.RLock] = {}
+_rebuild_locks_guard = threading.Lock()
+
+
+def rebuild_lock(portfolio_id: int) -> threading.RLock:
+    """One projection rebuild at a time per portfolio (SQLite write contention)."""
+    with _rebuild_locks_guard:
+        return _rebuild_locks.setdefault(portfolio_id, threading.RLock())
 
 
 def dec(value) -> Decimal:
@@ -213,8 +272,7 @@ def validate_ledger_sequence(
         events.append({**values, "order": 10**12 + index})
 
     def sort_time(event):
-        value = event["effective_at"]
-        return value.replace(tzinfo=None) if value.tzinfo else value
+        return utc_naive(event["effective_at"])
 
     events.sort(key=lambda event: (sort_time(event), event.get("order", 0)))
     quantities = defaultdict(lambda: ZERO)
@@ -228,7 +286,7 @@ def validate_ledger_sequence(
         else:
             if quantity > quantities[key]:
                 raise ValueError(
-                    f"Cannot sell {quantity} {key[0]} on {event['effective_at'].date()}; "
+                    f"Cannot sell {quantity} {key[0]} on {local_day(event['effective_at'])}; "
                     f"only {quantities[key]} are available"
                 )
             quantities[key] -= quantity
@@ -256,13 +314,20 @@ def realized_fifo(db: Session, portfolio: Portfolio) -> dict:
         native = tx.currency
         qty, price = dec(tx.quantity), dec(tx.unit_price)
         fees, taxes = dec(tx.fees), dec(tx.taxes)
-        rate, _ = fx_rate(db, native, currency, tx.effective_at.date())
+        rate, _ = fx_rate(db, native, currency, local_day(tx.effective_at))
+        if is_bonus(tx):
+            def _set(lot, q):
+                lot["qty"] = q
+                lot["unit_cost"] = lot["cost_native"] / q
+                lot["bonus_adjusted"] = True
+            if _scale_lots(lots[(tx.ticker, native)], qty, lambda lot: lot["qty"], _set):
+                continue
         if tx.type == "BUY":
             cost = qty * price + fees + taxes
             lots[(tx.ticker, native)].append({
                 "buy_id": tx.id, "date": tx.effective_at, "qty": qty,
                 "cost_native": cost, "cost_display": cost * rate,
-                "unit_cost": cost / qty, "source": tx.source,
+                "unit_cost": cost / qty, "source": tx.source, "bonus_adjusted": False,
             })
             continue
         proceeds_native = qty * price - fees - taxes
@@ -281,6 +346,7 @@ def realized_fifo(db: Session, portfolio: Portfolio) -> dict:
                 "buy_id": lot["buy_id"], "buy_date": lot["date"].isoformat(),
                 "quantity": float(used), "unit_cost": float(lot["unit_cost"]),
                 "cost": float(part_native), "zero_cost_adjustment": lot["source"] == "ssi_adjust",
+                "bonus_adjusted": lot["bonus_adjusted"],
             })
             if used == lot["qty"]:
                 queue.popleft()
@@ -394,6 +460,11 @@ def ticker_breakdown(db: Session, portfolio: Portfolio) -> dict:
 
 
 def rebuild(db: Session, portfolio_id: int) -> None:
+    with rebuild_lock(portfolio_id):
+        _rebuild_locked(db, portfolio_id)
+
+
+def _rebuild_locked(db: Session, portfolio_id: int) -> None:
     portfolio = db.get(Portfolio, portfolio_id)
     if not portfolio:
         raise ValueError("Portfolio not found")
@@ -412,7 +483,12 @@ def rebuild(db: Session, portfolio_id: int) -> None:
         kind, native = tx.type, tx.currency
         qty, price = dec(tx.quantity), dec(tx.unit_price)
         amount, fees, taxes = dec(tx.cash_amount), dec(tx.fees), dec(tx.taxes)
-        rate, _ = fx_rate(db, native, currency, tx.effective_at.date())
+        rate, _ = fx_rate(db, native, currency, local_day(tx.effective_at))
+        if is_bonus(tx):
+            def _set(lot, q):
+                lot[0] = q
+            if _scale_lots(lots[(tx.ticker, native)], qty, lambda lot: lot[0], _set):
+                continue
         if kind == "BUY":
             gross = qty * price
             basis_native = gross + fees + taxes
@@ -526,6 +602,9 @@ def rebuild_snapshots(db: Session, portfolio: Portfolio) -> None:
 
     Historical data gaps deliberately create no point; the API never fabricates
     a curve. Weekends carry the prior market close, as portfolio statements do.
+    External flows on days without a point are carried to the next point, so a
+    deposit made during a price gap is never counted as return. A return is
+    only chained when the previous value is positive.
     """
     txs = (
         db.query(PortfolioTransaction)
@@ -537,7 +616,7 @@ def rebuild_snapshots(db: Session, portfolio: Portfolio) -> None:
     if not txs:
         db.commit()
         return
-    start, end = txs[0].effective_at.date(), date.today()
+    start, end = local_day(txs[0].effective_at), date.today()
     tickers = sorted({tx.ticker for tx in txs if tx.ticker})
     currencies = sorted({tx.currency for tx in txs})
     ticker_currency = {tx.ticker: tx.currency for tx in txs if tx.ticker}
@@ -554,13 +633,14 @@ def rebuild_snapshots(db: Session, portfolio: Portfolio) -> None:
     cash = defaultdict(lambda: ZERO)
     by_day = defaultdict(list)
     for tx in txs:
-        by_day[tx.effective_at.date()].append(tx)
+        by_day[local_day(tx.effective_at)].append(tx)
     previous_value = None
+    pending_flow = ZERO  # flows since the last written point
     cumulative_twr = ZERO
     rows = []
     day = start
     while day <= end:
-        flow = ZERO
+        flow = pending_flow
         for tx in by_day.get(day, []):
             qty, price = dec(tx.quantity), dec(tx.unit_price)
             amount, fees, taxes = dec(tx.cash_amount), dec(tx.fees), dec(tx.taxes)
@@ -613,8 +693,11 @@ def rebuild_snapshots(db: Session, portfolio: Portfolio) -> None:
                     complete = False
                     break
                 value += balance * rate_last[currency]
-        if complete:
-            if previous_value not in {None, ZERO}:
+        if not complete:
+            pending_flow = flow
+        else:
+            pending_flow = ZERO
+            if previous_value is not None and previous_value > 0:
                 daily_return = (value - previous_value - flow) / previous_value
                 cumulative_twr = (Decimal("1") + cumulative_twr) * (
                     Decimal("1") + daily_return
@@ -659,6 +742,35 @@ def run_job(db_factory, job_id: str) -> None:
     try:
         job = db.get(PortfolioJob, job_id)
         if not job or job.status not in {"queued", "interrupted"}:
+            return
+        portfolio_id = job.portfolio_id
+    finally:
+        db.close()
+    with rebuild_lock(portfolio_id):
+        _run_job_locked(db_factory, job_id)
+
+
+def _run_job_locked(db_factory, job_id: str) -> None:
+    db = db_factory()
+    try:
+        job = db.get(PortfolioJob, job_id)
+        if not job or job.status not in {"queued", "interrupted"}:
+            return
+        portfolio = db.get(Portfolio, job.portfolio_id)
+        if (
+            portfolio
+            and portfolio.projection_status != "failed"
+            and portfolio.projection_revision >= portfolio.ledger_revision
+            and portfolio.projection_revision > 0
+        ):
+            # An earlier job already built this (or a later) revision.
+            job.status, job.progress = "completed", 100
+            job.result = json.dumps(
+                {"projection_revision": portfolio.projection_revision, "coalesced": True}
+            )
+            job.completed_at = datetime.now(timezone.utc)
+            portfolio.projection_status = "ready"
+            db.commit()
             return
         job.status, job.progress, job.started_at = (
             "running",

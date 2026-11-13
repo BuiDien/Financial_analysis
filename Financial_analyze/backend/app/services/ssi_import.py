@@ -19,6 +19,7 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session, sessionmaker
 
+from ..config import resolve_backend_path
 from ..models.gmail import GmailReport
 from ..models.portfolio import Portfolio, PortfolioTransaction
 from . import portfolio_engine as engine
@@ -88,11 +89,14 @@ def _import_locked(db: Session, reports: list[GmailReport]) -> dict:
         else:
             ok_reports.append(rep)
 
-    active = db.query(PortfolioTransaction).filter_by(portfolio_id=p.id, status="active").all()
-    known = {(tx.source, tx.external_id) for tx in active if tx.external_id}
+    rows = db.query(PortfolioTransaction).filter_by(portfolio_id=p.id).all()
+    active = [tx for tx in rows if tx.status == "active"]
+    # Every status counts: a voided/edited imported row is a tombstone, so the
+    # same report never re-creates it (and never hits uq_portfolio_import_external).
+    known = {(tx.source, tx.external_id) for tx in rows if tx.external_id}
     from_statements = _Counter(
         _trade_key(_local_day(tx.effective_at), tx.ticker, tx.type, tx.quantity, tx.unit_price)
-        for tx in active if tx.source == "ssi_statement")
+        for tx in rows if tx.source == STMT_SOURCE)
     manual = [tx for tx in active if tx.source == "manual" and tx.type in {"BUY", "SELL"}]
 
     new: list[PortfolioTransaction] = []
@@ -113,7 +117,7 @@ def _import_locked(db: Session, reports: list[GmailReport]) -> dict:
         )
         dup = next((m for m in manual if m.ticker == t.ticker and m.type == t.side
                     and Decimal(m.quantity) == t.quantity and Decimal(m.unit_price) == t.price
-                    and abs((_naive(m.effective_at).date() - t.trade_date).days) <= 3), None)
+                    and abs((_local_day(m.effective_at) - t.trade_date).days) <= 3), None)
         if dup is not None:
             manual.remove(dup)
             dup.status, dup.voided_at = "replaced", datetime.now(timezone.utc)
@@ -128,7 +132,9 @@ def _import_locked(db: Session, reports: list[GmailReport]) -> dict:
     events = [{"type": tx.type, "effective_at": tx.effective_at, "ticker": tx.ticker,
                "currency": tx.currency, "quantity": tx.quantity} for tx in new]
     engine.validate_ledger_sequence(db, p, events)  # raises on any remaining oversell
-    for tx in new:
+    trades = [tx for tx in new if tx.source != ADJUST_SOURCE]
+    to_add, _ = _reuse_adjustments(db, p, adjustments, set())
+    for tx in trades + to_add:
         db.add(tx)
     if new:
         p.ledger_revision += 1
@@ -138,7 +144,7 @@ def _import_locked(db: Session, reports: list[GmailReport]) -> dict:
     summary = {
         "reports": len(reports), "imported_reports": len(ok_reports), "failed_reports": failed,
         "trades": len(new) - len(adjustments), "adjustments": [
-            {"ticker": a.ticker, "quantity": float(a.quantity), "date": a.effective_at.date().isoformat()}
+            {"ticker": a.ticker, "quantity": float(a.quantity), "date": _local_day(a.effective_at).isoformat()}
             for a in adjustments],
         "replaced_manual": replaced,
     }
@@ -172,6 +178,31 @@ def _shortfall_adjustments(txs: list[PortfolioTransaction], portfolio_id: int) -
             held[key] += short
         held[key] -= qty
     return out
+
+
+def _reuse_adjustments(db: Session, p: Portfolio, adjustments: list[PortfolioTransaction],
+                       voided_now: set[int]) -> tuple[list[PortfolioTransaction], int]:
+    """Placeholders keep external_id "adjust:<sell>" when voided, so a recomputed
+    one with the same id updates and reactivates that row instead of inserting a
+    duplicate. Returns (rows to insert, rows changed that were not voided by
+    this same import)."""
+    existing = {tx.external_id: tx for tx in db.query(PortfolioTransaction).filter_by(
+        portfolio_id=p.id, source=ADJUST_SOURCE).all() if tx.external_id}
+    to_add, changed = [], 0
+    for a in adjustments:
+        old = existing.get(a.external_id)
+        if old is None:
+            to_add.append(a)
+            continue
+        same = (old.id in voided_now and Decimal(old.quantity) == Decimal(a.quantity)
+                and _naive(old.effective_at) == _naive(a.effective_at))
+        old.status, old.voided_at = "active", None
+        old.type, old.ticker, old.currency = a.type, a.ticker, a.currency
+        old.quantity, old.unit_price, old.effective_at, old.note = (
+            a.quantity, a.unit_price, a.effective_at, a.note)
+        voided_now.discard(old.id)
+        changed += 0 if same else 1
+    return to_add, changed
 
 
 def _rebuild_async(db: Session, p: Portfolio) -> None:
@@ -298,10 +329,14 @@ def statement_transactions(statements: list[Statement], daily_keys: _Counter, ac
     # balances around it, after the trades of that month (from daily reports).
     for prev, nxt in zip(stmts, stmts[1:]):
         if (nxt.period_from - prev.period_to).days > 1:
+            if nxt.opening is None or prev.closing is None:
+                notes.append(f"no statement for {prev.period_to + timedelta(days=1):%m/%Y} and a "
+                             "neighbouring balance is unknown: net deposits not inferred")
+                continue
             gap_from, gap_to = prev.period_to + timedelta(days=1), nxt.period_from - timedelta(days=1)
             net_trades = sum(((t.amount if t.side == "SELL" else -t.amount) for t in gap_trades
                               if t.settle_date and gap_from <= t.settle_date <= gap_to), Decimal(0))
-            inferred = (nxt.opening or 0) - (prev.closing or 0) - net_trades
+            inferred = nxt.opening - prev.closing - net_trades
             if inferred:
                 rows.append(dict(type="DEPOSIT" if inferred > 0 else "WITHDRAWAL", effective_at=_at(gap_from, 9),
                                  cash_amount=abs(inferred), currency="VND", source=CASH_SOURCE,
@@ -316,13 +351,14 @@ def _div_ticker(content: str) -> str | None:
     return m.group(1) if m else None
 
 
-def _local_day(dt: datetime):
-    return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).astimezone(VN_TZ).date()
+_local_day = engine.local_day
 
 
-def _active_trade_keys(db: Session, p: Portfolio, sources: set[str]) -> _Counter:
+def _trade_keys(db: Session, p: Portfolio, sources: set[str]) -> _Counter:
+    """Trade keys of every row from `sources`, any status: a voided or edited
+    daily trade still stops a statement from adding that trade again."""
     c = _Counter()
-    for tx in db.query(PortfolioTransaction).filter_by(portfolio_id=p.id, status="active").filter(
+    for tx in db.query(PortfolioTransaction).filter_by(portfolio_id=p.id).filter(
             PortfolioTransaction.source.in_(sources), PortfolioTransaction.type.in_(["BUY", "SELL"])).all():
         c[_trade_key(_local_day(tx.effective_at), tx.ticker, tx.type, tx.quantity, tx.unit_price)] += 1
     return c
@@ -337,6 +373,14 @@ def is_statement(filename: str) -> bool:
     return "sao_ke" in filename.lower()
 
 
+def _attachment_path(a: dict) -> Path | None:
+    """Existing file for a Gmail attachment; old rows store cwd-relative paths."""
+    if not a.get("path"):
+        return None
+    path = resolve_backend_path(a["path"])
+    return path if path.exists() else None
+
+
 def import_statements(db: Session, reports: list[GmailReport]) -> dict:
     with _lock:
         return _import_statements_locked(db, reports)
@@ -345,69 +389,96 @@ def import_statements(db: Session, reports: list[GmailReport]) -> dict:
 def _import_statements_locked(db: Session, reports: list[GmailReport]) -> dict:
     p = _portfolio(db)
     by_sub: dict[str, list[Statement]] = defaultdict(list)
-    failed = []
+    failed, notes_failed = [], []
     for rep in reports:
         errs = []
         for a in rep.attachments or []:
-            if not a.get("path") or not Path(a["path"]).exists():
+            path = _attachment_path(a)
+            if path is None:
                 errs.append(f"file missing: {a.get('filename')}")
                 continue
-            st = parse_statement(a["path"])
-            if st.errors and not st.cash and not st.orders:
+            st = parse_statement(path)
+            if st.errors:  # failed self-check: none of its rows can be trusted
                 errs += st.errors
             else:
-                by_sub[_subaccount(a["path"])].append(st)
+                by_sub[_subaccount(path)].append(st)
         rep.status, rep.error = ("parse_error", "; ".join(errs)[:1000]) if errs else ("imported", None)
         if errs:
             failed.append({"id": rep.id, "subject": rep.subject, "errors": errs[:3]})
+            notes_failed.append(f"statement not imported ({rep.subject or rep.gm_msgid}): {errs[0]}"[:300])
     # Include every statement already on disk for gap inference / dedupe context.
     for rep in db.query(GmailReport).filter(GmailReport.status == "imported").all():
         if rep in reports:
             continue
         for a in rep.attachments or []:
-            if is_statement(a.get("filename", "")) and a.get("path") and Path(a["path"]).exists():
-                by_sub[_subaccount(a["path"])].append(parse_statement(a["path"]))
+            path = _attachment_path(a)
+            if is_statement(a.get("filename", "")) and path is not None:
+                by_sub[_subaccount(path)].append(parse_statement(path))
 
-    daily_keys = _active_trade_keys(db, p, {SOURCE})
+    daily_keys = _trade_keys(db, p, {SOURCE})
     gap_trades = _daily_trades(db)
-    known = {(tx.source, tx.external_id) for tx in
-             db.query(PortfolioTransaction).filter_by(portfolio_id=p.id, status="active").all() if tx.external_id}
-    new, notes = [], []
+    # Every status: a voided or edited (replaced) row is a tombstone, so the
+    # statement never re-creates it under the same (source, external_id).
+    existing = {(tx.source, tx.external_id): tx for tx in
+                db.query(PortfolioTransaction).filter_by(portfolio_id=p.id).all() if tx.external_id}
+    known = set(existing)
+    new, notes = [], list(notes_failed)
+    inferred_changed = 0
+    now = datetime.now(timezone.utc)
     for sub, stmts in by_sub.items():
         seen = {}
         for s in stmts:  # same statement may appear twice (new + already imported)
             seen[(s.period_from, s.period_to)] = s
         rows, n = statement_transactions(list(seen.values()), daily_keys, f"{sub}", gap_trades.get(sub, []))
         notes += n
+        inferred_now = set()
         for r in rows:
-            if (r["source"], r["external_id"]) in known:
+            key = (r["source"], r["external_id"])
+            if r["external_id"].endswith(":inferred"):
+                inferred_now.add(key)
+                old = existing.get(key)
+                if old is not None and old.status == "active" and (
+                        old.type != r["type"] or Decimal(old.cash_amount) != r["cash_amount"]):
+                    old.type, old.cash_amount, old.note = r["type"], r["cash_amount"], r["note"]
+                    inferred_changed += 1
+            if key in known:
                 continue
-            known.add((r["source"], r["external_id"]))
+            known.add(key)
             new.append(PortfolioTransaction(portfolio_id=p.id, **{k: v for k, v in r.items()}))
+        # A missing month's inferred deposit is retired once that month's statement exists.
+        for key, tx in existing.items():
+            if (tx.source == CASH_SOURCE and tx.status == "active" and key not in inferred_now
+                    and tx.external_id.startswith(f"{sub}:") and tx.external_id.endswith(":inferred")):
+                tx.status, tx.voided_at = "void", now
+                inferred_changed += 1
+                notes.append(f"retired inferred deposit {tx.external_id} (statement now available)")
 
     # Zero-cost placeholders are obsolete once statements supply the real events.
     stale_adj = db.query(PortfolioTransaction).filter_by(portfolio_id=p.id, status="active",
                                                           source=ADJUST_SOURCE).all()
     for tx in stale_adj:
-        tx.status, tx.voided_at = "void", datetime.now(timezone.utc)
+        tx.status, tx.voided_at = "void", now
     active = [tx for tx in db.query(PortfolioTransaction).filter_by(portfolio_id=p.id).all()
               if tx.status == "active" and tx not in stale_adj]
     adjustments = _shortfall_adjustments(active + new, p.id)
-    new += adjustments
     events = [{"type": tx.type, "effective_at": tx.effective_at, "ticker": tx.ticker,
-               "currency": tx.currency, "quantity": tx.quantity} for tx in new]
+               "currency": tx.currency, "quantity": tx.quantity} for tx in new + adjustments]
     db.flush()
     engine.validate_ledger_sequence(db, p, events)
+    voided_adj = {tx.id for tx in stale_adj}
+    new_adj, adj_changed = _reuse_adjustments(db, p, adjustments, voided_adj)
+    new += new_adj
     for tx in new:
         db.add(tx)
-    if new or stale_adj:
+    changed = bool(new or voided_adj or adj_changed or inferred_changed)
+    if changed:
         p.ledger_revision += 1
     db.commit()
     by_type = _Counter(f"{tx.source}:{tx.type}" for tx in new)
-    if new or stale_adj:
+    if changed:
         _rebuild_async(db, p)
     return {"statements": len(reports), "failed_reports": failed, "added": dict(by_type),
-            "voided_adjustments": len(stale_adj),
+            "voided_adjustments": len(voided_adj),
             "adjustments": [{"ticker": a.ticker, "quantity": float(a.quantity)} for a in adjustments],
             "notes": notes}
 
@@ -417,8 +488,9 @@ def _daily_trades(db: Session) -> dict[str, list[Trade]]:
     out: dict[str, list[Trade]] = defaultdict(list)
     for rep in db.query(GmailReport).filter(GmailReport.status == "imported").all():
         for a in rep.attachments or []:
-            if not is_statement(a.get("filename", "")) and a.get("path") and Path(a["path"]).exists():
-                r = parse_report(a["path"])
+            path = _attachment_path(a)
+            if not is_statement(a.get("filename", "")) and path is not None:
+                r = parse_report(path)
                 if not r.errors:
-                    out[_subaccount(a["path"])] += r.trades
+                    out[_subaccount(path)] += r.trades
     return out

@@ -95,7 +95,7 @@ def test_filing_ai_is_blocked_until_reconciliation(client):
     assert "reconciliation" in analyze.json()["detail"]
 
 
-def test_portfolio_and_scan_reject_invalid_financial_inputs(client):
+def test_portfolio_rejects_invalid_financial_inputs(client):
     test_client, _ = client
 
     assert test_client.post(
@@ -106,5 +106,42 @@ def test_portfolio_and_scan_reject_invalid_financial_inputs(client):
         "/api/portfolio/holdings",
         json={"ticker": "VNM", "shares": 1, "cost_basis": -1},
     ).status_code == 422
-    assert test_client.post("/api/scan", json={"limit": -1}).status_code == 422
-    assert test_client.post("/api/scan", json={"limit": 201}).status_code == 422
+
+
+def test_upload_stores_backend_relative_path_and_serves_it(client, monkeypatch):
+    from app import config
+    from app.models.filing import Filing
+
+    test_client, tmp_path = client
+    backend = tmp_path / "backend"
+    monkeypatch.setattr(config, "BACKEND_DIR", backend)
+    monkeypatch.setattr(filings.settings, "upload_dir", str(backend / "uploads"))
+
+    body = _upload(test_client).json()
+    session = next(app.dependency_overrides[get_db]())
+    stored = session.get(Filing, body["id"]).storage_path
+    session.close()
+    assert stored.startswith("uploads/") and not Path(stored).is_absolute()
+
+    response = test_client.get(f"/api/filings/{body['id']}/file")
+    assert response.status_code == 200
+    assert response.content == b"%PDF-1.4\nmock"
+
+
+def test_upload_parses_pdf_off_the_event_loop(client, monkeypatch):
+    import asyncio
+
+    test_client, _ = client
+    seen = []
+
+    def quick_meta(path):
+        try:
+            asyncio.get_running_loop()
+            seen.append(True)  # called on the event loop thread
+        except RuntimeError:
+            seen.append(False)
+        return {"pages": 1, "extracted": {}}
+
+    monkeypatch.setattr(filings.pdf, "quick_meta", quick_meta)
+    assert _upload(test_client).status_code == 200
+    assert seen == [False]

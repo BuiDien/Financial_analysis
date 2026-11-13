@@ -4,7 +4,7 @@ import sys
 from datetime import timezone
 from decimal import Decimal
 
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from .config import get_settings
@@ -15,13 +15,36 @@ if __name__ == "__main__":
     sys.modules.setdefault("app.db", sys.modules[__name__])
 
 settings = get_settings()
-connect_args = (
-    {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
-)
+_IS_SQLITE = settings.database_url.startswith("sqlite")
+# timeout = sqlite3's busy handler (seconds); PRAGMA busy_timeout below sets
+# the same on every connection, including ones not made through connect_args.
+connect_args = {"check_same_thread": False, "timeout": 30} if _IS_SQLITE else {}
+
+SQLITE_BUSY_TIMEOUT_MS = 30_000
+
+
+def configure_sqlite_engine(target_engine) -> None:
+    """WAL + generous busy timeout: many background writers (OCR socket,
+    Gmail poller, screener refresh, label review) share one SQLite file, and
+    the default rollback journal makes readers and writers block each other."""
+    if target_engine.dialect.name != "sqlite":
+        return
+
+    @event.listens_for(target_engine, "connect")
+    def _sqlite_pragmas(dbapi_connection, _record):
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+        finally:
+            cursor.close()
+
 
 engine = create_engine(
     settings.database_url, connect_args=connect_args, pool_pre_ping=True
 )
+configure_sqlite_engine(engine)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -38,13 +61,24 @@ def get_db():
 def init_db():
     """Create all tables. Run once on startup or via `python -m app.db init`."""
     # Import models so they're registered on Base.metadata
-    from .models import user, portfolio, filing, scan, ocr, gmail  # noqa: F401
+    from .models import user, portfolio, filing, ocr, gmail, screener  # noqa: F401
 
     _upgrade_legacy_portfolio_schema()
     _upgrade_legacy_ocr_schema()
+    _upgrade_screener_schema()
     Base.metadata.create_all(bind=engine)
     _migrate_legacy_holdings()
     print("✓ Database initialized at", settings.database_url)
+
+
+def _upgrade_screener_schema():
+    """Add columns introduced after ticker_metrics first shipped (idempotent)."""
+    if "ticker_metrics" not in set(inspect(engine).get_table_names()):
+        return
+    columns = {c["name"] for c in inspect(engine).get_columns("ticker_metrics")}
+    with engine.begin() as conn:
+        if "board" not in columns:
+            conn.execute(text("ALTER TABLE ticker_metrics ADD COLUMN board JSON"))
 
 
 def _upgrade_legacy_portfolio_schema():

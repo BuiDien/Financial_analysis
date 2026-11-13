@@ -2,6 +2,7 @@ import json
 import threading
 from io import BytesIO
 
+import anyio.from_thread
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -64,7 +65,16 @@ def client(tmp_path, monkeypatch):
     )
     coordinator.jobs.clear()
     coordinator.workers.clear()
-    yield TestClient(app)
+    # One event loop for HTTP requests *and* websockets, like uvicorn in prod.
+    # A bare TestClient gives every request and every websocket_connect its own
+    # loop+thread; coordinator._dispatch_lock (asyncio.Lock) is then contended
+    # across loops and a waiter is never woken -> intermittent hang. Setting the
+    # portal directly (what `with TestClient(app)` does) avoids running the app
+    # lifespan, which would touch the real helix.db.
+    with anyio.from_thread.start_blocking_portal() as portal:
+        test_client = TestClient(app)
+        test_client.portal = portal
+        yield test_client
     app.dependency_overrides.clear()
     coordinator.jobs.clear()
     coordinator.workers.clear()
@@ -212,6 +222,39 @@ def test_upload_lists_serves_and_warns_on_duplicate(client):
     assert duplicate.status_code == 409
     assert duplicate.json()["detail"]["duplicate_id"] == item["id"]
     assert upload(client, allow_duplicate=True).status_code == 200
+
+
+def test_upload_can_carry_target_labels(client):
+    # Opened from Financial Statements → "Add statement": the company and
+    # period are known before the PDF arrives; unit is set later in review.
+    response = client.post(
+        "/api/ocr-inbox",
+        files=[("files", ("mbb.pdf", PDF_BYTES, "application/pdf"))],
+        data={"ticker": " mbb ", "scope": "consolidated", "fiscal_year": "2026", "period_code": "Q3"},
+    )
+    assert response.status_code == 200
+    labels = response.json()["items"][0]["labels"]
+    assert labels["ticker"] == "MBB"
+    assert labels["company"] == "MBB"
+    assert labels["scope"] == "consolidated"
+    assert labels["fiscal_year"] == 2026
+    assert labels["period_code"] == "Q3"
+    assert labels["period"] == "Q3 2026"
+    assert labels["unit"] is None
+
+
+def test_upload_rejects_bad_target_labels(client):
+    def post(**data):
+        return client.post(
+            "/api/ocr-inbox",
+            files=[("files", ("x.pdf", PDF_BYTES, "application/pdf"))],
+            data={"allow_duplicate": "true", **data},
+        )
+    assert post(ticker="MB B").status_code == 422
+    assert post(scope="both").status_code == 422
+    assert post(period_code="Q5").status_code == 422
+    assert post(fiscal_year="1990").status_code == 422
+    assert client.get("/api/ocr-inbox").json() == []
 
 
 def test_inbox_dispatch_review_and_publish(client):
@@ -944,3 +987,209 @@ def test_labels_reject_bad_period_code(client):
     assert client.patch(url, json=_BASE_LABELS | {"period_code": "Q5"}).status_code == 422
     assert client.patch(url, json=_BASE_LABELS | {"scope": "group"}).status_code == 422
     assert client.patch(url, json=_BASE_LABELS | {"fiscal_year": 1999}).status_code == 422
+
+
+# ── Robustness fixes ────────────────────────────────────────────────
+
+
+def _wait_status(client, item_id, expected):
+    for _ in range(100):
+        current = client.get(f"/api/ocr-inbox/{item_id}").json()
+        if current["status"] == expected:
+            break
+    return current
+
+
+def test_sync_result_for_inbox_job_is_serializable(client):
+    item = upload(client).json()["items"][0]
+    with client.websocket_connect("/ws/ocr") as ws:
+        pair(ws)
+        client.post(f"/api/ocr-inbox/{item['id']}/run")
+        job, _ = receive_job(ws)
+        response = client.get(f"/api/sync/result/{job['jobId']}")
+        assert response.status_code == 200
+        assert "db_bind" not in response.json()
+        assert response.json()["inboxItemId"] == item["id"]
+
+
+@pytest.mark.parametrize(
+    ("action", "expected_status"), [("hold", "held"), ("stop", "uploaded")],
+)
+def test_worker_disconnect_while_holding_or_stopping_resolves_item(
+    client, action, expected_status,
+):
+    item = upload(client).json()["items"][0]
+    with client.websocket_connect("/ws/ocr") as ws:
+        pair(ws)
+        client.post(f"/api/ocr-inbox/{item['id']}/run")
+        job, _ = receive_job(ws)
+        assert client.post(
+            f"/api/sync/jobs/{job['jobId']}/control", json={"action": action},
+        ).status_code == 200
+        assert ws.receive_json()["type"] == "job_control"
+        # worker vanishes before it can send control_ack
+    current = _wait_status(client, item["id"], expected_status)
+    assert current["status"] == expected_status
+    expected_job = "held" if action == "hold" else "stopped"
+    for _ in range(100):
+        job_state = client.get(f"/api/sync/result/{job['jobId']}").json()
+        if job_state["status"] == expected_job:
+            break
+    assert job_state["status"] == expected_job
+
+
+def test_progress_frame_after_hold_does_not_drop_control_ack(client):
+    item = upload(client).json()["items"][0]
+    with client.websocket_connect("/ws/ocr") as ws:
+        pair(ws)
+        client.post(f"/api/ocr-inbox/{item['id']}/run")
+        job, _ = receive_job(ws)
+        client.post(f"/api/sync/jobs/{job['jobId']}/control", json={"action": "hold"})
+        assert ws.receive_json()["type"] == "job_control"
+        # progress was already in flight when the worker saw the control frame
+        ws.send_json({"type": "progress", "jobId": job["jobId"], "pct": 40})
+        ws.send_json({"type": "control_ack", "jobId": job["jobId"], "action": "hold"})
+        for _ in range(100):
+            job_state = client.get(f"/api/sync/result/{job['jobId']}").json()
+            if job_state["status"] == "held":
+                break
+        assert job_state["status"] == "held"
+        assert client.get(f"/api/ocr-inbox/{item['id']}").json()["status"] == "held"
+        assert [w["status"] for w in coordinator.workers.values()] == ["idle"]
+
+
+def test_page_result_during_hold_is_not_stored(client):
+    item = upload(client).json()["items"][0]
+    with client.websocket_connect("/ws/ocr") as ws:
+        pair_page_worker(ws)
+        client.post(f"/api/ocr-inbox/{item['id']}/run")
+        job, _ = receive_job(ws)
+        client.post(f"/api/sync/jobs/{job['jobId']}/control", json={"action": "hold"})
+        assert ws.receive_json()["type"] == "job_control"
+        ws.send_json({
+            "type": "page_result", "jobId": job["jobId"], "schemaVersion": 2,
+            "page": 1, "pageCount": 2, "markdown": "# late page",
+        })
+        ws.send_json({"type": "control_ack", "jobId": job["jobId"], "action": "hold"})
+        current = _wait_status(client, item["id"], "held")
+        assert current["status"] == "held"
+        assert current["attempt"]["received_pages"] == 0
+
+
+def test_dispatch_lock_is_released_while_streaming(client, monkeypatch):
+    seen = []
+    original = sync._stream_job
+
+    async def spy(worker, job_id, path, header):
+        seen.append(coordinator._dispatch_lock.locked())
+        return await original(worker, job_id, path, header)
+
+    monkeypatch.setattr(sync, "_stream_job", spy)
+    item = upload(client).json()["items"][0]
+    with client.websocket_connect("/ws/ocr") as ws:
+        pair(ws)
+        client.post(f"/api/ocr-inbox/{item['id']}/run")
+        receive_job(ws)
+    assert seen == [False]
+
+
+def test_inbox_stream_failure_frees_worker_and_requeues(client, monkeypatch):
+    async def broken(*_args, **_kwargs):
+        raise ConnectionError("socket gone")
+
+    monkeypatch.setattr(sync, "_stream_job", broken)
+    item = upload(client).json()["items"][0]
+    with client.websocket_connect("/ws/ocr") as ws:
+        pair(ws)
+        response = client.post(f"/api/ocr-inbox/{item['id']}/run")
+        assert response.json()["job_id"] is None
+        assert [w["status"] for w in coordinator.workers.values()] == ["idle"]
+    current = client.get(f"/api/ocr-inbox/{item['id']}").json()
+    assert current["status"] == "queued"  # automatic retry attempt
+
+
+def test_oversized_upload_leaves_no_temp_files(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(ocr_inbox.settings, "max_upload_mb", 0)
+    response = upload(client)
+    assert response.status_code == 413
+    assert list((tmp_path / "ocr-inbox").iterdir()) == []
+
+
+def test_relative_storage_path_resolves_against_backend_dir(client, monkeypatch, tmp_path):
+    from app import config
+
+    item = upload(client).json()["items"][0]
+    monkeypatch.setattr(config, "BACKEND_DIR", tmp_path / "backend")
+    relative = "uploads/ocr-inbox/legacy.pdf"
+    (tmp_path / "backend" / "uploads" / "ocr-inbox").mkdir(parents=True)
+    (tmp_path / "backend" / relative).write_bytes(PDF_BYTES)
+    session = next(app.dependency_overrides[ocr_inbox.get_db]())
+    row = session.get(ocr_inbox.OCRInboxItem, item["id"])
+    row.storage_path = relative
+    session.commit()
+    session.close()
+    response = client.get(f"/api/ocr-inbox/{item['id']}/file")
+    assert response.status_code == 200
+    assert response.content == PDF_BYTES
+
+
+def _verified_markdown_review(client):
+    item, review = create_markdown_review(client, "| Label | Current |\n| --- | ---: |\n| Cash | 40 |")
+    resolved = client.post(
+        f"/api/ocr-inbox/reviews/{review['id']}/pages/1/approve",
+        json={"revision": review["revision"]},
+    ).json()
+    resolved = client.post(
+        f"/api/ocr-inbox/reviews/{review['id']}/pages/2/approve",
+        json={"revision": resolved["revision"]},
+    ).json()
+    verified = client.post(
+        f"/api/ocr-inbox/reviews/{review['id']}/verify",
+        json={"revision": resolved["revision"]},
+    )
+    assert verified.status_code == 200
+    return item, verified.json()
+
+
+def test_verified_review_can_be_reopened_for_editing(client):
+    item, review = _verified_markdown_review(client)
+    blocked = client.post(
+        f"/api/ocr-inbox/reviews/{review['id']}/pages/1/approve",
+        json={"revision": review["revision"]},
+    )
+    assert blocked.status_code == 409
+
+    stale = client.post(
+        f"/api/ocr-inbox/{item['id']}/review/reopen",
+        json={"revision": review["revision"] - 1},
+    )
+    assert stale.status_code == 409
+
+    reopened = client.post(
+        f"/api/ocr-inbox/{item['id']}/review/reopen",
+        json={"revision": review["revision"], "reason": "fix a label"},
+    )
+    assert reopened.status_code == 200
+    body = reopened.json()
+    assert body["status"] == "reviewing"
+    assert body["revision"] == review["revision"] + 1
+    assert body["events"][-1]["action"] == "reopened"
+    assert client.get(f"/api/ocr-inbox/{item['id']}").json()["status"] == "ready_for_review"
+
+    edited = client.post(
+        f"/api/ocr-inbox/reviews/{review['id']}/pages/1/approve",
+        json={"revision": body["revision"]},
+    )
+    assert edited.status_code == 200
+
+    again = client.post(
+        f"/api/ocr-inbox/{item['id']}/review/reopen",
+        json={"revision": edited.json()["revision"]},
+    )
+    assert again.status_code == 409  # only verified reviews can be reopened
+
+
+def test_reopen_requires_a_review(client):
+    item = upload(client).json()["items"][0]
+    response = client.post(f"/api/ocr-inbox/{item['id']}/review/reopen", json={"revision": 1})
+    assert response.status_code == 409

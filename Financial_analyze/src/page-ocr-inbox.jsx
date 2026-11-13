@@ -1,144 +1,77 @@
 // OCR Inbox — upload unlabeled PDFs, send them to a paired worker, review every
 // returned row against its source, then label and publish verified data.
 
-const OCR_STATUS = {
-  uploaded: ['Uploaded', 'var(--text-muted)'], queued: ['Queued', '#B45309'],
-  held: ['Held', '#B45309'],
-  processing: ['Processing', '#1D4ED8'], ready_for_review: ['Ready for review', '#7C3AED'],
-  reviewing: ['Reviewing', '#7C3AED'], verified: ['Verified · needs labels', '#15803D'],
-  ready_to_publish: ['Ready to publish', '#15803D'], published: ['Published', '#15803D'],
-  failed: ['Failed', '#B91C1C'],
-};
+// Pure helpers come from src/ocr-inbox-utils.js (must load first).
+const OCR_INBOX_UTILS = window.OcrInboxUtils;
+const OCR_STATUS = OCR_INBOX_UTILS.OCR_STATUS;
+const fmtInboxBytes = OCR_INBOX_UTILS.fmtInboxBytes;
+const splitMarkdownTableRow = OCR_INBOX_UTILS.splitMarkdownTableRow;
+const isMarkdownTableSeparator = OCR_INBOX_UTILS.isMarkdownTableSeparator;
+const markdownHasTable = OCR_INBOX_UTILS.markdownHasTable;
+const serializeMarkdownTableRow = OCR_INBOX_UTILS.serializeMarkdownTableRow;
+const parseExactDecimal = OCR_INBOX_UTILS.parseExactDecimal;
+const exactMagnitude = OCR_INBOX_UTILS.exactMagnitude;
+const compareExactMagnitudes = OCR_INBOX_UTILS.compareExactMagnitudes;
+const addExactMagnitudes = OCR_INBOX_UTILS.addExactMagnitudes;
+const subtractExactMagnitudes = OCR_INBOX_UTILS.subtractExactMagnitudes;
+const addExactUnits = OCR_INBOX_UTILS.addExactUnits;
+const scaleExactUnits = OCR_INBOX_UTILS.scaleExactUnits;
+const sumExactDecimals = OCR_INBOX_UTILS.sumExactDecimals;
+const subtractExactDecimals = OCR_INBOX_UTILS.subtractExactDecimals;
+const formatExactDecimal = OCR_INBOX_UTILS.formatExactDecimal;
+const safeTableSpan = OCR_INBOX_UTILS.safeTableSpan;
+const spreadsheetColumnLabel = OCR_INBOX_UTILS.spreadsheetColumnLabel;
+const LABEL_LEVEL_VALUES = OCR_INBOX_UTILS.LABEL_LEVEL_VALUES;
+const LABEL_LEVELS = OCR_INBOX_UTILS.LABEL_LEVELS;
+const LABEL_LEVEL_SHORT = OCR_INBOX_UTILS.LABEL_LEVEL_SHORT;
+const LABEL_LEVEL_MARKER = OCR_INBOX_UTILS.LABEL_LEVEL_MARKER;
+const labelLevelCode = OCR_INBOX_UTILS.labelLevelCode;
+const labelLevelIndent = OCR_INBOX_UTILS.labelLevelIndent;
+const explicitLabelLevel = OCR_INBOX_UTILS.explicitLabelLevel;
+const visibleCellText = OCR_INBOX_UTILS.visibleCellText;
+const withLabelLevel = OCR_INBOX_UTILS.withLabelLevel;
+const levelMismatchCells = OCR_INBOX_UTILS.levelMismatchCells;
+const inferredLabelLevel = OCR_INBOX_UTILS.inferredLabelLevel;
+const HISTORY_KIND_OPTIONS = OCR_INBOX_UTILS.HISTORY_KIND_OPTIONS;
+const HISTORY_KIND_NAMES = OCR_INBOX_UTILS.HISTORY_KIND_NAMES;
+const HISTORY_UNIT_OPTIONS = OCR_INBOX_UTILS.HISTORY_UNIT_OPTIONS;
+const HISTORY_TABLE_CODES = OCR_INBOX_UTILS.HISTORY_TABLE_CODES;
+const HISTORY_EMPTY_DRAFT = OCR_INBOX_UTILS.HISTORY_EMPTY_DRAFT;
+const historyTableKey = OCR_INBOX_UTILS.historyTableKey;
+const historyRowKey = OCR_INBOX_UTILS.historyRowKey;
+const historyMisreadKey = OCR_INBOX_UTILS.historyMisreadKey;
+const historyDmy = OCR_INBOX_UTILS.historyDmy;
+const historyPeriodValue = OCR_INBOX_UTILS.historyPeriodValue;
+const historyPeriodText = OCR_INBOX_UTILS.historyPeriodText;
+const historyPeriodOptions = OCR_INBOX_UTILS.historyPeriodOptions;
+const historyMoney = OCR_INBOX_UTILS.historyMoney;
+const historyPayload = OCR_INBOX_UTILS.historyPayload;
+const HISTORY_SCOPE_OPTIONS = OCR_INBOX_UTILS.HISTORY_SCOPE_OPTIONS;
+const HISTORY_PERIOD_CODE_OPTIONS = OCR_INBOX_UTILS.HISTORY_PERIOD_CODE_OPTIONS;
+const LABEL_UNIT_OPTIONS = OCR_INBOX_UTILS.LABEL_UNIT_OPTIONS;
+const inboxLabelSummary = OCR_INBOX_UTILS.inboxLabelSummary;
+const inboxLatestQuarter = OCR_INBOX_UTILS.inboxLatestQuarter;
+const historyFiscalYearOptions = OCR_INBOX_UTILS.historyFiscalYearOptions;
 
-const fmtInboxBytes = (n) => n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
+// Verified reviews are read-only; POST /api/ocr-inbox/{item_id}/review/reopen makes one
+// editable again. Resolves null when the owner cancels.
+const reopenVerifiedOcrReview = async (item, review) => {
+  const confirmed = await window.askConfirm({
+    title: 'Reopen verified review?',
+    message: 'The review becomes editable again. Verify it again before adding it to history or publishing.',
+    confirmText: 'Reopen',
+  });
+  if (!confirmed) return null;
+  const api = window.HelixAPI;
+  return api.ocrReviewReopen
+    ? api.ocrReviewReopen(item.id, review.revision)
+    : api._send('POST', `/api/ocr-inbox/${item.id}/review/reopen`, { revision: review.revision });
+};
+const ocrNeedsReopen = message => /must be reopened/i.test(String(message || ''));
 
 const InboxStatus = ({ status }) => {
   const spec = OCR_STATUS[status] || [status, 'var(--text-muted)'];
   return <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.05em', color: spec[1] }}>{spec[0]}</span>;
-};
-
-const splitMarkdownTableRow = line => {
-  const escapedPipe = '\u0000HELIX_PIPE\u0000';
-  let value = String(line || '').trim().replace(/\\\|/g, escapedPipe);
-  if (value.startsWith('|')) value = value.slice(1);
-  if (value.endsWith('|')) value = value.slice(0, -1);
-  return value.split('|').map(cell => cell.replaceAll(escapedPipe, '|').trim());
-};
-
-const isMarkdownTableSeparator = line => {
-  if (!String(line || '').includes('|')) return false;
-  const cells = splitMarkdownTableRow(line);
-  return cells.length > 0 && cells.every(cell => /^:?-{3,}:?$/.test(cell.replace(/\s/g, '')));
-};
-
-const markdownHasTable = markdown => {
-  const value = String(markdown || '');
-  const lines = value.replace(/\r\n?/g, '\n').split('\n');
-  return /<table(?:\s|>)/i.test(value)
-    || lines.some((line, index) => line.includes('|') && isMarkdownTableSeparator(lines[index + 1]));
-};
-
-const serializeMarkdownTableRow = cells => `| ${cells.map(cell => String(cell || '').replace(/\|/g, '\\|')).join(' | ')} |`;
-
-const parseExactDecimal = input => {
-  let value = String(input || '').replace(/(\*\*|__|`)/g, '').trim();
-  if (!value || /%/.test(value) || /[A-Za-z]/.test(value)) return null;
-  let negative = false;
-  if (/^\(.*\)$/.test(value)) { negative = true; value = value.slice(1, -1); }
-  value = value.replace(/[−–—]/g, '-').replace(/\s/g, '').replace(/[^\d.,+-]/g, '');
-  if (!/^[+-]?[\d.,]+$/.test(value) || !/\d/.test(value)) return null;
-  if (value.startsWith('-')) { negative = !negative; value = value.slice(1); }
-  else if (value.startsWith('+')) value = value.slice(1);
-
-  const comma = value.lastIndexOf(',');
-  const dot = value.lastIndexOf('.');
-  let decimalAt = -1;
-  if (comma >= 0 && dot >= 0) {
-    const last = Math.max(comma, dot);
-    const trailing = value.length - last - 1;
-    if (trailing > 0 && trailing <= 2) decimalAt = last;
-  } else {
-    const separator = comma >= 0 ? ',' : dot >= 0 ? '.' : '';
-    if (separator) {
-      const occurrences = value.split(separator).length - 1;
-      const last = value.lastIndexOf(separator);
-      const trailing = value.length - last - 1;
-      if (occurrences === 1 && trailing > 0 && trailing <= 2) decimalAt = last;
-    }
-  }
-
-  const scale = decimalAt >= 0 ? value.length - decimalAt - 1 : 0;
-  const digits = value.split('').filter((character, index) => /\d/.test(character) && index !== decimalAt).join('');
-  if (!digits) return null;
-  const magnitude = digits.replace(/^0+(?=\d)/, '');
-  const units = negative && magnitude !== '0' ? `-${magnitude}` : magnitude;
-  return { units, scale };
-};
-
-const exactMagnitude = units => String(units || '0').replace(/^-/, '').replace(/^0+(?=\d)/, '');
-const compareExactMagnitudes = (left, right) => left.length !== right.length ? left.length - right.length : left.localeCompare(right);
-const addExactMagnitudes = (left, right) => {
-  let carry = 0;
-  let result = '';
-  for (let index = 1; index <= Math.max(left.length, right.length); index += 1) {
-    const total = Number(left[left.length - index] || 0) + Number(right[right.length - index] || 0) + carry;
-    result = String(total % 10) + result;
-    carry = Math.floor(total / 10);
-  }
-  return `${carry || ''}${result}`.replace(/^0+(?=\d)/, '');
-};
-const subtractExactMagnitudes = (left, right) => {
-  let borrow = 0;
-  let result = '';
-  for (let index = 1; index <= left.length; index += 1) {
-    let digit = Number(left[left.length - index] || 0) - borrow - Number(right[right.length - index] || 0);
-    if (digit < 0) { digit += 10; borrow = 1; } else borrow = 0;
-    result = String(digit) + result;
-  }
-  return result.replace(/^0+(?=\d)/, '');
-};
-const addExactUnits = (leftInput, rightInput) => {
-  const left = String(leftInput || '0');
-  const right = String(rightInput || '0');
-  const leftNegative = left.startsWith('-');
-  const rightNegative = right.startsWith('-');
-  const leftMagnitude = exactMagnitude(left);
-  const rightMagnitude = exactMagnitude(right);
-  if (leftNegative === rightNegative) {
-    const result = addExactMagnitudes(leftMagnitude, rightMagnitude);
-    return leftNegative && result !== '0' ? `-${result}` : result;
-  }
-  const comparison = compareExactMagnitudes(leftMagnitude, rightMagnitude);
-  if (comparison === 0) return '0';
-  const leftLarger = comparison > 0;
-  const result = subtractExactMagnitudes(leftLarger ? leftMagnitude : rightMagnitude, leftLarger ? rightMagnitude : leftMagnitude);
-  const negative = leftLarger ? leftNegative : rightNegative;
-  return negative && result !== '0' ? `-${result}` : result;
-};
-const scaleExactUnits = (units, places) => {
-  const value = String(units || '0');
-  if (value === '0') return value;
-  return `${value}${'0'.repeat(Math.max(0, places))}`;
-};
-const sumExactDecimals = values => {
-  const scale = Math.max(0, ...values.map(value => value.scale));
-  return { scale, units: values.reduce((total, value) => addExactUnits(total, scaleExactUnits(value.units, scale - value.scale)), '0') };
-};
-
-const subtractExactDecimals = (left, right) => {
-  const scale = Math.max(left.scale, right.scale);
-  const leftUnits = scaleExactUnits(left.units, scale - left.scale);
-  const rightUnits = scaleExactUnits(right.units, scale - right.scale);
-  const negativeRight = rightUnits.startsWith('-') ? rightUnits.slice(1) : `-${rightUnits}`;
-  return { scale, units: addExactUnits(leftUnits, negativeRight) };
-};
-
-const formatExactDecimal = value => {
-  const negative = String(value.units).startsWith('-');
-  const digits = exactMagnitude(value.units).padStart(value.scale + 1, '0');
-  const integer = digits.slice(0, digits.length - value.scale || digits.length).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  const fraction = value.scale ? digits.slice(-value.scale).replace(/0+$/, '') : '';
-  return `${negative ? '-' : ''}${integer}${fraction ? `.${fraction}` : ''}`;
 };
 
 const safeMarkdownHref = href => {
@@ -163,105 +96,11 @@ const MarkdownInline = ({ text, prefix }) => {
   })}</>;
 };
 
-const safeTableSpan = value => {
-  const parsed = Number.parseInt(value || '1', 10);
-  return Number.isFinite(parsed) ? Math.min(100, Math.max(1, parsed)) : 1;
-};
-
-const spreadsheetColumnLabel = index => {
-  let value = index + 1;
-  let label = '';
-  while (value > 0) {
-    value -= 1;
-    label = String.fromCharCode(65 + (value % 26)) + label;
-    value = Math.floor(value / 26);
-  }
-  return label;
-};
-
-const LABEL_LEVEL_VALUES = [-1, 0, 1, 2, 3];
-const LABEL_LEVELS = { '-1': 'Text-only section label', 0: 'Section / grand total', 1: 'Group / subtotal', 2: 'Line item', 3: 'Detail' };
-const LABEL_LEVEL_SHORT = { '-1': 'Label', 0: 'Total', 1: 'Group', 2: 'Item', 3: 'Detail' };
-const LABEL_LEVEL_MARKER = /<!--\s*ocr-label-level:(L|[0-3])(?:;source:auto)?\s*-->/i;
-const labelLevelCode = level => level < 0 ? 'L' : `L${level}`;
-const labelLevelIndent = level => Math.max(0, level + 1);
 const LabelLevelBadge = ({ level }) => <span
   aria-hidden="true"
   title={`${labelLevelCode(level)} · ${LABEL_LEVELS[level]}`}
   style={{ flex: '0 0 auto', minWidth: 22, padding: '1px 4px', border: '1px solid var(--border-strong)', borderRadius: 3, background: level <= 0 ? 'var(--text)' : 'var(--bg-elev)', color: level <= 0 ? 'var(--bg-elev)' : 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 700, lineHeight: 1.35, textAlign: 'center' }}
 >{labelLevelCode(level)}</span>;
-const explicitLabelLevel = cell => {
-  if (cell && typeof cell === 'object' && Number.isInteger(cell.level)) return cell.level;
-  const match = String(cell || '').match(LABEL_LEVEL_MARKER);
-  return match ? (match[1].toUpperCase() === 'L' ? -1 : Number(match[1])) : null;
-};
-const visibleCellText = cell => {
-  const value = typeof cell === 'object' ? cell.text : cell;
-  return String(value || '').replace(LABEL_LEVEL_MARKER, '').trim();
-};
-const withLabelLevel = (value, level) => {
-  if (level === null || level === undefined) return visibleCellText(value);
-  const normalized = Math.min(3, Math.max(-1, level));
-  const token = normalized < 0 ? 'L' : normalized;
-  return `<!--ocr-label-level:${token}-->${visibleCellText(value)}`;
-};
-const levelMismatchCells = (verification, tableNumber, rowNumberOffset) => {
-  const issues = {};
-  const failures = (verification?.checks || [])
-    .filter(check => check.table === tableNumber)
-    .flatMap(check => check.columns
-      .filter(column => !column.matches)
-      .map(column => ({ check, column })));
-  const addIssue = (rowNumber, columnNumber, message, suggestion = null) => {
-    const rowIndex = rowNumber - rowNumberOffset;
-    const cellIndex = columnNumber - 1;
-    if (rowIndex < 0 || cellIndex < 0) return;
-    const key = `${rowIndex}:${cellIndex}`;
-    const current = issues[key] || { messages: [] };
-    current.messages.push(message);
-    if (suggestion) Object.assign(current, suggestion);
-    issues[key] = current;
-  };
-  failures.forEach(({ check, column }) => {
-      const failsUpperLevel = failures.some(({ check: upperCheck, column: upperColumn }) => (
-        upperColumn.column === column.column
-        && upperCheck.parent_level + 1 === check.parent_level
-        && upperCheck.child_rows.includes(check.parent_row)
-      ));
-      const calculation = `L${check.parent_level} total mismatch: ${column.parent} − L${check.child_level} sum ${column.children_sum} = ${column.difference}.`;
-      const suggestionMessage = `${failsUpperLevel ? 'Check this subtotal first. It also contributes to a mismatched upper-level total. ' : ''}If the L${check.child_level} rows are correct, the suggested L${check.parent_level} value is ${column.children_sum}.`;
-      addIssue(check.parent_row, column.column, `${calculation} ${suggestionMessage}`, {
-        parent: true,
-        priority: failsUpperLevel,
-        suggestedValue: column.children_sum,
-      });
-      check.child_rows.forEach(rowNumber => addIssue(
-        rowNumber,
-        column.column,
-        `Included in the mismatched L${check.child_level} sum for parent row ${check.parent_row}. ${calculation}`,
-      ));
-    });
-  return issues;
-};
-const inferredLabelLevel = (cell, row, cellIndex, isHeader) => {
-  const explicit = explicitLabelLevel(cell);
-  if (explicit !== null) return explicit;
-  const text = visibleCellText(cell);
-  if (!text || parseExactDecimal(text) || cellIndex !== 0) return null;
-  if (isHeader) return -1;
-  const letters = text.replace(/[^A-Za-zÀ-ỹĐđ]/g, '');
-  const uppercase = letters.length >= 3 && letters === letters.toUpperCase();
-  const rowHasNumber = row.slice(1).some(value => {
-    const visible = visibleCellText(value);
-    return Boolean(parseExactDecimal(visible)) || /^[-–—]$/.test(visible);
-  });
-  if (!rowHasNumber) return -1;
-  if (/^(TỔNG|TOTAL|GRAND TOTAL)\b/i.test(text)) return 0;
-  if (uppercase) return rowHasNumber ? 1 : 0;
-  if (/^[-–—•+]/.test(text)) return 3;
-  if (/^(lợi nhuận|profit|doanh thu thuần|net revenue)\b/i.test(text)) return 1;
-  return rowHasNumber ? 1 : 2;
-};
 
 const OCRTableReview = ({ headers = [], rows, alignments = [], tableKey, tableNumber = 1, rowNumberOffset = 1, onMergeRows, onEditCell, onPasteCells, onSetCellLevel, onSelectionSummary, mismatchCells = {}, mismatchTarget = null, labelSuggestions = [], markedLabelRows = [], onToggleLabelMark = null, onAskHermesForLabel = null, onDecideLabelSuggestion = null, embeddedHeaders = false, headerRows = 0 }) => {
   const initialPoint = rows.length ? { row: Math.min(headerRows, rows.length - 1), col: 0 } : null;
@@ -967,30 +806,50 @@ const PageOCRInbox = ({ setPage }) => {
   const [loading, setLoading] = React.useState(true);
   const [uploading, setUploading] = React.useState(false);
   const [labelsFor, setLabelsFor] = React.useState(null); // inbox item id whose labels form is open
+  // Set when opened from Financial Statements → "Add statement": the company is known,
+  // the owner picks year, period and scope before dropping the PDF.
+  const [target, setTarget] = React.useState(() => {
+    const hint = window.__ocrTarget;
+    window.__ocrTarget = null;
+    return hint && hint.ticker ? { ticker: String(hint.ticker).toUpperCase(), scope: 'consolidated', ...inboxLatestQuarter() } : null;
+  });
   const inputRef = React.useRef(null);
 
-  const refresh = React.useCallback(async () => {
-    if (focusedReviewId) return;
-    if (!window.HelixAPI?.live) { setLoading(false); return; }
-    try { setItems(await window.HelixAPI.ocrInbox()); }
-    catch (e) { window.toast?.(`Could not load OCR Inbox: ${e.message}`, { type: 'error' }); }
-    finally { setLoading(false); }
-  }, [focusedReviewId]);
-
+  // One poller: no overlapping requests, back-off while the backend is down, paused in a
+  // hidden tab, and one toast per outage (plus one when it comes back).
+  const pollerRef = React.useRef(null);
   React.useEffect(() => {
     if (focusedReviewId) return undefined;
-    refresh();
-    const timer = setInterval(refresh, 1800);
-    return () => clearInterval(timer);
-  }, [focusedReviewId, refresh]);
+    let alive = true;
+    const poller = window.SyncPoller.create({
+      intervalMs: 1800,
+      maxIntervalMs: 30000,
+      run: async () => {
+        if (!window.HelixAPI?.live) { if (alive) setLoading(false); return; }
+        try {
+          const next = await window.HelixAPI.ocrInbox();
+          if (alive) setItems(next);
+        } finally { if (alive) setLoading(false); }
+      },
+      onError: e => { if (alive) window.toast?.(`Could not load OCR Inbox: ${e.message} — retrying in the background`, { type: 'error' }); },
+      onRecover: () => { if (alive) window.toast?.('OCR Inbox reconnected', { type: 'success' }); },
+    });
+    pollerRef.current = poller;
+    poller.start();
+    return () => { alive = false; poller.stop(); if (pollerRef.current === poller) pollerRef.current = null; };
+  }, [focusedReviewId]);
+  const refresh = React.useCallback(() => (pollerRef.current ? pollerRef.current.poke() : Promise.resolve()), []);
 
   const uploadFiles = async (files, allowDuplicate = false) => {
     if (!files?.length) return;
     if (files.length > 20) { window.toast?.('Choose at most 20 PDFs', { type: 'error' }); return; }
+    if (target && files.length > 1) { window.toast?.(`Add one PDF at a time for ${target.ticker} — each one is a single period`, { type: 'error' }); return; }
     setUploading(true);
     try {
-      await window.HelixAPI.ocrInboxUpload(files, allowDuplicate);
-      window.toast?.(`${files.length} PDF${files.length === 1 ? '' : 's'} added to the OCR Inbox`, { type: 'success' });
+      await window.HelixAPI.ocrInboxUpload(files, allowDuplicate, target);
+      window.toast?.(target
+        ? `Added ${target.ticker} ${target.period_code} ${target.fiscal_year} to the OCR Inbox`
+        : `${files.length} PDF${files.length === 1 ? '' : 's'} added to the OCR Inbox`, { type: 'success' });
       await refresh();
     } catch (e) {
       if (e.status === 409 && window.confirm(`${e.message}. Upload another OCR copy anyway?`)) {
@@ -1005,6 +864,7 @@ const PageOCRInbox = ({ setPage }) => {
       if (action === 'retry') await window.HelixAPI.ocrInboxRetry(item.id);
       if (action === 'cancel') await window.HelixAPI.ocrInboxCancel(item.id);
       if (action === 'delete' && window.confirm(`Delete ${item.filename} and its OCR history?`)) await window.HelixAPI.ocrInboxDelete(item.id);
+      if (action === 'reopen' && await reopenVerifiedOcrReview(item, item.review)) window.toast?.(`${item.filename}: review reopened`, { type: 'success' });
       await refresh();
     } catch (e) { window.toast?.(e.message, { type: 'error' }); }
   };
@@ -1033,6 +893,29 @@ const PageOCRInbox = ({ setPage }) => {
 
       {!window.HelixAPI?.live && (
         <div className="card" style={{ padding: 24, color: 'var(--text-muted)' }}>The backend must be running to use the persistent OCR Inbox.</div>
+      )}
+
+      {target && (
+        <div className="card" onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); uploadFiles(Array.from(e.dataTransfer.files || [])); }}
+          style={{ marginBottom: 16, padding: '14px 18px', borderColor: 'var(--accent)', overflow: 'visible', position: 'relative', zIndex: 2 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end' }}>
+            <div style={{ flex: '1 1 160px' }}>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Adding a statement for</div>
+              <div className="ticker" style={{ fontSize: 18, fontWeight: 700, marginTop: 2 }}>{target.ticker}</div>
+            </div>
+            <div style={{ width: 120 }}><LxSelect label="Year" value={target.fiscal_year} options={historyFiscalYearOptions(target.fiscal_year)} onChange={v => setTarget(t => ({ ...t, fiscal_year: Number(v) }))} /></div>
+            <div style={{ width: 150 }}><LxSelect label="Period" value={target.period_code} options={HISTORY_PERIOD_CODE_OPTIONS} onChange={v => setTarget(t => ({ ...t, period_code: v }))} /></div>
+            <div style={{ width: 170 }}><LxSelect label="Scope" value={target.scope} options={HISTORY_SCOPE_OPTIONS} onChange={v => setTarget(t => ({ ...t, scope: v }))} /></div>
+            <button className="btn btn-primary" disabled={uploading || !window.HelixAPI?.live} onClick={() => inputRef.current?.click()}>
+              <Icon name="plus" size={12} /> {uploading ? 'Uploading…' : `Choose ${target.period_code} ${target.fiscal_year} PDF`}
+            </button>
+            <button className="btn" onClick={() => { window.__statementsTicker = target.ticker; setPage && setPage('statements'); }}>Back to {target.ticker}</button>
+            <button className="btn" aria-label="Stop adding for this company" title="Stop adding for this company" onClick={() => setTarget(null)}>✕</button>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
+            Drop the PDF here or choose it. Year, period and scope are saved on it; set the unit while checking the numbers.
+          </div>
+        </div>
       )}
 
       <div className="card" style={{ overflow: 'hidden' }}>
@@ -1069,6 +952,7 @@ const PageOCRInbox = ({ setPage }) => {
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, flexWrap: 'wrap' }}>
               {['uploaded', 'held', 'failed'].includes(item.status) && <button className="btn btn-primary" onClick={() => act(item, item.status === 'failed' ? 'retry' : 'run')}>{item.status === 'failed' ? 'Retry' : item.status === 'held' ? 'Resume OCR' : 'Run OCR'}</button>}
               {item.status === 'queued' && <button className="btn" onClick={() => act(item, 'cancel')}>Cancel</button>}
+              {item.review?.status === 'verified' && !item.published_filing_id && <button className="btn" title="Make this verified review editable again" onClick={() => act(item, 'reopen')}>Reopen review</button>}
               {item.review && <a className="btn" href={(() => { const url = new URL(window.location.href); url.searchParams.set('ocrReview', item.id); return url.toString(); })()} target="_blank" rel="noopener noreferrer"><Icon name="eye" size={12} /> Open review</a>}
               {!item.published_filing_id && !['queued', 'processing'].includes(item.status) && <button className="btn" onClick={() => act(item, 'delete')}>Delete</button>}
               {item.published_filing_id && <button className="btn" onClick={() => setPage('statements')}>Open filing</button>}
@@ -1081,1217 +965,6 @@ const PageOCRInbox = ({ setPage }) => {
       </div>
     </div>
   );
-};
-
-const OCRReviewWorkspace = ({ itemId, onBack, setPage }) => {
-  const [item, setItem] = React.useState(null);
-  const [review, setReview] = React.useState(null);
-  const [selectedId, setSelectedId] = React.useState(null);
-  const [editing, setEditing] = React.useState(null);
-  const [drawing, setDrawing] = React.useState(false);
-  const drawStart = React.useRef(null);
-
-  const load = React.useCallback(async () => {
-    const nextItem = await window.HelixAPI.ocrInboxItem(itemId);
-    setItem(nextItem);
-    if (nextItem.review) {
-      const nextReview = await window.HelixAPI.ocrReview(nextItem.review.id);
-      setReview(nextReview);
-      setSelectedId(id => id || nextReview.rows[0]?.id || null);
-    }
-  }, [itemId]);
-
-  React.useEffect(() => { load().catch(e => window.toast?.(e.message, { type: 'error' })); }, [load]);
-  if (!item || !review) return <div className="page"><button className="btn" onClick={onBack}>← Inbox</button><div style={{ padding: 40 }}>Loading review…</div></div>;
-
-  if (review.result_format === 'page_markdown_v2') {
-    return <OCRMarkdownReviewWorkspace item={item} review={review} setReview={setReview} reload={load} onBack={onBack} />;
-  }
-
-  const selected = review.rows.find(row => row.id === selectedId) || review.rows[0];
-  const evidence = selected ? (selected.reviewed || selected.raw) : null;
-  const selectedBox = selected?.bbox;
-
-  const updateReview = next => { setReview(next); setEditing(null); };
-  const rowAction = async (row, action, data, reason) => {
-    try { updateReview(await window.HelixAPI.ocrReviewAction(review.id, row.id, action, review.revision, data, reason)); }
-    catch (e) { window.toast?.(e.message, { type: 'error' }); if (e.message?.includes('refresh')) load(); }
-  };
-  const reject = async row => {
-    const reason = await window.askPrompt({ title: 'Reject OCR row', label: 'Reason', placeholder: 'Duplicate, header, irrelevant…', confirmText: 'Reject' });
-    if (reason) rowAction(row, 'reject', null, reason);
-  };
-
-  const beginEdit = row => {
-    const source = row.reviewed || row.raw;
-    setEditing({ mode: 'correct', row, data: { ...source, bbox: { ...row.bbox }, page: row.page, confidence: row.confidence } });
-  };
-  const setField = (field, value) => setEditing(e => ({ ...e, data: { ...e.data, [field]: value } }));
-  const saveEdit = async () => {
-    const data = { ...editing.data, page: Number(editing.data.page), confidence: Number(editing.data.confidence) };
-    try {
-      if (editing.mode === 'manual') updateReview(await window.HelixAPI.ocrReviewAdd(review.id, review.revision, data));
-      else await rowAction(editing.row, 'correct', data);
-    } catch (e) { window.toast?.(e.message, { type: 'error' }); }
-  };
-
-  const pointerPos = e => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    return { x: Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)), y: Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height)) };
-  };
-  const finishDraw = e => {
-    if (!drawing || !drawStart.current) return;
-    const end = pointerPos(e), start = drawStart.current;
-    const bbox = { x: Math.min(start.x, end.x), y: Math.min(start.y, end.y), width: Math.abs(end.x - start.x), height: Math.abs(end.y - start.y) };
-    setDrawing(false); drawStart.current = null;
-    if (bbox.width < .01 || bbox.height < .01) return;
-    setEditing({ mode: 'manual', data: { code: '', metric: '', section: 'balance', curr: '', prev: '', page: selected?.page || 1, confidence: 100, bbox } });
-  };
-
-  const verify = async () => {
-    try { setReview(await window.HelixAPI.ocrReviewVerify(review.id, review.revision)); await load(); window.toast?.('OCR review verified', { type: 'success' }); }
-    catch (e) { window.toast?.(e.message, { type: 'error' }); }
-  };
-
-  return (
-    <div className="page" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div className="page-header" style={{ marginBottom: 14 }}>
-        <div>
-          <button className="card-action" onClick={onBack}>← OCR Inbox</button>
-          <h1 className="page-title" style={{ marginTop: 8 }}>{item.filename}</h1>
-          <p className="page-sub">{review.counts.resolved} of {review.counts.total} rows resolved · revision {review.revision}</p>
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn" onClick={() => { setDrawing(true); setEditing(null); }}>Add missing row</button>
-          <button className="btn btn-primary" disabled={review.counts.pending > 0 || ['verified', 'published'].includes(review.status)} onClick={verify}>Verify review</button>
-        </div>
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(420px,1.15fr) minmax(440px,1fr)', gap: 14, flex: 1, minHeight: 0 }}>
-        <div className="card" style={{ overflow: 'auto', padding: 12, background: '#383b40' }}>
-          <div style={{ maxWidth: 850, margin: '0 auto', position: 'relative', lineHeight: 0, cursor: drawing ? 'crosshair' : 'default', userSelect: 'none' }}
-            onMouseDown={e => { if (drawing) drawStart.current = pointerPos(e); }} onMouseUp={finishDraw}>
-            <img src={window.HelixAPI.ocrInboxPageUrl(item.id, selected?.page || 1)} style={{ width: '100%', height: 'auto', display: 'block', background: 'white' }} />
-            {selectedBox && !drawing && <div style={{ position: 'absolute', left: `${selectedBox.x * 100}%`, top: `${selectedBox.y * 100}%`, width: `${selectedBox.width * 100}%`, height: `${selectedBox.height * 100}%`, border: '2px solid #F97316', background: 'rgba(249,115,22,.14)', pointerEvents: 'none' }} />}
-          </div>
-          {drawing && <div style={{ color: 'white', textAlign: 'center', fontSize: 12, padding: 10 }}>Drag a rectangle around the missing source row</div>}
-        </div>
-
-        <div className="card" style={{ overflow: 'auto' }}>
-          <div className="card-header"><h3 className="card-title">Extracted rows</h3><InboxStatus status={review.status} /></div>
-          {review.rows.map(row => {
-            const data = row.reviewed || row.raw;
-            const active = row.id === selected?.id;
-            return <div key={row.id} onClick={() => setSelectedId(row.id)} style={{ padding: '11px 14px', borderBottom: '1px solid var(--border)', background: active ? 'var(--accent-bg)' : 'transparent', cursor: 'pointer' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '52px 1fr 80px 80px', gap: 8, alignItems: 'center' }}>
-                <span className="num" style={{ fontSize: 11 }}>{data.code || data.id}</span>
-                <span style={{ fontSize: 12, fontWeight: 600 }}>{data.metric || data.label}</span>
-                <span className="num" style={{ textAlign: 'right', fontSize: 12 }}>{data.curr}</span>
-                <span className="num" style={{ textAlign: 'right', fontSize: 11, color: 'var(--text-muted)' }}>{data.prev || '—'}</span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 7 }}>
-                <InboxStatus status={row.status} /><span style={{ fontSize: 10, color: 'var(--text-muted)' }}>p.{row.page} · {row.confidence}%</span><span style={{ flex: 1 }} />
-                {!['verified', 'published'].includes(review.status) && <>
-                  <button className="card-action" onClick={e => { e.stopPropagation(); rowAction(row, 'approve'); }}>Approve</button>
-                  <button className="card-action" onClick={e => { e.stopPropagation(); beginEdit(row); }}>Correct</button>
-                  <button className="card-action" onClick={e => { e.stopPropagation(); reject(row); }}>Reject</button>
-                  {row.status !== 'pending' && <button className="card-action" onClick={e => { e.stopPropagation(); rowAction(row, 'restore'); }}>Reset</button>}
-                </>}
-              </div>
-              {row.rejection_reason && <div style={{ fontSize: 11, color: 'var(--neg)', marginTop: 5 }}>{row.rejection_reason}</div>}
-            </div>;
-          })}
-
-          {editing && <OCRRowEditor editing={editing} setField={setField} save={saveEdit} cancel={() => setEditing(null)} />}
-          {['verified', 'ready_to_publish', 'published'].includes(item.status) && <OCRPublishPanel item={item} reload={load} setPage={setPage} />}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const OCRMarkdownReviewWorkspace = ({ item, review, setReview, reload, onBack }) => {
-  const firstPage = review.pages[0]?.page || 1;
-  const [selectedPage, setSelectedPage] = React.useState(firstPage);
-  const [pageResult, setPageResult] = React.useState(null);
-  const [pageLoading, setPageLoading] = React.useState(true);
-  const [pageError, setPageError] = React.useState('');
-  const [actionError, setActionError] = React.useState('');
-  const [editing, setEditing] = React.useState(false);
-  const [viewMode, setViewMode] = React.useState('preview');
-  const [markdown, setMarkdown] = React.useState('');
-  const [saving, setSaving] = React.useState(false);
-  const [detectingLevels, setDetectingLevels] = React.useState(false);
-  const [verifyingLevelTotals, setVerifyingLevelTotals] = React.useState(false);
-  const [levelVerification, setLevelVerification] = React.useState(null);
-  const [selectionSummary, setSelectionSummary] = React.useState({ count: 0, total: '—' });
-  const [selectedVerificationIssue, setSelectedVerificationIssue] = React.useState('');
-  const [mismatchTarget, setMismatchTarget] = React.useState(null);
-  const [hermesRun, setHermesRun] = React.useState(null);
-  const [startingHermes, setStartingHermes] = React.useState(false);
-  const [selectedHermesSuggestion, setSelectedHermesSuggestion] = React.useState('');
-  const [markedHermesRows, setMarkedHermesRows] = React.useState([]);
-  const labelsMissing = !item.labels?.ticker || !item.labels?.scope || !item.labels?.fiscal_year || !item.labels?.period_code;
-  const [labelsOpen, setLabelsOpen] = React.useState(false);
-  const [historyOpen, setHistoryOpen] = React.useState(false);
-  const [historyDraft, setHistoryDraft] = React.useState(HISTORY_EMPTY_DRAFT);
-  React.useEffect(() => { setHistoryDraft(HISTORY_EMPTY_DRAFT); }, [review.id]);
-
-  const pageCount = review.pages.length || item.pages || 0;
-  const locked = ['verified', 'published'].includes(review.status);
-  const dirty = Boolean(pageResult && markdown !== pageResult.effective_markdown);
-
-  const loadPage = React.useCallback(async () => {
-    setPageLoading(true);
-    setPageError('');
-    try {
-      const [result, latestHermes] = await Promise.all([
-        window.HelixAPI.ocrReviewPage(review.id, selectedPage),
-        window.HelixAPI.ocrHermesLabelReviewLatest(review.id, selectedPage),
-      ]);
-      setPageResult(result);
-      setMarkdown(result.effective_markdown || '');
-      setHermesRun(latestHermes.run);
-      setLevelVerification(null);
-      setSelectionSummary({ count: 0, total: '—' });
-      setSelectedVerificationIssue('');
-      setSelectedHermesSuggestion('');
-      setMarkedHermesRows([]);
-      setMismatchTarget(null);
-      setEditing(false);
-      setViewMode(markdownHasTable(result.effective_markdown) ? 'tables' : 'preview');
-    } catch (error) {
-      setPageResult(null);
-      setPageError(error.message || 'Could not load this OCR page');
-    } finally {
-      setPageLoading(false);
-    }
-  }, [review.id, review.revision, selectedPage]);
-
-  React.useEffect(() => { loadPage(); }, [loadPage]);
-  React.useEffect(() => {
-    if (!hermesRun || !['queued', 'running'].includes(hermesRun.status)) return undefined;
-    let canceled = false;
-    const poll = window.setInterval(async () => {
-      try {
-        const next = await window.HelixAPI.ocrHermesLabelReviewRun(review.id, selectedPage, hermesRun.id);
-        if (!canceled) setHermesRun(next);
-      } catch (error) {
-        if (!canceled) setActionError(error.message || 'Could not refresh the Ollama label review');
-      }
-    }, 1200);
-    return () => {
-      canceled = true;
-      window.clearInterval(poll);
-    };
-  }, [hermesRun?.id, hermesRun?.status, review.id, selectedPage]);
-  React.useEffect(() => {
-    if (!dirty) return undefined;
-    const warn = event => { event.preventDefault(); event.returnValue = ''; };
-    window.addEventListener('beforeunload', warn);
-    return () => window.removeEventListener('beforeunload', warn);
-  }, [dirty]);
-
-  const confirmDiscard = async () => {
-    if (!dirty) return true;
-    return window.askConfirm({
-      title: 'Discard Markdown changes?',
-      message: 'Your unsaved changes to this OCR page will be lost.',
-      confirmText: 'Discard',
-      danger: true,
-    });
-  };
-
-  const navigate = async nextPage => {
-    if (nextPage === selectedPage || nextPage < 1 || nextPage > pageCount) return;
-    if (!await confirmDiscard()) return;
-    setActionError('');
-    setLevelVerification(null);
-    setSelectionSummary({ count: 0, total: '—' });
-    setSelectedVerificationIssue('');
-    setHermesRun(null);
-    setSelectedHermesSuggestion('');
-    setMarkedHermesRows([]);
-    setMismatchTarget(null);
-    setSelectedPage(nextPage);
-  };
-
-  const updateMarkdown = nextMarkdown => {
-    setMarkdown(nextMarkdown);
-    setLevelVerification(null);
-    setSelectedVerificationIssue('');
-    setHermesRun(null);
-    setSelectedHermesSuggestion('');
-    setMarkedHermesRows([]);
-    setMismatchTarget(null);
-  };
-
-  const updateSelectionSummary = React.useCallback(nextSummary => {
-    setSelectionSummary(current => (
-      current.tableNumber === nextSummary.tableNumber
-      && current.count === nextSummary.count
-      && current.total === nextSummary.total
-        ? current
-        : nextSummary
-    ));
-  }, []);
-
-  const toggleHermesLabelMark = React.useCallback(target => {
-    setMarkedHermesRows(current => {
-      const exists = current.some(row => row.table === target.table && row.row === target.row);
-      return exists
-        ? current.filter(row => row.table !== target.table || row.row !== target.row)
-        : [...current, target];
-    });
-  }, []);
-
-  const leave = async () => {
-    if (await confirmDiscard()) onBack();
-  };
-
-  const pageAction = async (action, correctedMarkdown = null) => {
-    setSaving(true);
-    setActionError('');
-    try {
-      const nextReview = await window.HelixAPI.ocrReviewPageAction(
-        review.id,
-        selectedPage,
-        action,
-        review.revision,
-        correctedMarkdown,
-      );
-      setReview(nextReview);
-      setLevelVerification(null);
-      setEditing(false);
-      if (action === 'correct') setViewMode(markdownHasTable(correctedMarkdown) ? 'tables' : 'preview');
-      window.toast?.(
-        action === 'correct' ? `Page ${selectedPage} correction saved` : `Page ${selectedPage} ${action === 'restore' ? 'reset' : 'approved'}`,
-        { type: 'success' },
-      );
-    } catch (error) {
-      setActionError(error.message || `Could not ${action} page ${selectedPage}`);
-      if (error.status === 409 || error.message?.includes('refresh')) await reload();
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const saveCorrection = async () => {
-    if (!dirty) return;
-    await pageAction('correct', markdown);
-  };
-
-  const detectLabelLevels = async () => {
-    setDetectingLevels(true);
-    setActionError('');
-    try {
-      const result = await window.HelixAPI.ocrReviewAutoLevels(
-        review.id,
-        selectedPage,
-        review.revision,
-        markdown,
-      );
-      updateMarkdown(result.markdown);
-      setViewMode('tables');
-      const relationshipText = `${result.relationships} total relationship${result.relationships === 1 ? '' : 's'}`;
-      window.toast?.(
-        `${relationshipText} found · ${result.leveled_rows} label${result.leveled_rows === 1 ? '' : 's'} proposed. Review, then save the correction.`,
-        { type: result.relationships ? 'success' : 'info' },
-      );
-    } catch (error) {
-      setActionError(error.message || 'Could not detect table label levels');
-    } finally {
-      setDetectingLevels(false);
-    }
-  };
-
-  const verifyLevelTotals = async () => {
-    setVerifyingLevelTotals(true);
-    setActionError('');
-    try {
-      const result = await window.HelixAPI.ocrReviewVerifyLevelTotals(
-        review.id,
-        selectedPage,
-        review.revision,
-        markdown,
-      );
-      setLevelVerification(result);
-      setSelectedVerificationIssue('');
-      setMismatchTarget(null);
-    } catch (error) {
-      setLevelVerification(null);
-      setActionError(error.message || 'Could not verify table level totals');
-    } finally {
-      setVerifyingLevelTotals(false);
-    }
-  };
-
-  const startHermesLabelReview = async (targetsOverride = null) => {
-    const targets = Array.isArray(targetsOverride) ? targetsOverride : markedHermesRows;
-    if (dirty) {
-      setActionError('Save or discard table changes before asking Ollama to review labels.');
-      return;
-    }
-    if (['queued', 'running'].includes(hermesRun?.status)) {
-      setActionError('Ollama is already reviewing a label. Wait for it to finish.');
-      return;
-    }
-    if (!targets.length) {
-      setActionError('Select a label cell, choose “Mark label for Ollama”, then ask Ollama.');
-      return;
-    }
-    setStartingHermes(true);
-    setActionError('');
-    setSelectedHermesSuggestion('');
-    try {
-      const run = await window.HelixAPI.ocrHermesLabelReviewStart(
-        review.id,
-        selectedPage,
-        review.revision,
-        targets,
-      );
-      setHermesRun(run);
-      setMarkedHermesRows([]);
-    } catch (error) {
-      setActionError(error.message || 'Could not start the Ollama label review');
-    } finally {
-      setStartingHermes(false);
-    }
-  };
-
-  const applyLabelSuggestions = async (run, accepted) => {
-    const result = await window.HelixAPI.ocrHermesLabelSuggestionsApply(
-      review.id,
-      selectedPage,
-      review.revision,
-      run.page_content_sha256,
-      accepted.map(suggestion => suggestion.id),
-    );
-    setReview(result.review);
-    setPageResult(result.page);
-    setMarkdown(result.page.effective_markdown || '');
-    setLevelVerification(result.verification);
-    const nextRun = result.label_review_run;
-    const hasRemaining = nextRun?.suggestions?.some(suggestion => (
-      suggestion.applied_revision === null
-      && !['rejected', 'stale'].includes(suggestion.decision)
-    ));
-    setHermesRun(hasRemaining ? nextRun : null);
-    setSelectedHermesSuggestion('');
-    setMismatchTarget(null);
-    return result;
-  };
-
-  const decideHermesSuggestion = async (suggestion, decision, userEditedLevel = null) => {
-    const applyImmediately = decision === 'accepted';
-    if (applyImmediately) setSaving(true);
-    setActionError('');
-    try {
-      const run = await window.HelixAPI.ocrHermesLabelSuggestionDecision(
-        suggestion.id,
-        decision,
-        userEditedLevel,
-      );
-      setHermesRun(run);
-      if (decision === 'rejected') {
-        setSelectedHermesSuggestion('');
-      } else if (applyImmediately) {
-        const accepted = run.suggestions.filter(candidate => (
-          candidate.id === suggestion.id
-          && ['accepted', 'edited'].includes(candidate.decision)
-          && candidate.applied_revision === null
-        ));
-        if (!accepted.length) throw new Error('The accepted suggestion is no longer available');
-        await applyLabelSuggestions(run, accepted);
-        window.toast?.(`Label changed to “${accepted[0].suggested_label || labelLevelCode(accepted[0].suggested_level)}”`, { type: 'success' });
-      }
-    } catch (error) {
-      setActionError(error.message || `Could not ${applyImmediately ? 'accept and apply' : 'reject'} the Ollama suggestion`);
-    } finally {
-      if (applyImmediately) setSaving(false);
-    }
-  };
-
-  const applyHermesSuggestions = async () => {
-    const accepted = (hermesRun?.suggestions || []).filter(suggestion => (
-      ['accepted', 'edited'].includes(suggestion.decision)
-      && suggestion.applied_revision === null
-    ));
-    if (!accepted.length) return;
-    setSaving(true);
-    setActionError('');
-    try {
-      await applyLabelSuggestions(hermesRun, accepted);
-      window.toast?.(`${accepted.length} Ollama label suggestion${accepted.length === 1 ? '' : 's'} applied`, { type: 'success' });
-    } catch (error) {
-      setActionError(error.message || 'Could not apply the Ollama label suggestions');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const verify = async () => {
-    setSaving(true);
-    setActionError('');
-    try {
-      const nextReview = await window.HelixAPI.ocrReviewVerify(review.id, review.revision);
-      setReview(nextReview);
-      await reload();
-      window.toast?.('Page Markdown review verified', { type: 'success' });
-    } catch (error) {
-      setActionError(error.message || 'Could not verify the page review');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const selectedMeta = review.pages.find(page => page.page === selectedPage);
-  const statusLabel = selectedMeta?.status || pageResult?.status || 'pending';
-  const verificationIssues = levelVerification ? [
-    ...levelVerification.checks.flatMap(check => check.columns
-      .filter(column => !column.matches)
-      .map(column => ({
-        id: `mismatch-${check.table}-${check.parent_row}-${column.column}`,
-        table: check.table,
-        row: check.parent_row,
-        column: column.column,
-        label: `Table ${check.table} · row ${check.parent_row} · L${check.parent_level}→L${check.child_level} · ${column.column_label} · difference ${column.difference}`,
-      }))),
-    ...(levelVerification.unverifiable || []).map((block, index) => ({
-      id: `review-${block.table}-${block.child_rows.join('-')}-${index}`,
-      table: block.table,
-      row: block.child_rows[0],
-      column: 1,
-      label: `Table ${block.table} · L${block.child_level} rows ${block.child_rows.join(', ')} · choose parent direction`,
-    })),
-  ] : [];
-  const navigateToVerificationIssue = event => {
-    const issueId = event.target.value;
-    setSelectedVerificationIssue(issueId);
-    const issue = verificationIssues.find(candidate => candidate.id === issueId);
-    if (!issue) return;
-    setMismatchTarget({ ...issue, token: Date.now() });
-  };
-  const visibleHermesSuggestions = (hermesRun?.suggestions || []).filter(
-    suggestion => (
-      suggestion.applied_revision === null
-      && !['rejected', 'stale'].includes(suggestion.decision)
-    ),
-  );
-  const acceptedHermesSuggestions = visibleHermesSuggestions.filter(
-    suggestion => ['accepted', 'edited'].includes(suggestion.decision),
-  );
-  const navigateToHermesSuggestion = event => {
-    const suggestionId = event.target.value;
-    setSelectedHermesSuggestion(suggestionId);
-    const suggestion = visibleHermesSuggestions.find(
-      candidate => String(candidate.id) === suggestionId,
-    );
-    if (!suggestion) return;
-    setMismatchTarget({
-      table: suggestion.table,
-      row: suggestion.row,
-      column: 1,
-      token: Date.now(),
-    });
-  };
-  const activeHermesSuggestion = visibleHermesSuggestions.find(
-    suggestion => String(suggestion.id) === selectedHermesSuggestion,
-  );
-
-  return (
-    <div className="page" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div className="page-header" style={{ marginBottom: 14 }}>
-        <div>
-          <button className="card-action" onClick={leave}>← OCR Inbox</button>
-          <h1 className="page-title" style={{ marginTop: 8 }}>{item.filename}</h1>
-          <p className="page-sub">
-            {review.counts.resolved} of {review.counts.total} pages resolved · revision {review.revision}
-          </p>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          <a className="btn" href={window.HelixAPI.ocrReviewMarkdownUrl(review.id, 'raw')} target="_blank" rel="noreferrer">Raw document</a>
-          <a className="btn" href={window.HelixAPI.ocrReviewMarkdownUrl(review.id, 'effective')} target="_blank" rel="noreferrer">Reviewed document</a>
-          <button className="btn" aria-expanded={labelsOpen} onClick={() => setLabelsOpen(open => !open)}>{labelsMissing ? 'Labels ⚠' : 'Labels'}</button>
-          <button className="btn btn-primary" disabled={saving || review.counts.pending > 0 || visibleHermesSuggestions.length > 0 || locked} onClick={verify}>Verify review</button>
-          <button className="btn btn-accent" disabled={saving || !locked} title={locked ? 'Turn this verified statement into company history' : 'Verify the review first'} onClick={() => setHistoryOpen(true)}>Add to history</button>
-        </div>
-      </div>
-
-      {actionError && <div role="alert" style={{ padding: '9px 12px', marginBottom: 10, border: '1px solid var(--neg)', borderRadius: 6, color: 'var(--neg)', fontSize: 12 }}>{actionError}</div>}
-      {labelsOpen && <div className="card" style={{ marginBottom: 14 }}>
-        <OCRPublishPanel key={`${item.id}-${review.revision}`} item={item} reload={reload} setPage={() => {}} canPublish={false} title="Upload labels" />
-      </div>}
-      {historyOpen && <OCRHistoryWizard item={item} review={review} draft={historyDraft} setDraft={setHistoryDraft}
-        onClose={() => setHistoryOpen(false)}
-        onOpenLabels={() => { setHistoryOpen(false); setLabelsOpen(true); }}
-        onWritten={async () => { setHistoryOpen(false); setHistoryDraft(HISTORY_EMPTY_DRAFT); await reload(); }} />}
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(420px,1.1fr) minmax(440px,1fr)', gap: 14, flex: 1, minHeight: 0 }}>
-        <div className="card" style={{ minHeight: 0, display: 'flex', flexDirection: 'column', background: '#383b40' }}>
-          <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, background: 'var(--bg-elev)', borderBottom: '1px solid var(--border)' }}>
-            <button className="btn" disabled={selectedPage <= 1} onClick={() => navigate(selectedPage - 1)}>← Previous</button>
-            <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 7 }}>
-              PDF page
-              <select value={selectedPage} onChange={event => navigate(Number(event.target.value))} style={{ padding: '6px 8px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--bg-elev)', color: 'var(--text)' }}>
-                {review.pages.map(page => <option key={page.page} value={page.page}>{page.page} · {page.status}{page.total_check?.likely_misreads?.length ? ' · ⚠ totals' : ''}</option>)}
-              </select>
-              <span className="num">of {pageCount}</span>
-            </label>
-            <button className="btn" disabled={selectedPage >= pageCount} onClick={() => navigate(selectedPage + 1)}>Next →</button>
-          </div>
-          <div style={{ overflow: 'auto', padding: 12, flex: 1 }}>
-            <div style={{ maxWidth: 850, margin: '0 auto' }}>
-              <img
-                src={window.HelixAPI.ocrInboxPageUrl(item.id, selectedPage)}
-                alt={`Source PDF page ${selectedPage}`}
-                style={{ width: '100%', height: 'auto', display: 'block', background: 'white' }}
-              />
-            </div>
-          </div>
-        </div>
-
-        <div className="card" style={{ minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-          <div className="card-header" style={{ gap: 12 }}>
-            <div>
-              <h3 className="card-title">{viewMode === 'tables' && !editing ? 'Spreadsheet review' : 'Markdown'} · page {selectedPage}</h3>
-              {pageResult && <div className="num" style={{ marginTop: 4, fontSize: 10, color: 'var(--text-muted)' }}>{fmtInboxBytes(pageResult.byte_size)} · {pageResult.content_sha256.slice(0, 12)}…</div>}
-              {pageResult?.label_check && <div style={{ marginTop: 4, fontSize: 10, color: pageResult.label_check.error ? 'var(--neg)' : 'var(--text-muted)' }}>Label checker: {pageResult.label_check.status}{pageResult.label_check.status === 'checked' ? ` · ${pageResult.label_check.known_count} known · ${pageResult.label_check.candidate_count} to review` : ''}{pageResult.label_check.error ? ` · ${pageResult.label_check.error}` : ''}</div>}
-              {pageResult?.total_check?.likely_misreads?.length > 0 && <div role="status" style={{ marginTop: 4, fontSize: 10, color: 'var(--neg)' }}>
-                {pageResult.total_check.likely_misreads.map((flag, index) => <div key={index}>⚠ Total check: “{flag.parent_label}” ({flag.column_label}) shows {flag.parent} but its rows add up to {flag.children_sum} — off by {flag.difference}, likely one misread digit. Compare with the PDF.</div>)}
-              </div>}
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-              {!editing && viewMode === 'tables' && markdownHasTable(markdown) && !locked && <button
-                type="button"
-                className="btn"
-                disabled={dirty || saving || !markedHermesRows.length || startingHermes || ['queued', 'running'].includes(hermesRun?.status)}
-                onClick={() => startHermesLabelReview()}
-                title={dirty ? 'Save or discard table changes before asking Ollama' : markedHermesRows.length ? 'Send marked labels to Ollama one at a time' : 'Select a label cell and mark it for Ollama first'}
-              >{startingHermes || ['queued', 'running'].includes(hermesRun?.status) ? 'Ollama reviewing…' : `Ask Ollama (${markedHermesRows.length})`}</button>}
-              {!editing && viewMode === 'tables' && markdownHasTable(markdown) && !locked && <button
-                type="button"
-                className="btn"
-                disabled={saving || detectingLevels || verifyingLevelTotals || ['queued', 'running'].includes(hermesRun?.status)}
-                onClick={detectLabelLevels}
-                title="Use exact arithmetic to propose label levels from the corrected table values"
-              >{detectingLevels ? 'Detecting levels…' : 'Auto-detect levels'}</button>}
-              {!editing && viewMode === 'tables' && markdownHasTable(markdown) && <button
-                type="button"
-                className="btn"
-                disabled={saving || detectingLevels || verifyingLevelTotals}
-                onClick={verifyLevelTotals}
-                title="Check that every L0–L2 parent equals the total of its direct next-level rows"
-              >{verifyingLevelTotals ? 'Verifying totals…' : 'Verify level totals'}</button>}
-              {!editing && <div className="range-chips" role="tablist" aria-label="Markdown display mode">
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={viewMode === 'tables'}
-                  className={`range-chip ${viewMode === 'tables' ? 'active' : ''}`}
-                  onClick={() => setViewMode('tables')}
-                >Spreadsheet</button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={viewMode === 'preview'}
-                  className={`range-chip ${viewMode === 'preview' ? 'active' : ''}`}
-                  onClick={() => setViewMode('preview')}
-                >Page</button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={viewMode === 'source'}
-                  className={`range-chip ${viewMode === 'source' ? 'active' : ''}`}
-                  onClick={() => setViewMode('source')}
-                >Source</button>
-              </div>}
-              <InboxStatus status={statusLabel} />
-            </div>
-          </div>
-
-          <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 14 }}>
-            {pageLoading ? (
-              <div style={{ display: 'grid', gap: 8 }} aria-label="Loading Markdown page">
-                <div className="skeleton" style={{ height: 18, width: '65%' }} />
-                <div className="skeleton" style={{ height: 12, width: '100%' }} />
-                <div className="skeleton" style={{ height: 12, width: '92%' }} />
-              </div>
-            ) : pageError ? (
-              <div role="alert" style={{ color: 'var(--neg)', fontSize: 12 }}>
-                <div>{pageError}</div>
-                <button className="btn" style={{ marginTop: 10 }} onClick={loadPage}>Retry</button>
-              </div>
-            ) : editing ? (
-              <textarea
-                value={markdown}
-                onChange={event => updateMarkdown(event.target.value)}
-                aria-label={`Correct Markdown for page ${selectedPage}`}
-                spellCheck="false"
-                style={{ width: '100%', minHeight: '100%', resize: 'vertical', padding: 12, border: '1px solid var(--accent)', borderRadius: 6, background: 'var(--bg-sunken)', color: 'var(--text)', fontFamily: 'var(--font-mono)', fontSize: 12, lineHeight: 1.6 }}
-              />
-            ) : viewMode === 'tables' ? (
-              <MarkdownPreview markdown={markdown} tablesOnly interactiveTables onMarkdownChange={locked ? null : updateMarkdown} levelVerification={levelVerification} mismatchTarget={mismatchTarget} onSelectionSummary={updateSelectionSummary} labelSuggestions={visibleHermesSuggestions} markedLabelRows={markedHermesRows} onToggleLabelMark={locked ? null : toggleHermesLabelMark} onAskHermesForLabel={locked ? null : target => startHermesLabelReview([target])} onDecideLabelSuggestion={locked ? null : decideHermesSuggestion} />
-            ) : viewMode === 'preview' ? (
-              <MarkdownPreview markdown={markdown} />
-            ) : (
-              <pre style={{ margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontFamily: 'var(--font-mono)', fontSize: 12, lineHeight: 1.65, color: 'var(--text)' }}>{markdown || 'This page contains no OCR text.'}</pre>
-            )}
-          </div>
-
-          {!pageLoading && !pageError && (!locked || (!editing && viewMode === 'tables')) && <div style={{ padding: '10px 14px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'space-between', flexWrap: 'wrap', background: 'var(--bg-elev)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 14, flex: '1 1 420px', minWidth: 0, flexWrap: 'wrap' }}>
-              {!editing && viewMode === 'tables' && <>
-                <span role="status" aria-live="polite" style={{ display: 'inline-flex', alignItems: 'baseline', gap: 12, whiteSpace: 'nowrap' }}>
-                  <strong>Selected: <span className="num">{selectionSummary.count}</span></strong>
-                  <strong>Total: <span className="num" style={{ fontSize: 13 }}>{selectionSummary.total}</span></strong>
-                </span>
-                {levelVerification && <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0, color: verificationIssues.length ? 'var(--neg)' : 'var(--pos)', fontSize: 11, fontWeight: 700 }}>
-                  Verification
-                  <select
-                    value={selectedVerificationIssue}
-                    disabled={!verificationIssues.length}
-                    onChange={navigateToVerificationIssue}
-                    aria-label="Go to a level verification issue"
-                    style={{ width: 'min(430px, 44vw)', minWidth: 220, padding: '6px 8px', border: `1px solid ${verificationIssues.length ? 'var(--neg-soft)' : 'var(--pos-soft)'}`, borderRadius: 4, background: 'var(--bg-elev)', color: 'var(--text)', fontSize: 11 }}
-                  >
-                    <option value="">{verificationIssues.length ? `${verificationIssues.length} issue${verificationIssues.length === 1 ? '' : 's'} · ${levelVerification.matched} matched` : `No issues · ${levelVerification.matched} matched`}</option>
-                    {verificationIssues.map(issue => <option key={issue.id} value={issue.id}>{issue.label}</option>)}
-                  </select>
-                </label>}
-                {hermesRun && <div role="status" aria-live="polite" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0, flexWrap: 'wrap', color: hermesRun.status === 'failed' ? 'var(--neg)' : '#7c3aed', fontSize: 11, fontWeight: 700 }}>
-                  <span>{hermesRun.trigger === 'worker_auto' ? 'Automatic Ollama' : 'Ollama'}</span>
-                  {['queued', 'running'].includes(hermesRun.status) ? <span>sent label {(hermesRun.processed_count || 0) + 1} of {hermesRun.total_count || hermesRun.selected_rows?.length || 0} to Ollama{hermesRun.active_target ? ` · table ${hermesRun.active_target.table}, row ${hermesRun.active_target.row}` : ''}</span> : hermesRun.status === 'failed' ? <span title={hermesRun.error}>{hermesRun.error || 'review failed'}</span> : visibleHermesSuggestions.length ? <>
-                    <select
-                      value={selectedHermesSuggestion}
-                      onChange={navigateToHermesSuggestion}
-                      aria-label="Go to an Ollama label suggestion"
-                      style={{ width: 'min(430px, 44vw)', minWidth: 240, padding: '6px 8px', border: '1px solid #7c3aed', borderRadius: 4, background: 'var(--bg-elev)', color: 'var(--text)', fontSize: 11 }}
-                    >
-                      <option value="">{visibleHermesSuggestions.length} suggestion{visibleHermesSuggestions.length === 1 ? '' : 's'} · {acceptedHermesSuggestions.length} accepted</option>
-                      {visibleHermesSuggestions.map(suggestion => <option key={suggestion.id} value={suggestion.id}>Table {suggestion.table} · row {suggestion.row} · {suggestion.suggested_label ? `${suggestion.current_label} → ${suggestion.suggested_label}` : `${suggestion.current_level === null ? 'Unassigned' : labelLevelCode(suggestion.current_level)} → ${labelLevelCode(suggestion.user_edited_level ?? suggestion.suggested_level)}`} · {suggestion.decision}</option>)}
-                    </select>
-                    {activeHermesSuggestion && <>
-                      {activeHermesSuggestion.suggested_label ? <span>Use: {activeHermesSuggestion.suggested_label}</span> : <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>Use
-                        <select value={activeHermesSuggestion.user_edited_level ?? activeHermesSuggestion.suggested_level} onChange={event => decideHermesSuggestion(activeHermesSuggestion, 'edited', Number(event.target.value))} aria-label="Change the accepted Ollama label level" style={{ padding: '4px 6px', border: '1px solid #7c3aed', borderRadius: 4, background: 'var(--bg-elev)', color: 'var(--text)', fontSize: 10 }}>
-                          {LABEL_LEVEL_VALUES.map(level => <option key={level} value={level}>{labelLevelCode(level)}</option>)}
-                        </select>
-                      </label>}
-                      <button type="button" className="card-action" disabled={['accepted', 'edited'].includes(activeHermesSuggestion.decision)} onClick={() => decideHermesSuggestion(activeHermesSuggestion, 'accepted')}>Accept</button>
-                      <button type="button" className="card-action" onClick={() => decideHermesSuggestion(activeHermesSuggestion, 'rejected')}>Reject</button>
-                    </>}
-                    <button type="button" className="btn btn-primary" disabled={!acceptedHermesSuggestions.length || saving} onClick={applyHermesSuggestions}>Apply accepted ({acceptedHermesSuggestions.length})</button>
-                  </> : <span>{hermesRun.suggestions?.some(suggestion => suggestion.applied_revision !== null) ? 'Suggestions applied' : hermesRun.suggestions?.length ? 'All suggestions resolved' : `Ollama reviewed ${hermesRun.processed_count || 0} marked label${(hermesRun.processed_count || 0) === 1 ? '' : 's'} · no changes suggested`}</span>}
-                </div>}
-              </>}
-            </div>
-            {!locked && <div style={{ display: 'flex', alignItems: 'center', gap: 7, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-              {editing ? <>
-                <button className="btn" disabled={saving} onClick={() => { updateMarkdown(pageResult?.effective_markdown || ''); setEditing(false); setViewMode(markdownHasTable(pageResult?.effective_markdown) ? 'tables' : 'preview'); }}>Cancel</button>
-                <button className="btn btn-primary" disabled={saving || !dirty} onClick={saveCorrection}>{saving ? 'Saving…' : 'Save correction'}</button>
-              </> : <>
-                {dirty ? <>
-                  <button className="btn" disabled={saving} onClick={() => updateMarkdown(pageResult?.effective_markdown || '')}>Discard table changes</button>
-                  <button className="btn btn-primary" disabled={saving} onClick={saveCorrection}>{saving ? 'Saving…' : 'Save correction'}</button>
-                </> : <>
-                  {statusLabel === 'pending' && <button className="btn btn-primary" disabled={saving} onClick={() => pageAction('approve')}>Approve page</button>}
-                  <button className="btn" disabled={saving} onClick={() => { updateMarkdown(pageResult?.effective_markdown || ''); setViewMode('source'); setEditing(true); }}>Edit Markdown</button>
-                  {statusLabel !== 'pending' && <button className="btn" disabled={saving} onClick={() => pageAction('restore')}>Reset to pending</button>}
-                </>}
-              </>}
-            </div>}
-          </div>}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// ── "Add to history" (company history from a verified Markdown review) ─────────
-// Every answer re-posts history-preview; the server decides what still blocks. Code here never
-// picks a period, unit, line or conflict value for the owner: options are listed, the owner chooses.
-const HISTORY_KIND_OPTIONS = [
-  { value: 'balance', label: 'Balance sheet' },
-  { value: 'income', label: 'Income statement' },
-  { value: 'cashflow', label: 'Cash flow' },
-  { value: 'skip', label: 'Skip', hint: 'not a statement table' },
-];
-const HISTORY_KIND_NAMES = { balance: 'Balance sheet', income: 'Income statement', cashflow: 'Cash flow', skip: 'Skipped' };
-const HISTORY_UNIT_OPTIONS = [
-  { value: 1, label: 'đồng' },
-  { value: 1000, label: 'nghìn đồng', hint: '× 1,000' },
-  { value: 1000000, label: 'triệu đồng', hint: '× 1,000,000' },
-  { value: 1000000000, label: 'tỷ đồng', hint: '× 1,000,000,000' },
-];
-const HISTORY_TABLE_CODES = new Set(['review_not_verified', 'labels_missing', 'table_kind_unknown', 'unit_unknown', 'column_period_unknown', 'period_mismatch']);
-const HISTORY_EMPTY_DRAFT = { tables: {}, lines: {}, misreads: {}, resolutions: {} };
-
-const historyTableKey = (page, table) => `${page}:${table}`;
-const historyRowKey = (page, table, row) => `${page}:${table}:${row}`;
-const historyMisreadKey = m => `${m.page}:${m.content_sha256}:${m.table}:${m.parent_row}:${m.column_label}`;
-const historyDmy = iso => { const [y, m, d] = String(iso).split('-'); return `${d}/${m}/${y}`; };
-const historyPeriodValue = p => (p ? `${p.type}|${p.start || ''}|${p.end}` : '');
-const historyPeriodText = p => {
-  if (!p) return { label: 'Unknown period', hint: '' };
-  const year = String(p.end).slice(0, 4);
-  if (p.type === 'instant') return { label: `At ${historyDmy(p.end)}`, hint: 'balance date' };
-  const range = `${historyDmy(p.start)} – ${historyDmy(p.end)}`;
-  if (p.type === 'quarter') return { label: `Q${Math.ceil(Number(String(p.end).slice(5, 7)) / 3)} ${year}`, hint: range };
-  if (p.type === 'year') return { label: `FY ${year}`, hint: range };
-  const months = (Number(String(p.end).slice(0, 4)) - Number(String(p.start).slice(0, 4))) * 12
-    + Number(String(p.end).slice(5, 7)) - Number(String(p.start).slice(5, 7)) + 1;
-  return { label: `${months}M ${year} year to date`, hint: range };
-};
-// Every period a column of this filing could plausibly hold, for the owner to pick from.
-const historyPeriodOptions = (fiscalYear, current) => {
-  const options = [];
-  const add = p => { if (!options.some(o => o.value === historyPeriodValue(p))) options.push({ value: historyPeriodValue(p), ...historyPeriodText(p), period: p }); };
-  if (current) add(current);
-  const base = Number(fiscalYear) || new Date().getFullYear();
-  [base, base - 1].forEach(y => {
-    [['01-01', '03-31'], ['04-01', '06-30'], ['07-01', '09-30'], ['10-01', '12-31']].forEach(([a, b]) => add({ type: 'quarter', start: `${y}-${a}`, end: `${y}-${b}` }));
-    add({ type: 'ytd', start: `${y}-01-01`, end: `${y}-06-30` });
-    add({ type: 'ytd', start: `${y}-01-01`, end: `${y}-09-30` });
-    add({ type: 'year', start: `${y}-01-01`, end: `${y}-12-31` });
-    ['03-31', '06-30', '09-30', '12-31'].forEach(d => add({ type: 'instant', start: null, end: `${y}-${d}` }));
-  });
-  options.push({ value: 'skip', label: 'Skip this column', hint: 'not a value column' });
-  return options;
-};
-const historyMoney = value => (value === null || value === undefined ? '—' : `${Number(value).toLocaleString('vi-VN')} đ`);
-
-const historyPayload = (draft, revision) => ({
-  revision,
-  tables: Object.entries(draft.tables).map(([key, answer]) => {
-    const [page, table] = key.split(':').map(Number);
-    const out = { page, table, columns: Object.values(answer.columns || {}) };
-    if (answer.kind) out.kind = answer.kind;
-    if (answer.unit_multiplier) out.unit_multiplier = answer.unit_multiplier;
-    return out;
-  }),
-  // A new line without a name is not an answer yet (the row stays open).
-  lines: Object.entries(draft.lines)
-    .filter(([, answer]) => answer.line_key || (answer.new_line_name || '').trim())
-    .map(([key, answer]) => {
-      const [page, table, row] = key.split(':').map(Number);
-      return answer.line_key ? { page, table, row, line_key: answer.line_key } : { page, table, row, new_line_name: answer.new_line_name.trim() };
-    }),
-  accepted_misreads: Object.values(draft.misreads),
-  resolutions: Object.entries(draft.resolutions).map(([fact_key, chosen]) => ({ fact_key, chosen })),
-});
-
-const HistoryBadge = ({ tone = 'muted', children }) => {
-  const colors = { muted: 'var(--text-muted)', warn: 'var(--warn)', neg: 'var(--neg)', pos: 'var(--pos)', accent: 'var(--accent)' };
-  const c = colors[tone] || colors.muted;
-  return <span style={{ display: 'inline-flex', alignItems: 'center', height: 20, padding: '0 8px', borderRadius: 999, fontSize: 11, fontWeight: 700, color: c, background: `color-mix(in srgb, ${c} 13%, transparent)`, whiteSpace: 'nowrap' }}>{children}</span>;
-};
-const historyCard = { border: '1px solid var(--ux-line-2)', borderRadius: 16, padding: 14, marginBottom: 12, background: 'var(--ux-surface)' };
-const historyBlockText = { margin: '8px 0 0', fontSize: 12, color: 'var(--neg)' };
-
-const OCRHistoryWizard = ({ item, review, draft, setDraft, onClose, onWritten, onOpenLabels }) => {
-  const [preview, setPreview] = React.useState(null);
-  const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState('');
-  const [writing, setWriting] = React.useState(false);
-  const [filter, setFilter] = React.useState('used');
-  const [editingColumns, setEditingColumns] = React.useState({});
-  const [touched, setTouched] = React.useState({}); // tables answered here stay listed under "Open"
-  const dialogRef = React.useRef(null);
-  const seq = React.useRef(0);
-
-  // Re-post the preview on every answer (debounced so quick clicks share one request).
-  React.useEffect(() => {
-    const id = ++seq.current;
-    setLoading(true);
-    const t = setTimeout(async () => {
-      try {
-        const next = await window.HelixAPI.historyPreview(review.id, historyPayload(draft, review.revision));
-        if (id !== seq.current) return;
-        setPreview(next); setError('');
-        // A conflict choice only means something while that conflict exists: an answer elsewhere
-        // (period, line, kind) can make a fact_key disappear, so drop choices for keys no longer listed.
-        const live = new Set((next.conflicts || []).map(c => c.fact_key));
-        setDraft(d => {
-          const stale = Object.keys(d.resolutions).filter(key => !live.has(key));
-          if (!stale.length) return d;
-          const resolutions = { ...d.resolutions };
-          stale.forEach(key => { delete resolutions[key]; });
-          return { ...d, resolutions };
-        });
-      } catch (e) {
-        if (id !== seq.current) return;
-        setError(e.message || 'Could not prepare the history preview');
-      } finally {
-        if (id === seq.current) setLoading(false);
-      }
-    }, 250);
-    return () => clearTimeout(t);
-  }, [draft, review.id, review.revision]);
-
-  React.useEffect(() => {
-    const opener = document.activeElement;
-    dialogRef.current?.focus({ preventScroll: true });
-    return () => { if (opener && opener.isConnected) opener.focus?.({ preventScroll: true }); };
-  }, []);
-  const onDialogKey = e => {
-    if (e.key === 'Escape') { e.preventDefault(); onClose(); return; }
-    if (e.key !== 'Tab' || !dialogRef.current) return;
-    const focusables = Array.from(dialogRef.current.querySelectorAll('button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'))
-      .filter(el => el.offsetParent !== null && !el.closest('[inert]') && !el.closest('[aria-hidden="true"]'));
-    if (!focusables.length) return;
-    const first = focusables[0], last = focusables[focusables.length - 1];
-    if (e.shiftKey && (document.activeElement === first || document.activeElement === dialogRef.current)) { e.preventDefault(); last.focus(); }
-    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
-  };
-
-  const blocking = preview?.blocking || [];
-  const tables = preview?.tables || [];
-  const usedTables = tables.filter(t => t.kind && t.kind !== 'skip');
-  // Year-less headers are proposals from the labelled year: the owner confirms each one.
-  const unconfirmed = usedTables.flatMap(t => t.columns
-    .filter(c => !c.skipped && c.period_source === 'relative')
-    .map(c => ({ code: 'period_unconfirmed', page: t.page, table: t.table, column: c.column, message: `Confirm the proposed period of column ${c.header || c.column}` })));
-  // A kind proposed from the page heading is only a proposal (spec §6.3): the owner confirms it per table
-  // (sent back as an explicit `kind` answer) or picks another kind / Skip.
-  const kindUnconfirmed = t => !!t.proposed_kind && t.kind === t.proposed_kind && !draft.tables[historyTableKey(t.page, t.table)]?.kind;
-  const unconfirmedKinds = tables.filter(kindUnconfirmed)
-    .map(t => ({ code: 'kind_unconfirmed', page: t.page, table: t.table, message: `Confirm that page ${t.page} table ${t.table} is a ${HISTORY_KIND_NAMES[t.kind].toLowerCase()}, or skip it` }));
-  const tableBlocking = [...blocking.filter(b => HISTORY_TABLE_CODES.has(b.code)), ...unconfirmedKinds, ...unconfirmed];
-  const lineBlocking = blocking.filter(b => b.code === 'line_unanswered');
-  const checkBlocking = blocking.filter(b => b.code === 'misread_unaccepted');
-  const otherBlocking = blocking.filter(b => !HISTORY_TABLE_CODES.has(b.code) && !['line_unanswered', 'misread_unaccepted'].includes(b.code));
-  const blocksFor = (page, table) => tableBlocking.filter(b => b.page === page && b.table === table);
-  const globalBlock = blocking.find(b => b.code === 'review_not_verified' || b.code === 'labels_missing');
-  const ready = !!preview && !loading && !error;
-
-  const touch = t => setTouched(x => ({ ...x, [historyTableKey(t.page, t.table)]: true }));
-  const updateTable = (t, patch) => { touch(t); setDraft(d => {
-    const key = historyTableKey(t.page, t.table);
-    const prev = d.tables[key] || { columns: {} };
-    return { ...d, tables: { ...d.tables, [key]: { ...prev, ...patch, columns: { ...(prev.columns || {}), ...(patch.columns || {}) } } } };
-  }); };
-  const setColumn = (t, column, answer) => { touch(t); setDraft(d => {
-    const key = historyTableKey(t.page, t.table);
-    const prev = d.tables[key] || { columns: {} };
-    const columns = { ...(prev.columns || {}) };
-    if (answer) columns[column] = { column, ...answer }; else delete columns[column];
-    return { ...d, tables: { ...d.tables, [key]: { ...prev, columns } } };
-  }); };
-  const columnAnswer = (t, column) => draft.tables[historyTableKey(t.page, t.table)]?.columns?.[column];
-  const pickPeriod = (t, c, value) => {
-    if (value === 'skip') { setColumn(t, c.column, { skip: true }); return; }
-    const [type, start, end] = String(value).split('|');
-    setColumn(t, c.column, { period_type: type, period_start: start || null, period_end: end });
-    setEditingColumns(x => ({ ...x, [`${t.page}:${t.table}:${c.column}`]: false }));
-  };
-  const skipKindless = () => setDraft(d => {
-    const next = { ...d.tables };
-    tables.filter(t => !t.kind && !t.proposed_kind).forEach(t => {
-      const key = historyTableKey(t.page, t.table);
-      next[key] = { ...(next[key] || { columns: {} }), kind: 'skip' };
-    });
-    return { ...d, tables: next };
-  });
-  const unknownRows = usedTables.flatMap(t => t.rows.filter(r => r.status === 'unknown').map(r => ({ t, r })));
-  const namedUnknownRows = unknownRows.filter(({ t, r }) => (r.label || '').trim() && !draft.lines[historyRowKey(t.page, t.table, r.row)]);
-  const newLinesForAll = () => setDraft(d => {
-    const lines = { ...d.lines };
-    namedUnknownRows.forEach(({ t, r }) => { lines[historyRowKey(t.page, t.table, r.row)] = { new_line_name: r.label }; });
-    return { ...d, lines };
-  });
-  const setLineName = (t, r, name) => setDraft(d => ({ ...d, lines: { ...d.lines, [historyRowKey(t.page, t.table, r.row)]: { new_line_name: name } } }));
-  const setLine = (t, r, value) => setDraft(d => {
-    const lines = { ...d.lines };
-    const key = historyRowKey(t.page, t.table, r.row);
-    if (!value) delete lines[key];
-    else lines[key] = value === '__new__' ? { new_line_name: r.label } : { line_key: value };
-    return { ...d, lines };
-  });
-  const toggleMisread = m => setDraft(d => {
-    const misreads = { ...d.misreads };
-    const key = historyMisreadKey(m);
-    if (misreads[key]) delete misreads[key];
-    else misreads[key] = { page: m.page, content_sha256: m.content_sha256, table: m.table, parent_row: m.parent_row, column_label: m.column_label };
-    return { ...d, misreads };
-  });
-  const setResolution = (factKey, value) => setDraft(d => {
-    const resolutions = { ...d.resolutions };
-    if (value === 'open') delete resolutions[factKey];
-    else resolutions[factKey] = value === 'incoming' ? 'incoming' : Number(value);
-    return { ...d, resolutions };
-  });
-
-  const finish = async () => {
-    setWriting(true);
-    try {
-      const live = new Set(conflicts.map(c => c.fact_key));
-      const current = { ...draft, resolutions: Object.fromEntries(Object.entries(draft.resolutions).filter(([key]) => live.has(key))) };
-      const result = await window.HelixAPI.historyWrite(review.id, historyPayload(current, review.revision));
-      window.toast?.(`Added to history: ${result.written} written · ${result.superseded} superseded · ${result.conflicts_open} conflicts open`, { type: 'success', duration: 7000 });
-      onWritten?.(result);
-    } catch (e) {
-      if (e.detail?.blocking) setPreview(p => ({ ...(p || {}), blocking: e.detail.blocking }));
-      window.toast?.(e.message || 'Could not add to history', { type: 'error' });
-    } finally { setWriting(false); }
-  };
-
-  const scanLink = page => <a className="card-action" href={window.HelixAPI.ocrInboxPageUrl(item.id, page)} target="_blank" rel="noreferrer">Open page {page}</a>;
-  const status = open => <div aria-live="polite" style={{ minHeight: 18, fontSize: 12, color: error ? 'var(--neg)' : open ? 'var(--warn)' : 'var(--text-muted)', margin: '0 0 10px' }}>
-    {error ? error : loading ? 'Updating…' : preview ? (open ? `${open} open question${open === 1 ? '' : 's'} on this step` : 'Nothing open on this step') : ''}
-  </div>;
-
-  // ── step 1: tables & periods ──
-  const tableNeedsAnswer = t => blocksFor(t.page, t.table).length > 0;
-  const shownTables = tables.filter(t => filter === 'all' ? true : filter === 'used' ? (t.kind && t.kind !== 'skip') : (tableNeedsAnswer(t) || touched[historyTableKey(t.page, t.table)]));
-  const shownUnconfirmed = shownTables.filter(kindUnconfirmed);
-  const confirmKinds = list => { list.forEach(touch); setDraft(d => {
-    const next = { ...d.tables };
-    list.forEach(t => { const key = historyTableKey(t.page, t.table); next[key] = { ...(next[key] || { columns: {} }), kind: t.kind }; });
-    return { ...d, tables: next };
-  }); };
-  const kindlessCount = tables.filter(t => !t.kind && !t.proposed_kind && !draft.tables[historyTableKey(t.page, t.table)]?.kind).length;
-  const renderColumn = (t, c) => {
-    const answer = columnAnswer(t, c.column);
-    const editKey = `${t.page}:${t.table}:${c.column}`;
-    const tone = c.skipped ? 'muted' : !c.period ? 'neg' : c.period_source === 'relative' ? 'warn' : c.period_source === 'answer' ? 'accent' : 'pos';
-    const badge = c.skipped ? 'skipped' : !c.period ? 'unknown — set it' : c.period_source === 'relative' ? 'proposed — confirm' : c.period_source === 'answer' ? 'set by you' : 'from header';
-    const text = historyPeriodText(c.period);
-    const showSelect = !c.period || editingColumns[editKey] || c.period_source === 'relative';
-    return <div key={c.column} style={{ padding: 10, borderRadius: 12, background: 'var(--ux-surface-2)', marginTop: 8 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 12, fontWeight: 600, flex: '1 1 160px', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.header}>{c.header || `Column ${c.column}`}</span>
-        <HistoryBadge tone={tone}>{badge}</HistoryBadge>
-      </div>
-      {c.period && !c.skipped && !showSelect && <div style={{ fontSize: 13, fontWeight: 700, marginTop: 6 }}>{text.label} <span style={{ fontWeight: 500, color: 'var(--text-muted)', fontSize: 12 }}>{text.hint}</span></div>}
-      {showSelect && !c.skipped && <div style={{ marginTop: 8 }}>
-        <LxSelect ariaLabel={`Period of column ${c.header || c.column}`} value={historyPeriodValue(c.period)} placeholder="Choose the period"
-          options={historyPeriodOptions(item.labels?.fiscal_year, c.period)} onChange={value => pickPeriod(t, c, value)} />
-      </div>}
-      <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
-        {c.period_source === 'relative' && !c.skipped && <button className="btn btn-primary" onClick={() => setColumn(t, c.column, { period_type: c.period.type, period_start: c.period.start, period_end: c.period.end })}>Confirm {text.label}</button>}
-        {c.period && c.period_source === 'header' && !editingColumns[editKey] && <button className="card-action" onClick={() => setEditingColumns(x => ({ ...x, [editKey]: true }))}>Change</button>}
-        {!c.skipped && <button className="card-action" onClick={() => setColumn(t, c.column, { skip: true })}>Skip column</button>}
-        {answer && <button className="card-action" onClick={() => setColumn(t, c.column, null)}>Undo</button>}
-      </div>
-    </div>;
-  };
-  const renderTable = t => {
-    const answer = draft.tables[historyTableKey(t.page, t.table)] || {};
-    const blocks = blocksFor(t.page, t.table).filter(b => b.code !== 'column_period_unknown' && b.code !== 'period_unconfirmed' && b.code !== 'table_kind_unknown' && b.code !== 'kind_unconfirmed');
-    const sample = t.rows.slice(0, 3).map(r => r.label).filter(Boolean).join(' · ');
-    const used = t.kind && t.kind !== 'skip';
-    return <div key={`${t.page}:${t.table}`} style={historyCard}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <strong style={{ fontSize: 14 }}>Page {t.page} · table {t.table}</strong>
-        {tableNeedsAnswer(t) ? <HistoryBadge tone="neg">needs an answer</HistoryBadge> : <HistoryBadge tone={used ? 'pos' : 'muted'}>{used ? 'ready' : HISTORY_KIND_NAMES[t.kind] || 'skipped'}</HistoryBadge>}
-        <span style={{ flex: 1 }} />{scanLink(t.page)}
-      </div>
-      {sample && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={sample}>{t.rows.length} rows · {sample}</div>}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 10, marginTop: 10 }}>
-        <div>
-          <LxSelect label={answer.kind ? (answer.kind === t.proposed_kind ? 'Statement kind · confirmed' : 'Statement kind · set by you') : t.proposed_kind ? 'Statement kind · proposed from the heading' : 'Statement kind'}
-            value={t.kind} placeholder="Choose the kind" options={HISTORY_KIND_OPTIONS} onChange={value => updateTable(t, { kind: value })} />
-          {kindUnconfirmed(t) && <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
-            <HistoryBadge tone="warn">proposed — confirm</HistoryBadge>
-            <button className="btn btn-primary" onClick={() => confirmKinds([t])}>Confirm {HISTORY_KIND_NAMES[t.kind]}</button>
-            <button className="card-action" onClick={() => updateTable(t, { kind: 'skip' })}>Skip table</button>
-          </div>}
-        </div>
-        {used && <LxSelect label={answer.unit_multiplier ? 'Unit · set by you' : t.proposed_unit_multiplier && t.unit_multiplier === t.proposed_unit_multiplier ? 'Unit · read from the page' : 'Unit'}
-          value={t.unit_multiplier} placeholder="Choose the unit" options={HISTORY_UNIT_OPTIONS} onChange={value => updateTable(t, { unit_multiplier: Number(value) })} />}
-      </div>
-      {used && t.columns.length > 0 && <div style={{ marginTop: 6 }}>{t.columns.map(c => renderColumn(t, c))}</div>}
-      {used && !t.columns.length && <p style={historyBlockText}>No value columns were found in this table.</p>}
-      {blocks.map((b, i) => <p key={i} role="alert" style={historyBlockText}>{b.message}</p>)}
-    </div>;
-  };
-  const tablesStep = () => <>
-    {status(tableBlocking.length)}
-    {globalBlock && <div role="alert" style={{ ...historyCard, borderColor: 'var(--neg)' }}>
-      <div style={{ color: 'var(--neg)', fontSize: 13, fontWeight: 600 }}>{globalBlock.message}</div>
-      {globalBlock.code === 'labels_missing' && <button className="btn btn-primary" style={{ marginTop: 10 }} onClick={onOpenLabels}>Set upload labels</button>}
-    </div>}
-    {!globalBlock && preview && <>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
-        <LxSegmented ariaLabel="Which tables to show" value={filter} onChange={setFilter}
-          options={[{ value: 'used', label: `Used (${usedTables.length})` }, { value: 'open', label: `Open (${tables.filter(tableNeedsAnswer).length})` }, { value: 'all', label: `All (${tables.length})` }]} />
-        {shownUnconfirmed.length > 0 && <button className="btn" onClick={() => confirmKinds(shownUnconfirmed)}>Confirm all shown ({shownUnconfirmed.length} proposed kind{shownUnconfirmed.length === 1 ? '' : 's'})</button>}
-        {kindlessCount > 0 && <button className="btn" onClick={skipKindless}>Skip {kindlessCount} table{kindlessCount === 1 ? '' : 's'} with no statement heading</button>}
-      </div>
-      {shownTables.length ? shownTables.map(renderTable) : <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>{filter === 'open' ? 'Every table is answered.' : 'No tables here.'}</p>}
-    </>}
-  </>;
-
-  // ── step 2: lines ──
-  const linesStep = () => <>
-    {status(lineBlocking.length)}
-    {unknownRows.length > 0 && <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
-      <span style={{ fontSize: 13 }}>{unknownRows.length} row{unknownRows.length === 1 ? '' : 's'} not yet in this company's history.</span>
-      {namedUnknownRows.length > 0 && <button className="btn" onClick={newLinesForAll}>Make {namedUnknownRows.length} new line{namedUnknownRows.length === 1 ? '' : 's'} from their labels</button>}
-    </div>}
-    {!usedTables.length && <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>No statement tables are used. Go back and choose a statement kind.</p>}
-    {usedTables.map(t => {
-      const asked = t.rows.filter(r => r.status === 'unknown' || draft.lines[historyRowKey(t.page, t.table, r.row)]);
-      const matched = t.rows.filter(r => r.status === 'matched' && !draft.lines[historyRowKey(t.page, t.table, r.row)]);
-      const skipped = t.rows.filter(r => r.status === 'skipped');
-      const unreadable = t.rows.filter(r => r.unreadable_cells?.length);
-      const columnName = c => t.columns.find(col => col.column === c)?.header || `column ${c}`;
-      return <div key={`${t.page}:${t.table}`} style={historyCard}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <strong style={{ fontSize: 14 }}>{HISTORY_KIND_NAMES[t.kind]} · page {t.page}</strong>
-          <HistoryBadge tone="pos">{matched.length} matched</HistoryBadge>
-          {asked.length > 0 && <HistoryBadge tone={asked.some(r => r.status === 'unknown') ? 'neg' : 'accent'}>{asked.length} to answer</HistoryBadge>}
-          <span style={{ flex: 1 }} />{scanLink(t.page)}
-        </div>
-        {unreadable.length > 0 && <div role="note" style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8, padding: '6px 10px', borderRadius: 8, background: 'var(--ux-surface-2)' }}>
-          <strong style={{ color: 'var(--text)' }}>Not stored — cells that could not be read:</strong>
-          {unreadable.map(r => <div key={r.row}>{r.label || `row ${r.row}`} (row {r.row}): {r.unreadable_cells.map(columnName).join(', ')}</div>)}
-          <div>Correct the page in the review if these values matter.</div>
-        </div>}
-        {asked.map(r => {
-          const answer = draft.lines[historyRowKey(t.page, t.table, r.row)];
-          const isNew = !!answer && !answer.line_key;
-          const value = answer?.line_key || (isNew ? '__new__' : '');
-          const options = [
-            ...r.suggestions.map(s => ({ value: s.line_key, label: `Same as ${s.line_name}`, hint: `${Math.round(s.score * 100)}% similar` })),
-            { value: '__new__', label: 'New line', hint: r.label || 'you name it' },
-          ];
-          return <div key={r.row} style={{ padding: 10, borderRadius: 12, background: 'var(--ux-surface-2)', marginTop: 8 }}>
-            <div style={{ fontSize: 13, fontWeight: 700 }}>{r.code ? <span className="num" style={{ color: 'var(--text-muted)', marginRight: 6 }}>{r.code}</span> : null}{r.label || <em style={{ fontWeight: 500, color: 'var(--text-muted)' }}>row without a label</em>}</div>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)', margin: '2px 0 8px' }}>{r.parent_label ? `under ${r.parent_label} · ` : ''}row {r.row} · {r.cells.filter(Boolean).slice(0, 2).join(' / ')}</div>
-            <LxSelect ariaLabel={`Line for ${r.label || `row ${r.row}`}`} value={value} placeholder="Existing line or new?" options={options} onChange={v => setLine(t, r, v)} />
-            {isNew && <label style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginTop: 8 }}>Name of the new line
-              <input value={answer.new_line_name || ''} onChange={e => setLineName(t, r, e.target.value)} placeholder="e.g. Tổng thu nhập hoạt động"
-                style={{ display: 'block', width: '100%', marginTop: 3, padding: 8, border: `1px solid ${(answer.new_line_name || '').trim() ? 'var(--border)' : 'var(--neg)'}`, borderRadius: 6, background: 'var(--bg-elev)', color: 'var(--text)', fontSize: 13 }} />
-            </label>}
-          </div>;
-        })}
-        {skipped.length > 0 && <details style={{ marginTop: 10 }}>
-          <summary style={{ fontSize: 12, color: 'var(--text-muted)', cursor: 'pointer' }}>{skipped.length} row{skipped.length === 1 ? '' : 's'} skipped</summary>
-          {skipped.map(r => <div key={r.row} style={{ fontSize: 12, padding: '4px 0', borderBottom: '1px solid var(--border)' }}>{r.label || `row ${r.row}`} <span style={{ color: 'var(--text-muted)' }}>— skipped: {r.skip_reason}</span></div>)}
-        </details>}
-      </div>;
-    })}
-  </>;
-
-  // ── step 3: checks ──
-  const misreads = preview?.misreads || [];
-  const conflicts = preview?.conflicts || [];
-  const checksStep = () => <>
-    {status(checkBlocking.length)}
-    {!misreads.length && !conflicts.length && <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>No subtotal problems and no disagreement with values already in the history.</p>}
-    {misreads.length > 0 && <h5 style={{ margin: '0 0 8px', fontSize: 13 }}>Subtotals that do not add up ({misreads.length})</h5>}
-    {misreads.map(m => {
-      const accepted = !!draft.misreads[historyMisreadKey(m)] || m.accepted;
-      return <div key={historyMisreadKey(m)} style={historyCard}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <strong style={{ fontSize: 13 }}>Page {m.page} · table {m.table} · row {m.parent_row}</strong>
-          <HistoryBadge tone={accepted ? 'pos' : 'neg'}>{accepted ? 'correct as printed' : 'likely misread'}</HistoryBadge>
-        </div>
-        <p style={{ fontSize: 12, margin: '6px 0 10px' }}>“{m.parent_label}” ({m.column_label}) shows {m.parent} but its rows add up to {m.children_sum} — off by {m.difference}.</p>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <a className="btn" href={window.HelixAPI.ocrInboxPageUrl(item.id, m.page)} target="_blank" rel="noreferrer">Open page</a>
-          <button className={accepted ? 'btn btn-primary' : 'btn'} aria-pressed={accepted} onClick={() => toggleMisread(m)}>Value correct as printed</button>
-        </div>
-      </div>;
-    })}
-    {conflicts.length > 0 && <h5 style={{ margin: '14px 0 8px', fontSize: 13 }}>Values that disagree with the history ({conflicts.length})</h5>}
-    {conflicts.map(c => {
-      const chosen = draft.resolutions[c.fact_key];
-      const options = [
-        { value: 'open', label: 'Leave open', hint: 'decide later on the history page' },
-        ...c.existing.map(e => ({ value: e.fact_id, label: historyMoney(e.value), hint: `${e.filename} · page ${e.page ?? '—'}${e.origin === 'calculated' ? ' · calculated' : ''}` })),
-        { value: 'incoming', label: historyMoney(c.incoming.value), hint: `this document · page ${c.incoming.page}, row ${c.incoming.row}` },
-      ];
-      const period = historyPeriodText(c.period);
-      return <div key={c.fact_key} style={historyCard}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <strong style={{ fontSize: 13 }}>{c.line_name}</strong><HistoryBadge tone={chosen ? 'accent' : 'warn'}>{chosen ? 'source chosen' : 'open conflict'}</HistoryBadge>
-        </div>
-        <div style={{ fontSize: 12, color: 'var(--text-muted)', margin: '2px 0 10px' }}>{HISTORY_KIND_NAMES[c.statement_kind]} · {period.label} ({period.hint})</div>
-        <LxSelect label="Which source is right?" value={chosen === undefined ? 'open' : chosen} options={options} onChange={v => setResolution(c.fact_key, v)} />
-      </div>;
-    })}
-  </>;
-
-  // ── step 4: add ──
-  const newLines = Object.values(draft.lines).filter(l => l.new_line_name).length;
-  const matchedRows = usedTables.reduce((n, t) => n + t.rows.filter(r => r.status === 'matched').length, 0);
-  const remaining = [...tableBlocking, ...lineBlocking, ...checkBlocking, ...otherBlocking];
-  const openConflicts = conflicts.filter(c => draft.resolutions[c.fact_key] === undefined).length;
-  const addStep = () => <div className="u042-done">
-    {remaining.length
-      ? <span role="img" aria-label="Open questions" style={{ width: 76, height: 76, borderRadius: '50%', display: 'grid', placeItems: 'center', fontSize: 34, fontWeight: 800, color: 'var(--warn)', background: 'color-mix(in srgb, var(--warn) 14%, transparent)' }}>!</span>
-      : <span className="u042-big"><svg viewBox="0 0 34 34"><path d="M9 17.5l5.5 5.5L25.5 12" /></svg></span>}
-    <h4>{remaining.length ? 'Some questions are still open' : 'Ready to add to history'}</h4>
-    <p style={{ margin: '6px 0 0', fontSize: 13, color: 'var(--text-muted)', maxWidth: 420 }}>
-      {item.labels?.ticker} · {item.labels?.scope} · {item.labels?.period_code} {item.labels?.fiscal_year}<br />
-      {usedTables.length} statement table{usedTables.length === 1 ? '' : 's'} · {matchedRows} rows ({newLines} new line{newLines === 1 ? '' : 's'})<br />
-      {misreads.length} subtotal check{misreads.length === 1 ? '' : 's'} · {openConflicts} conflict{openConflicts === 1 ? '' : 's'} left open
-    </p>
-    {remaining.slice(0, 5).map((b, i) => <p key={i} role="alert" style={historyBlockText}>{b.message}</p>)}
-    {status(remaining.length)}
-  </div>;
-
-  const steps = [
-    { id: 'tables', title: 'Tables & periods', label: 'Tables', description: 'Confirm what each table is, its unit, and the period of each value column.', render: tablesStep, canNext: ready && tableBlocking.length === 0 },
-    { id: 'lines', title: 'Lines', label: 'Lines', description: 'Rows the history has not seen: the same as an existing line, or a new line?', render: linesStep, canNext: ready && lineBlocking.length === 0 },
-    { id: 'checks', title: 'Checks', label: 'Checks', description: 'Subtotals that do not add up, and values that disagree with the history.', render: checksStep, canNext: ready && checkBlocking.length === 0 },
-    { id: 'add', title: 'Add', label: 'Add', bare: true, render: addStep, canNext: ready && remaining.length === 0 && !writing },
-  ];
-
-  return <div onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}
-    style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,.45)', display: 'grid', placeItems: 'center', padding: 8 }}>
-    <div ref={dialogRef} role="dialog" aria-modal="true" aria-label={`Add ${item.filename} to history`} tabIndex={-1} onKeyDown={onDialogKey}
-      style={{ position: 'relative', width: 'min(780px, 100%)', height: 'min(800px, calc(100vh - 16px))', outline: 'none' }}>
-      <LxWizard steps={steps} busy={writing} finishLabel="Add to history" ariaLabel="Add to history steps" onFinish={finish}
-        header={<div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 16 }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 16, fontWeight: 780 }}>Add to history</div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.filename}</div>
-          </div>
-          <button className="icon-btn" aria-label="Close" onClick={onClose} style={{ width: 30, height: 30 }}><Icon name="close" size={12} /></button>
-        </div>} />
-    </div>
-  </div>;
-};
-
-const OCRRowEditor = ({ editing, setField, save, cancel }) => {
-  const fields = [['code', 'Code'], ['metric', 'Label'], ['section', 'Section'], ['curr', 'Current'], ['prev', 'Previous'], ['page', 'Page'], ['confidence', 'Confidence']];
-  return <div style={{ margin: 14, padding: 14, border: '1px solid var(--accent)', borderRadius: 6, background: 'var(--bg-sunken)' }}>
-    <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 10 }}>{editing.mode === 'manual' ? 'Add missing row' : 'Correct OCR row'}</div>
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 8 }}>
-      {fields.map(([key, label]) => <label key={key} style={{ fontSize: 10, color: 'var(--text-muted)' }}>{label}<input value={editing.data[key] ?? ''} onChange={e => setField(key, e.target.value)} style={{ display: 'block', width: '100%', marginTop: 3, padding: '7px 8px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--bg-elev)', color: 'var(--text)' }} /></label>)}
-    </div>
-    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 10 }}><button className="btn" onClick={cancel}>Cancel</button><button className="btn btn-primary" onClick={save}>Save row</button></div>
-  </div>;
-};
-
-const HISTORY_SCOPE_OPTIONS = [
-  { value: 'consolidated', label: 'Consolidated', hint: 'hợp nhất' },
-  { value: 'separate', label: 'Separate', hint: 'riêng lẻ' },
-];
-const HISTORY_PERIOD_CODE_OPTIONS = ['Q1', 'Q2', 'Q3', 'Q4', 'H1', 'FY'].map(code => ({
-  value: code, label: code, hint: { H1: 'first half (6 months)', FY: 'full fiscal year' }[code] || 'quarter',
-}));
-// Values are spelled the way backend parse_unit_multiplier understands them.
-const LABEL_UNIT_OPTIONS = [
-  { value: 'triệu đồng', label: 'triệu đồng', hint: 'million VND — most BCTC' },
-  { value: 'đồng', label: 'đồng', hint: 'VND' },
-  { value: 'nghìn đồng', label: 'nghìn đồng', hint: 'thousand VND' },
-  { value: 'tỷ đồng', label: 'tỷ đồng', hint: 'billion VND' },
-];
-const inboxLabelSummary = labels => {
-  if (!labels || !labels.ticker || !labels.scope || !labels.fiscal_year || !labels.period_code) return null;
-  const scope = labels.scope === 'consolidated' ? 'Consolidated' : labels.scope === 'separate' ? 'Separate' : labels.scope;
-  return `${labels.ticker} · ${scope} · ${labels.period_code} ${labels.fiscal_year}`;
-};
-const historyFiscalYearOptions = current => {
-  const now = new Date().getFullYear();
-  const years = [];
-  for (let year = now + 1; year >= now - 15; year--) years.push(year);
-  if (current && !years.includes(Number(current))) years.push(Number(current));
-  return years.sort((a, b) => b - a).map(year => ({ value: year, label: String(year) }));
 };
 
 const OCRPublishPanel = ({ item, reload, setPage, canPublish = true, title = 'Label before publication' }) => {

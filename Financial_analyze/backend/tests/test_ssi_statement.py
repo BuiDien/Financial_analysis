@@ -78,3 +78,9 @@ def test_gap_inference_uses_only_that_subaccounts_trades():
     jan = stmt(date(2023, 1, 1), date(2023, 1, 31), 0, 0)
     rows, notes = si.statement_transactions([nov, jan], Counter(), "1786446", [])
     assert rows == [] and notes == []
+
+
+def test_self_check_flags_missing_period():
+    s = Statement(opening=D(0), closing=D(0))
+    _self_check(s)
+    assert any("period" in e for e in s.errors)

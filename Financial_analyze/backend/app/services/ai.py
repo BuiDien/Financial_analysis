@@ -5,7 +5,6 @@ correction uses Ollama directly so the model receives only the correction
 prompt and one user-marked label.
 """
 
-from functools import lru_cache
 import json
 import logging
 import subprocess
@@ -50,9 +49,10 @@ def client() -> Anthropic:
     return _client
 
 
-@lru_cache(maxsize=1)
-def _local_hermes_api_key() -> str:
-    """Read the local gateway key without copying it into the project."""
+_hermes_key_cache: str = ""
+
+
+def _read_local_hermes_api_key() -> str:
     try:
         result = subprocess.run(
             ["hermes", "config", "get", "gateway.api_server.key"],
@@ -63,7 +63,21 @@ def _local_hermes_api_key() -> str:
         )
     except (OSError, subprocess.SubprocessError):
         return ""
-    return result.stdout.strip() if result.returncode == 0 else ""
+    key = result.stdout.strip() if result.returncode == 0 else ""
+    return "" if key == "null" else key
+
+
+def _local_hermes_api_key() -> str:
+    """Read the local gateway key without copying it into the project.
+
+    Only a found key is cached: if Hermes was not installed/configured yet
+    when first asked, the next request tries again instead of staying
+    unauthenticated until the backend restarts.
+    """
+    global _hermes_key_cache
+    if not _hermes_key_cache:
+        _hermes_key_cache = _read_local_hermes_api_key()
+    return _hermes_key_cache
 
 
 def _hermes_headers() -> dict[str, str]:

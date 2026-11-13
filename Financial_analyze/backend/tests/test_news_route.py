@@ -10,6 +10,14 @@ def client():
     return TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def _no_real_symbol_db(monkeypatch):
+    """/api/news looks up known symbols in the app DB; never the real helix.db."""
+    from app.routes import news as news_route
+
+    monkeypatch.setattr(news_route, "_known_vn_symbols", lambda: set())
+
+
 def test_news_merges_vn_and_us_newest_first(monkeypatch, client):
     monkeypatch.setattr(news_service, "fetch_vn_rss", lambda limit: [
         {"title": "VN old", "url": "https://cafef.vn/a", "published": 100, "category": "market"},
@@ -102,3 +110,33 @@ def test_news_routes_validate_request_bounds(client):
     assert client.get("/api/news/search?q=x&count=5").status_code == 422
     assert client.get("/api/news/search?q=markets&count=21").status_code == 422
     assert client.get("/api/news/search?q=markets&time_range=year").status_code == 422
+
+
+def test_vn_news_is_tagged_with_mentioned_tickers(monkeypatch, client):
+    from app.routes import news as news_route
+
+    monkeypatch.setattr(news_service, "fetch_vn_rss", lambda limit: [
+        {"title": "VNM tăng giá, USD giảm", "url": "https://cafef.vn/a", "published": 100,
+         "category": "market", "summary": "Cổ phiếu HPG và VNM dẫn dắt; GDP quý 3"},
+        {"title": "Thị trường đi ngang", "url": "https://cafef.vn/b", "published": 90,
+         "category": "market", "summary": ""},
+    ])
+    monkeypatch.setattr(market, "get_news", lambda limit: [])
+    monkeypatch.setattr(news_route, "_known_vn_symbols", lambda: set())
+
+    body = client.get("/api/news").json()
+    assert body[0]["tickers"] == ["VNM", "HPG"]
+    assert body[1]["tickers"] == []
+
+
+def test_vn_news_tags_only_known_symbols_when_available(monkeypatch, client):
+    from app.routes import news as news_route
+
+    monkeypatch.setattr(news_service, "fetch_vn_rss", lambda limit: [
+        {"title": "FPT và ABC ký hợp tác", "url": "https://cafef.vn/a", "published": 100,
+         "category": "companies", "summary": ""},
+    ])
+    monkeypatch.setattr(market, "get_news", lambda limit: [])
+    monkeypatch.setattr(news_route, "_known_vn_symbols", lambda: {"FPT", "VNM"})
+
+    assert client.get("/api/news").json()[0]["tickers"] == ["FPT"]

@@ -1,37 +1,89 @@
-// AI sidebar — calls window.claude.complete with context about the current page
+// AI sidebar — sends the question plus a context built from what is actually
+// on screen (page, active asset, its live quote, live indices, portfolio).
+// No figures are hard-coded here: when a value isn't loaded it is simply left
+// out of the context, and offline demo data is labelled as such.
 
 const AI_SUGGESTIONS = {
-  dashboard: ['Summarize today\'s market', 'What sectors are outperforming?', 'Any unusual moves?'],
+  dashboard: ['Summarize today\'s market', 'Any unusual moves in my watchlist?', 'What should I watch today?'],
   home: ['What should I watch today?', 'Why is gold moving?', 'Set an alert for one of these'],
   detail: ['Bullish or bearish?', 'Key risks for this stock', 'Compare to sector'],
   portfolio: ['How am I doing today?', 'Concentration risks', 'Rebalance suggestions'],
-  screener: ['Stocks like NVDA but cheaper', 'Defensive dividend plays', 'Oversold quality names'],
+  screener: ['Explain these rules', 'Why did this ticker fail?', 'Which oversold names look healthiest?'],
   statements: ['Is this company healthy?', 'Red flags in the financials', 'How sustainable are the margins?'],
   news: ['Top story summary', 'What does this mean for my holdings?', 'Macro implications'],
-  alerts: ['What alerts should I set for NVDA?', 'Good RSI levels to watch', 'Explain my triggered alert']
+  alerts: ['What alerts should I set for this stock?', 'Good RSI levels to watch', 'Explain my triggered alert']
 };
 
+// What each page is — descriptions only, never numbers.
 const PAGE_CONTEXT = {
-  dashboard: 'The user is viewing a markets dashboard with major indices (S&P 500 +0.42%, NASDAQ +0.89%, DOW -0.18%, VIX 14.23 -3.21%, 10Y yield 4.21%, BTC $98,234), a watchlist (NVDA +2.84%, AAPL +0.56%, TSLA -2.18%), and a sector heatmap (Tech leading +1.42%, Energy lagging -1.23%).',
-  home: 'The user is on the Home watch board — a real-time tracker they have personalized with indices, gold and other commodities, rates, crypto, and individual stocks. Help them interpret moves and decide what to monitor.',
-  detail: 'The user is viewing the asset detail page for NVIDIA (NVDA) at $142.36, +2.84% today. Market cap $3.49T, P/E 67.4. They\'re looking at a 1-month candlestick chart.',
+  dashboard: 'The user is viewing the markets dashboard: major indices, their active watchlist with live quotes, top gainers/losers from that watchlist, and the latest news.',
+  home: 'The user is on the Home watch board — a tracker they personalized with indices, commodities, rates, crypto, and individual stocks. Help them interpret moves and decide what to monitor.',
+  detail: 'The user is viewing the asset detail page for one ticker: price chart, key stats, technical indicators, ratios, notes, and related news.',
   portfolio: 'The user is viewing their portfolio. Use only the live portfolio context supplied with this request; never invent holdings or performance.',
-  screener: 'The user is using the stock screener to filter equities by market cap, P/E ratio, dividend yield, and sector.',
-  statements: 'The user is analyzing financial statements (income, balance sheet, cash flow, ratios) for NVDA. FY25: Revenue $130B (+114% YoY), Net Income $73B (+145%), FCF $61B. Margins: gross 75%, op 62%, net 56%. ROE 119%. P/E 48x. They can compare line items 5 years back and benchmark ratios against sector peers.',
-  news: 'The user is reading market news. Top stories include Fed rate signals, NVIDIA Q3 earnings (data center +94%), Tesla delivery miss, and Apple AI partnership.',
-  alerts: 'The user is on the Alerts page, where they configure price, technical (RSI), percentage-move, and volume alerts on tickers. Help them set sensible alert thresholds.'
+  screener: 'The user is on the Vietnam stock screener: a rules funnel over HOSE/HNX/UPCOM. Good-company rules (ROE, growth, debt, cash flow, P/E vs industry, liquidity, bank ratios) narrow the market, then oversold rules (RSI, price drop, volume spike) flag names to look at now. Data is third-party (vnstock) and unverified.',
+  statements: 'The user is analyzing financial statements (income, balance sheet, cash flow, ratios) built from verified company filings.',
+  news: 'The user is reading market news (Vietnam market, Vietnam companies, US) and can ask for a focused research briefing on any subject.',
+  alerts: 'The user is on the Alerts page, where they configure price and percentage-move alerts on tickers. Help them set sensible alert thresholds.',
+  backtest: 'The user is on the Backtest page, testing a trading strategy against historical prices.',
+  'ocr-inbox': 'The user is in the OCR Inbox, reviewing machine-read financial statements before publishing them.',
+  sync: 'The user is on the Sync page, managing OCR worker machines.',
+  settings: 'The user is on the Settings page.'
 };
 
-const AIPanel = ({ page, portfolio, onClose }) => {
-  const [messages, setMessages] = React.useState([
-  {
-    role: 'assistant',
-    content: getInitialMessage(page)
-  }]
-  );
+const AI_ASSET_PAGES = new Set(['detail', 'statements', 'alerts']);
+
+// Neutral greetings — no market claims, no numbers.
+const aiGreeting = (page, asset) => {
+  const sym = asset ? String(asset).replace(/^VN:/, '') : '';
+  const m = {
+    dashboard: "I can read the indices, your active watchlist, and the latest headlines on this page. What would you like to look at?",
+    home: "This is your watch board. Tell me which instrument to break down, or ask me to suggest alert levels.",
+    detail: sym ? `Ask me anything about *${sym}* — price action, technicals, ratios, or risks.` : 'Ask me anything about this asset.',
+    portfolio: "I can review your live holdings, performance, cash, and concentration. What would you like to examine?",
+    screener: "This screener narrows the Vietnam market with **good-company rules**, then flags **oversold** names. Ask me about a rule, a threshold, or why a ticker passed or failed.",
+    statements: "Ask me about the statements on screen — profitability, balance-sheet health, cash flow, or red flags.",
+    news: "Ask me to summarize a story, explain what it means for your holdings, or research a subject.",
+    alerts: "Tell me a ticker and what you want to catch — a breakout, a dip, or a big daily move — and I'll suggest levels."
+  };
+  return m[page] || 'How can I help?';
+};
+
+// Live context for the model, from props + the shared quote cache.
+const buildAiView = ({ page, activeAsset, data, live }) => {
+  const parts = [PAGE_CONTEXT[page] || `The user is on the ${page} page.`];
+  if (!live || data?.demo) {
+    parts.push('The backend is offline: any numbers on screen are labelled sample/demo data, not real market data. Do not quote them as real.');
+    return parts.join(' ');
+  }
+  const indices = (data?.indices || []).filter(i => isNum(i.val))
+    .map(i => `${i.sym} ${fmtNum(i.val)}${isNum(i.chg) ? ` (${fmtPct(i.chg)})` : ''}`);
+  if (indices.length && (page === 'dashboard' || page === 'home' || page === 'news')) parts.push(`Live indices: ${indices.join(', ')}.`);
+  if (activeAsset && AI_ASSET_PAGES.has(page)) {
+    const holding = (data?.portfolio?.holdings || []).find(h => h.sym === String(activeAsset).replace(/^VN:/, ''));
+    const q = liveQuoteFor(activeAsset, holding?.currency);
+    const quote = q.status === 'ok'
+      ? ` Live quote: ${fmtNativePrice(q.price, q.currency)}${isNum(q.chg) ? `, ${fmtPct(q.chg)} today` : ''}${q.marketCap != null ? `, market cap ${fmtBig(q.marketCap)} ${q.currency}` : ''}.`
+      : ' No live quote loaded for it.';
+    parts.push(`Active asset: ${activeAsset}.${quote}`);
+  }
+  if (page === 'dashboard') {
+    const active = window.WatchlistStore?.getActive();
+    const rows = (active?.symbols || []).map(s => ({ s, q: liveQuoteFor(s) })).filter(r => r.q.status === 'ok')
+      .map(r => `${r.s} ${fmtNativePrice(r.q.price, r.q.currency)}${isNum(r.q.chg) ? ` ${fmtPct(r.q.chg)}` : ''}`);
+    if (rows.length) parts.push(`Watchlist "${active.name}": ${rows.join(', ')}.`);
+  }
+  return parts.join(' ');
+};
+
+const AIPanel = ({ page, activeAsset, data, live, onClose }) => {
+  // One conversation per page; a reply always lands in the thread of the
+  // page that asked, even if the user navigated away meanwhile.
+  const [threads, setThreads] = React.useState({});
+  const [pending, setPending] = React.useState({});   // page -> true while waiting
   const [input, setInput] = React.useState('');
-  const [loading, setLoading] = React.useState(false);
   const bodyRef = React.useRef(null);
+  const messages = threads[page] || [];
+  const loading = !!pending[page];
 
   // Which agent are we talking to? Read live from saved settings.
   const readProvider = () => {
@@ -41,34 +93,35 @@ const AIPanel = ({ page, portfolio, onClose }) => {
   const [aiCfg, setAiCfg] = React.useState(readProvider);
   const [hermesUp, setHermesUp] = React.useState(null); // null=unknown, true/false
   const [fullscreen, setFullscreen] = React.useState(false);
-  const isHermes = aiCfg.aiProvider === 'hermes';
+  const isHermes = (aiCfg.aiProvider || 'hermes') === 'hermes';
 
   // Re-read settings when the panel opens / page changes, and ask the backend
   // whether the full Hermes Agent gateway is ready.
   React.useEffect(() => {
     const cfg = readProvider();
     setAiCfg(cfg);
-    if (cfg.aiProvider === 'hermes') {
+    if ((cfg.aiProvider || 'hermes') === 'hermes' && live) {
       window.HelixAPI.aiHealth().
       then(() => setHermesUp(true)).
       catch(() => setHermesUp(false));
-    }
-  }, [page]);
-
-  React.useEffect(() => {
-    setMessages([{ role: 'assistant', content: getInitialMessage(page) }]);
-  }, [page]);
+    } else if (!live) setHermesUp(false);
+  }, [page, live]);
 
   React.useEffect(() => {
     if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
   }, [messages, loading]);
 
+  const append = (forPage, msg) => setThreads(t => ({ ...t, [forPage]: [...(t[forPage] || []), msg] }));
+
   const send = async (text) => {
     const q = (text || input).trim();
-    if (!q || loading) return;
+    const forPage = page;
+    if (!q || pending[forPage]) return;
     setInput('');
-    setMessages((m) => [...m, { role: 'user', content: q }]);
-    setLoading(true);
+    const conversation = [...(threads[forPage] || []), { role: 'user', content: q }];
+    append(forPage, { role: 'user', content: q });
+    setPending(p => ({ ...p, [forPage]: true }));
+    let reply;
     try {
       const toneMap = {
         concise: 'Respond in 2-4 short paragraphs OR a tight bulleted list.',
@@ -77,27 +130,33 @@ const AIPanel = ({ page, portfolio, onClose }) => {
       };
       let aiTone = 'concise';
       try { aiTone = JSON.parse(localStorage.getItem('helix_settings_v1') || '{}').aiTone || 'concise'; } catch {}
-      const currentPortfolio = window.__livePortfolioContext || portfolio;
-      const portfolioContext = page === 'portfolio' && currentPortfolio ? JSON.stringify({
+      const currentPortfolio = window.__livePortfolioContext || (data?.portfolio?.status === 'ok' ? data.portfolio : null);
+      const portfolioContext = live && forPage === 'portfolio' && currentPortfolio ? JSON.stringify({
         currency: currentPortfolio.display_currency || currentPortfolio.displayCurrency || 'USD', totalValue: currentPortfolio.total_value ?? currentPortfolio.totalValue,
         dayChange: currentPortfolio.today_change ?? currentPortfolio.dayChange, totalGain: currentPortfolio.total_gain ?? currentPortfolio.totalGain,
         holdings: (currentPortfolio.holdings || []).slice(0, 20).map(h => ({ ticker: h.ticker || h.sym, weight: h.weight, gainPct: h.gain_pct ?? h.gainPct })),
-        demo: window.__livePortfolioContext ? false : currentPortfolio.demo !== false,
       }) : '';
-      const view = `${PAGE_CONTEXT[page] || ''}${portfolioContext ? ` Live portfolio data: ${portfolioContext}` : ''}`;
+      if (live && activeAsset && AI_ASSET_PAGES.has(forPage)) {
+        const holding = (data?.portfolio?.holdings || []).find(h => h.sym === String(activeAsset).replace(/^VN:/, ''));
+        await QuoteStore.ensure([helixMarketFor(activeAsset, holding?.currency).market]);
+      }
+      const view = `${buildAiView({ page: forPage, activeAsset, data, live })}${portfolioContext ? ` Live portfolio data: ${portfolioContext}` : ''}`;
       const responseStyle = `${toneMap[aiTone] || toneMap.concise} Use **bold** for key figures and *italic* for ticker symbols. Be direct, no fluff. Don't add disclaimers about not being a financial advisor — the user knows. Do not use emoji.`;
-      const conversation = [...messages, { role: 'user', content: q }];
-      const reply = await window.HelixAPI.complete(q, {
-        page,
+      const out = await window.HelixAPI.complete(q, {
+        page: forPage,
         context: { view, responseStyle },
         messages: conversation,
       });
-      setMessages((m) => [...m, { role: 'assistant', content: reply }]);
+      reply = typeof out === 'string' ? out : out == null ? '' : JSON.stringify(out);
+      if (!reply.trim()) reply = 'No answer came back. Try again.';
     } catch (e) {
-      setMessages((m) => [...m, { role: 'assistant', content: 'Connection issue. Try again.' }]);
+      reply = 'Connection issue. Try again.';
     }
-    setLoading(false);
+    append(forPage, { role: 'assistant', content: reply });
+    setPending(p => ({ ...p, [forPage]: false }));
   };
+
+  const shown = [{ role: 'assistant', content: aiGreeting(page, activeAsset) }, ...messages];
 
   return (
     <aside className="ai" style={fullscreen ? { position: 'fixed', inset: 0, zIndex: 9998, width: '100vw', borderLeft: 'none' } : undefined}>
@@ -120,9 +179,9 @@ const AIPanel = ({ page, portfolio, onClose }) => {
 
       <div className="ai-body" ref={bodyRef}>
         <div style={fullscreen ? { maxWidth: 760, margin: '0 auto', width: '100%' } : undefined}>
-        {messages.map((m, i) =>
+        {shown.map((m, i) =>
           <div key={i} className={`ai-msg ${m.role === 'user' ? 'ai-msg-user' : ''}`}>
-            <FormattedText text={m.content} />
+            <MarkdownText text={m.content} variant="ai" />
           </div>
           )}
         {loading &&
@@ -151,7 +210,7 @@ const AIPanel = ({ page, portfolio, onClose }) => {
               send();
             }
           }} />
-        
+
         <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginTop: 8 }}>
           <button className="btn btn-accent" onClick={() => send()} disabled={loading || !input.trim()}>
             <Icon name="send" size={12} /> Send
@@ -169,98 +228,5 @@ const Dot = ({ delay }) =>
   animation: `pulse 1s infinite ${delay}ms`,
   display: 'inline-block'
 }} />;
-
-
-// Light markdown-ish formatting: **bold**, *italic*, - lists, paragraphs
-const FormattedText = ({ text }) => {
-  const lines = text.split('\n');
-  const elements = [];
-  let listBuf = [];
-
-  const flushList = () => {
-    if (listBuf.length) {
-      elements.push(<ul key={`ul-${elements.length}`}>{listBuf.map((l, i) => <li key={i}>{renderInline(l)}</li>)}</ul>);
-      listBuf = [];
-    }
-  };
-
-  lines.forEach((line, i) => {
-    const trimmed = line.trim();
-    if (trimmed.startsWith('- ') || trimmed.startsWith('• ')) {
-      listBuf.push(trimmed.slice(2));
-    } else if (trimmed === '') {
-      flushList();
-    } else {
-      flushList();
-      elements.push(<p key={`p-${i}`} style={{ margin: '0 0 8px' }}>{renderInline(trimmed)}</p>);
-    }
-  });
-  flushList();
-
-  return <>{elements}</>;
-};
-
-const renderInline = (str) => {
-  // Supports: ![alt](img), [text](url), bare URLs, **bold**, *italic*
-  const parts = [];
-  let remaining = str;
-  let key = 0;
-
-  const patterns = [
-  { type: 'img', re: /!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/ },
-  { type: 'link', re: /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/ },
-  { type: 'url', re: /(https?:\/\/[^\s)]+)/ },
-  { type: 'b', re: /\*\*(.+?)\*\*/ },
-  { type: 'i', re: /\*(.+?)\*/ }];
-
-
-  while (remaining.length) {
-    let best = null;
-    for (const p of patterns) {
-      const m = remaining.match(p.re);
-      if (m && (best === null || m.index < best.index)) best = { ...m, type: p.type, _len: m[0].length };
-      if (best && best.index === 0) break;
-    }
-    if (!best) {parts.push(remaining);break;}
-    if (best.index > 0) parts.push(remaining.slice(0, best.index));
-
-    if (best.type === 'img') {
-      parts.push(
-        <a key={key++} href={best[2]} target="_blank" rel="noopener noreferrer" style={{ display: 'block', margin: '6px 0' }}>
-          <img src={best[2]} alt={best[1]} style={{ maxWidth: '100%', borderRadius: 6, border: '1px solid var(--border)' }} />
-        </a>
-      );
-    } else if (best.type === 'link') {
-      parts.push(<a key={key++} href={best[2]} target="_blank" rel="noopener noreferrer" style={aiLinkStyle}>{best[1]}</a>);
-    } else if (best.type === 'url') {
-      parts.push(<a key={key++} href={best[1]} target="_blank" rel="noopener noreferrer" style={aiLinkStyle}>{best[1]}</a>);
-    } else if (best.type === 'b') {
-      parts.push(<strong key={key++}>{best[1]}</strong>);
-    } else {
-      parts.push(<em key={key++}>{best[1]}</em>);
-    }
-    remaining = remaining.slice(best.index + best._len);
-  }
-  return parts;
-};
-
-const aiLinkStyle = {
-  color: 'var(--accent)', textDecoration: 'underline', textUnderlineOffset: 2,
-  fontWeight: 500, wordBreak: 'break-word'
-};
-
-function getInitialMessage(page) {
-  const m = {
-    dashboard: "Markets opened mixed but tech is leading. **NASDAQ +0.89%** on strong AI/semi names. Fed minutes Wednesday could shift sentiment — *VIX* at 14 is complacent. Want me to dig into anything specific?",
-    home: "This is your live watch board. **Gold** is holding near $2,683, *VIX* is calm at 14, and 10Y yields sit at 4.21%. Tell me which instrument to break down, or ask me to suggest alert levels.",
-    detail: "*NVDA* up **2.84%** to **$142.36** on continued data-center momentum. RSI at 64 — approaching but not yet overbought. Earnings in 12 days. Ask me anything about it.",
-    portfolio: "I can review your live holdings, performance, cash, and concentration. What would you like to examine?",
-    screener: "Tell me what you're hunting for — quality, value, momentum, dividend, defensive — and I'll suggest filters.",
-    statements: "*NVDA* FY25 is extraordinary: revenue **$130B (+114%)**, net income **$73B (+145%)**, FCF **$61B**. Op margin **62.5%** — best-in-class. The catch: P/E **48×**, ~50% premium to sector. Want me to flag risks or compare to peers?",
-    news: "Three stories actually matter today: **Fed rate posture**, **NVIDIA's data-center beat**, and **Tesla delivery miss**. Want me to break any of those down?",
-    alerts: "Set alerts so the market tells you when to act. Good starting points: a **price target** to trim, a **buy-the-dip** level, and an **RSI > 70** overbought warning. Tell me a ticker and I'll suggest levels."
-  };
-  return m[page] || "How can I help?";
-}
 
 window.AIPanel = AIPanel;

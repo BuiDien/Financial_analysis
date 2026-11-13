@@ -55,7 +55,7 @@ from pydantic import BaseModel
 from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
-from ..config import get_settings
+from ..config import get_settings, resolve_backend_path
 from ..db import SessionLocal, get_db
 from ..models.filing import Filing
 from ..models.ocr import OCRAttempt, OCRInboxItem
@@ -226,6 +226,19 @@ def _lan_ip() -> str:
         s.close()
 
 
+# Job states. ACTIVE jobs may still receive worker progress/page frames;
+# CONTROL_PENDING jobs await the worker's control_ack; FINISHED jobs are only
+# kept for the UI and pruned beyond MAX_FINISHED_JOBS.
+ACTIVE_JOB_STATUSES = {"sent", "parsing", "receiving_pages"}
+CONTROL_PENDING_STATUSES = {"holding", "stopping"}
+FINISHED_JOB_STATUSES = {"done", "failed", "held", "stopped"}
+MAX_FINISHED_JOBS = 100
+
+
+def _public_job(job: dict) -> dict:
+    return {k: v for k, v in job.items() if k != "db_bind"}
+
+
 class Coordinator:
     """In-memory state for the sync session. Single-process; fine for a LAN tool."""
 
@@ -236,6 +249,7 @@ class Coordinator:
             str, dict
         ] = {}  # job_id -> {filingId, filename, ticker, status, rows, worker}
         self._dispatch_lock = asyncio.Lock()
+        self.background_tasks: set[asyncio.Task] = set()
 
     def public_workers(self):
         return [
@@ -243,10 +257,40 @@ class Coordinator:
         ]
 
     def public_jobs(self):
-        return [
-            {k: v for k, v in job.items() if k != "db_bind"}
-            for job in self.jobs.values()
+        return [_public_job(job) for job in self.jobs.values()]
+
+    def add_job(self, job: dict) -> None:
+        self.jobs[job["id"]] = job
+        self.prune_jobs()
+
+    def prune_jobs(self, keep: int = MAX_FINISHED_JOBS) -> None:
+        """Drop the oldest finished jobs (and their rows) beyond `keep`."""
+        finished = [
+            job for job in self.jobs.values()
+            if job.get("status") in FINISHED_JOB_STATUSES
         ]
+        excess = len(finished) - keep
+        if excess <= 0:
+            return
+        finished.sort(key=lambda job: job.get("completedAt") or job.get("sentAt") or 0)
+        for job in finished[:excess]:
+            self.jobs.pop(job["id"], None)
+
+    def spawn(self, coro) -> asyncio.Task:
+        """create_task that keeps a reference and logs a failure."""
+        task = asyncio.create_task(coro)
+        self.background_tasks.add(task)
+        task.add_done_callback(_background_task_done)
+        return task
+
+
+def _background_task_done(task: asyncio.Task) -> None:
+    coordinator.background_tasks.discard(task)
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error("OCR background task failed", exc_info=exc)
 
 
 coordinator = Coordinator()
@@ -257,10 +301,10 @@ MAX_PAIR_ATTEMPTS = 5
 
 async def _stream_job(worker: dict, job_id: str, path: str, header: dict):
     try:
-        fp = open(path, "rb")
+        fp = await asyncio.to_thread(open, resolve_backend_path(path), "rb")
     except OSError as exc:
         raise RuntimeError("PDF file missing on disk") from exc
-    with fp:
+    try:
         size = os.fstat(fp.fileno()).st_size
         worker["status"] = "busy"
         ws = worker["ws"]
@@ -281,9 +325,38 @@ async def _stream_job(worker: dict, job_id: str, path: str, header: dict):
             "requiredCapabilities": sorted(required_capabilities),
             **header,
         })
-        while chunk := fp.read(CHUNK_SIZE):
+        while chunk := await asyncio.to_thread(fp.read, CHUNK_SIZE):
             await ws.send_bytes(chunk)
         await ws.send_json({"type": "job_end", "jobId": job_id})
+    finally:
+        fp.close()
+
+
+def _session_call(bind, fn):
+    """Run fn(session) with a session owned by the calling thread."""
+    with Session(bind=bind) as db:
+        return fn(db)
+
+
+async def _db(bind, fn):
+    """Blocking SQLAlchemy work off the event loop, one session per call."""
+    return await asyncio.to_thread(_session_call, bind, fn)
+
+
+def _load_attempt(db: Session, attempt_id: int) -> OCRAttempt | None:
+    return db.query(OCRAttempt).filter_by(id=attempt_id).first()
+
+
+def _resolve_control(db: Session, attempt: OCRAttempt, action: str) -> None:
+    """Persist a hold/stop that the worker confirmed (or can no longer refuse)."""
+    if attempt.status in {"failed", "done", "held", "canceled"}:
+        return
+    attempt.status = "held" if action == "hold" else "canceled"
+    attempt.finished_at = datetime.now(timezone.utc)
+    attempt.inbox_item.status = "held" if action == "hold" else "uploaded"
+    attempt.inbox_item.error = None
+    if action == "stop":
+        attempt.progress = 0
 
 
 def _fail_attempt(
@@ -334,8 +407,75 @@ def recover_interrupted_attempts(*, bind=None):
             db.commit()
 
 
+def _claim_next_attempt(worker: dict, bind) -> tuple[dict, str, dict] | None:
+    """Mark the oldest queued attempt as sent to `worker` (runs in a thread)."""
+    db = Session(bind=bind) if bind is not None else SessionLocal()
+    try:
+        # During isolated legacy coordinator tests the application's default
+        # database may not be initialized; there cannot be durable work in it.
+        if not inspect(db.get_bind()).has_table("ocr_attempts"):
+            return None
+        attempt = (
+            db.query(OCRAttempt)
+            .filter(OCRAttempt.status == "queued")
+            .order_by(OCRAttempt.id.asc())
+            .first()
+        )
+        if not attempt:
+            return None
+        item = attempt.inbox_item
+        job_id = "job_" + secrets.token_hex(5)
+        attempt.job_id = job_id
+        attempt.worker_id = worker["id"]
+        attempt.worker_name = worker["name"]
+        attempt.status = "sent"
+        attempt.started_at = datetime.now(timezone.utc)
+        attempt.result_format = worker["selectedResultFormat"]
+        attempt.expected_pages = item.pages
+        attempt.received_pages = 0
+        item.status = "processing"
+        item.error = None
+        job = {
+            "id": job_id,
+            "inboxItemId": item.id,
+            "attemptId": attempt.id,
+            "filename": item.filename,
+            "ticker": item.ticker or "",
+            "worker": worker["name"],
+            "workerId": worker["id"],
+            "status": "sent",
+            "progress": 0,
+            "rows": None,
+            "sentAt": time.time(),
+            "kind": "inbox",
+            "resultFormat": worker["selectedResultFormat"],
+            "pageCount": item.pages,
+            "receivedPages": 0,
+            "db_bind": db.get_bind(),
+        }
+        storage_path = item.storage_path
+        header = {"inboxItemId": item.id, "filename": item.filename}
+        db.commit()
+        return job, storage_path, header
+    finally:
+        db.close()
+
+
+def _fail_attempt_by_id(
+    db: Session, attempt_id: int, error: str, *, retryable: bool = True,
+) -> None:
+    attempt = _load_attempt(db, attempt_id)
+    if attempt:
+        _fail_attempt(db, attempt, attempt.inbox_item, error, retryable=retryable)
+        db.commit()
+
+
 async def dispatch_next_queued(*, preferred_worker_id: str | None = None, bind=None):
-    """Assign the oldest persistent inbox attempt to an idle worker."""
+    """Assign the oldest persistent inbox attempt to an idle worker.
+
+    The lock only covers choosing a worker and claiming the attempt; the PDF
+    is streamed after releasing it so one slow upload never blocks others.
+    """
     async with coordinator._dispatch_lock:
         worker = (
             coordinator.workers.get(preferred_worker_id)
@@ -348,74 +488,29 @@ async def dispatch_next_queued(*, preferred_worker_id: str | None = None, bind=N
             )
         if not worker:
             return None
-        db = Session(bind=bind) if bind is not None else SessionLocal()
-        try:
-            # During isolated legacy coordinator tests the application's default
-            # database may not be initialized; there cannot be durable work in it.
-            if not inspect(db.get_bind()).has_table("ocr_attempts"):
-                return None
-            attempt = (
-                db.query(OCRAttempt)
-                .filter(OCRAttempt.status == "queued")
-                .order_by(OCRAttempt.id.asc())
-                .first()
-            )
-            if not attempt:
-                return None
-            item = attempt.inbox_item
-            job_id = "job_" + secrets.token_hex(5)
-            attempt.job_id = job_id
-            attempt.worker_id = worker["id"]
-            attempt.worker_name = worker["name"]
-            attempt.status = "sent"
-            attempt.started_at = datetime.now(timezone.utc)
-            attempt.result_format = worker["selectedResultFormat"]
-            attempt.expected_pages = item.pages
-            attempt.received_pages = 0
-            item.status = "processing"
-            item.error = None
-            coordinator.jobs[job_id] = {
-                "id": job_id,
-                "inboxItemId": item.id,
-                "attemptId": attempt.id,
-                "filename": item.filename,
-                "ticker": item.ticker or "",
-                "worker": worker["name"],
-                "workerId": worker["id"],
-                "status": "sent",
-                "progress": 0,
-                "rows": None,
-                "sentAt": time.time(),
-                "kind": "inbox",
-                "resultFormat": worker["selectedResultFormat"],
-                "pageCount": item.pages,
-                "receivedPages": 0,
-                "db_bind": db.get_bind(),
-            }
-            db.commit()
-            try:
-                await _stream_job(
-                    worker,
-                    job_id,
-                    item.storage_path,
-                    {
-                        "inboxItemId": item.id,
-                        "filename": item.filename,
-                    },
-                )
-            except Exception as exc:
-                db.rollback()
-                attempt = db.query(OCRAttempt).filter_by(id=attempt.id).one()
-                item = attempt.inbox_item
-                _fail_attempt(db, attempt, item, str(exc))
-                db.commit()
-                coordinator.jobs[job_id]["status"] = "failed"
-                coordinator.jobs[job_id]["error"] = str(exc)
-                worker["status"] = "idle"
-                return None
-            return job_id
-        finally:
-            db.close()
+        claimed = await asyncio.to_thread(_claim_next_attempt, worker, bind)
+        if not claimed:
+            return None
+        job, storage_path, header = claimed
+        worker["status"] = "busy"
+        coordinator.add_job(job)
+    job_id = job["id"]
+    try:
+        await _stream_job(worker, job_id, storage_path, header)
+    except Exception as exc:
+        error = str(exc) or type(exc).__name__
+        logger.warning("Could not stream OCR job %s: %s", job_id, error)
+        job["status"] = "failed"
+        job["error"] = error
+        job["completedAt"] = time.time()
+        await _db(
+            job["db_bind"],
+            lambda db: _fail_attempt_by_id(db, job["attemptId"], error),
+        )
+        if coordinator.workers.get(worker["id"]) is worker:
+            worker["status"] = "idle"
+        return None
+    return job_id
 
 
 @router.websocket("/ws/ocr")
@@ -479,7 +574,13 @@ async def ocr_worker(ws: WebSocket):
         worker_name = hello.get("name", "Worker")
         # Same-machine worker: the OS already proves it is local, so skip the
         # code and go straight to welcome. Remote workers still pair.
-        local_peer = _is_loopback_peer(ws.client.host if ws.client else None)
+        # A browser page always sends an Origin header; the native worker
+        # never does. Only an Origin-less loopback client skips the code, so
+        # a page open on this Mac cannot register itself as a worker.
+        local_peer = (
+            _is_loopback_peer(ws.client.host if ws.client else None)
+            and not ws.headers.get("origin")
+        )
         if local_peer:
             logger.info("OCR worker %s is local; skipping pairing code", peer)
         else:
@@ -546,404 +647,439 @@ async def ocr_worker(ws: WebSocket):
             _print_worker_message(worker_id, worker_name, msg)
             mtype = msg.get("type")
             if mtype == "progress":
-                job = coordinator.jobs.get(msg.get("jobId"))
-                if job:
-                    job["progress"] = msg.get("pct", 0)
-                    job["status"] = "parsing"
-                    if job.get("kind") == "inbox":
-                        with Session(bind=job["db_bind"]) as db:
-                            attempt = (
-                                db.query(OCRAttempt)
-                                .filter_by(id=job["attemptId"])
-                                .first()
-                            )
-                            if attempt:
-                                attempt.progress = max(
-                                    0, min(100, int(job["progress"]))
-                                )
-                                attempt.status = "processing"
-                                db.commit()
+                await _handle_progress(msg)
             elif mtype == "page_result":
-                job = coordinator.jobs.get(msg.get("jobId"))
-                if not job:
-                    await ws.send_json({
-                        "type": "page_rejected",
-                        "jobId": msg.get("jobId"),
-                        "page": msg.get("page"),
-                        "error": "Unknown OCR job",
-                        "errorCode": "unknown_job",
-                        "retryable": False,
-                    })
-                    continue
-                if (
-                    job.get("kind") != "inbox"
-                    or job.get("resultFormat") != OCR_PAGE_RESULT_FORMAT
-                ):
-                    await ws.send_json({
-                        "type": "page_rejected",
-                        "jobId": job["id"],
-                        "page": msg.get("page"),
-                        "error": "Job did not negotiate page_markdown_v2",
-                        "errorCode": "invalid_result_format",
-                        "retryable": False,
-                    })
-                    continue
-                terminal_rejection = False
-                with Session(bind=job["db_bind"]) as db:
-                    attempt = db.query(OCRAttempt).filter_by(id=job["attemptId"]).first()
-                    try:
-                        if not attempt:
-                            raise OCRPageContractError("OCR attempt no longer exists")
-                        page, page_status = store_page_result(
-                            db, attempt, attempt.inbox_item, msg
-                        )
-                        db.commit()
-                        job["status"] = "receiving_pages"
-                        job["receivedPages"] = attempt.received_pages
-                        await ws.send_json({
-                            "type": "page_ack",
-                            "jobId": job["id"],
-                            "page": page.page_number,
-                            "status": page_status,
-                            "receivedPages": attempt.received_pages,
-                            "pageCount": attempt.expected_pages,
-                        })
-                    except OCRPageContractError as exc:
-                        db.rollback()
-                        attempt = db.query(OCRAttempt).filter_by(id=job["attemptId"]).first()
-                        if attempt:
-                            _fail_attempt(
-                                db, attempt, attempt.inbox_item, str(exc), retryable=False
-                            )
-                            db.commit()
-                        job["status"] = "failed"
-                        job["error"] = str(exc)
-                        job["errorCode"] = exc.code
-                        job["retryable"] = False
-                        terminal_rejection = True
-                        await ws.send_json({
-                            "type": "page_rejected",
-                            "jobId": job["id"],
-                            "page": msg.get("page"),
-                            "error": str(exc),
-                            "errorCode": exc.code,
-                            "retryable": exc.retryable,
-                        })
-                    except Exception:
-                        db.rollback()
-                        logger.exception("Could not persist OCR page for %s", job["id"])
-                        await ws.send_json({
-                            "type": "page_rejected",
-                            "jobId": job["id"],
-                            "page": msg.get("page"),
-                            "error": "Could not persist OCR page",
-                            "errorCode": "page_persistence_failed",
-                            "retryable": True,
-                        })
-                if terminal_rejection:
-                    w = coordinator.workers.get(worker_id)
-                    if w:
-                        w["status"] = "idle"
-                    await dispatch_next_queued(
-                        preferred_worker_id=worker_id, bind=job.get("db_bind")
-                    )
+                await _handle_page_result(ws, worker_id, msg)
             elif mtype == "result_end":
-                job = coordinator.jobs.get(msg.get("jobId"))
-                if not job:
-                    await ws.send_json({
-                        "type": "result_rejected",
-                        "jobId": msg.get("jobId"),
-                        "error": "Unknown OCR job",
-                        "errorCode": "unknown_job",
-                        "retryable": False,
-                    })
-                    continue
-                if (
-                    job.get("kind") != "inbox"
-                    or job.get("resultFormat") != OCR_PAGE_RESULT_FORMAT
-                ):
-                    await ws.send_json({
-                        "type": "result_rejected",
-                        "jobId": job["id"],
-                        "error": "Job did not negotiate page_markdown_v2",
-                        "errorCode": "invalid_result_format",
-                        "retryable": False,
-                    })
-                    continue
-                if job.get("status") == "done":
-                    await ws.send_json({
-                        "type": "result_ack",
-                        "jobId": job["id"],
-                        "status": "ready_for_review",
-                        "pageCount": job.get("receivedPages", job.get("pageCount")),
-                        "reviewId": job.get("reviewId"),
-                        "inboxItemId": job.get("inboxItemId"),
-                    })
-                    continue
-                completed = False
-                terminal_rejection = False
-                with Session(bind=job["db_bind"]) as db:
-                    attempt = db.query(OCRAttempt).filter_by(id=job["attemptId"]).first()
-                    try:
-                        if not attempt:
-                            raise OCRPageContractError("OCR attempt no longer exists")
-                        review, missing = finalize_page_result(
-                            db, attempt, attempt.inbox_item, msg
-                        )
-                        db.commit()
-                        if missing:
-                            await ws.send_json({
-                                "type": "result_incomplete",
-                                "jobId": job["id"],
-                                "errorCode": "missing_pages",
-                                "missingPages": missing,
-                                "retryable": True,
-                            })
-                        else:
-                            completed = True
-                            job["status"] = "done"
-                            job["progress"] = 100
-                            job["receivedPages"] = attempt.received_pages
-                            job["reviewId"] = review.id
-                            job["completedAt"] = time.time()
-                            await ws.send_json({
-                                "type": "result_ack",
-                                "jobId": job["id"],
-                                "status": "ready_for_review",
-                                "pageCount": attempt.received_pages,
-                                "reviewId": review.id,
-                                "inboxItemId": job.get("inboxItemId"),
-                            })
-                    except OCRPageContractError as exc:
-                        db.rollback()
-                        attempt = db.query(OCRAttempt).filter_by(id=job["attemptId"]).first()
-                        if attempt:
-                            _fail_attempt(
-                                db, attempt, attempt.inbox_item, str(exc), retryable=False
-                            )
-                            db.commit()
-                        job["status"] = "failed"
-                        job["error"] = str(exc)
-                        job["errorCode"] = exc.code
-                        job["retryable"] = False
-                        terminal_rejection = True
-                        await ws.send_json({
-                            "type": "result_rejected",
-                            "jobId": job["id"],
-                            "error": str(exc),
-                            "errorCode": exc.code,
-                            "retryable": exc.retryable,
-                        })
-                    except Exception:
-                        db.rollback()
-                        logger.exception("Could not finalize OCR pages for %s", job["id"])
-                        await ws.send_json({
-                            "type": "result_rejected",
-                            "jobId": job["id"],
-                            "error": "Could not finalize OCR pages",
-                            "errorCode": "result_persistence_failed",
-                            "retryable": True,
-                        })
-                if completed and settings.enable_automatic_ocr_label_review:
-                    asyncio.create_task(asyncio.to_thread(
-                        run_auto_document_label_review,
-                        job["db_bind"],
-                        job["reviewId"],
-                    ))
-                if completed or terminal_rejection:
-                    w = coordinator.workers.get(worker_id)
-                    if w:
-                        w["status"] = "idle"
-                        if completed:
-                            w["done"] += 1
-                    await dispatch_next_queued(
-                        preferred_worker_id=worker_id, bind=job.get("db_bind")
-                    )
+                await _handle_result_end(ws, worker_id, msg)
             elif mtype == "result":
-                job = coordinator.jobs.get(msg.get("jobId"))
-                if job:
-                    ack = None
-                    if job.get("resultFormat", STRUCTURED_RESULT_FORMAT) != STRUCTURED_RESULT_FORMAT:
-                        await ws.send_json({
-                            "type": "result_rejected",
-                            "jobId": job["id"],
-                            "error": "Job requires page_result messages",
-                            "errorCode": "invalid_result_format",
-                            "retryable": False,
-                        })
-                        continue
-                    if job.get("kind") == "inbox":
-                        with Session(bind=job["db_bind"]) as db:
-                            attempt = (
-                                db.query(OCRAttempt)
-                                .filter_by(id=job["attemptId"])
-                                .first()
-                            )
-                            try:
-                                if not attempt:
-                                    raise ValueError("OCR attempt no longer exists")
-                                review = create_review_from_result(
-                                    db, attempt, attempt.inbox_item, msg
-                                )
-                                db.commit()
-                                job["rows"] = msg.get("rows", [])
-                                job["status"] = "done"
-                                job["progress"] = 100
-                                job["rowCount"] = len(job["rows"])
-                                job["reviewId"] = review.id
-                                job["completedAt"] = time.time()
-                                ack = {
-                                    "type": "result_ack",
-                                    "jobId": job["id"],
-                                    "status": "ready_for_review",
-                                    "rowCount": job["rowCount"],
-                                    "reviewId": review.id,
-                                    "inboxItemId": job.get("inboxItemId"),
-                                }
-                            except Exception as exc:
-                                db.rollback()
-                                retryable = not isinstance(
-                                    exc, OCRResultValidationError
-                                )
-                                error_code = (
-                                    "result_persistence_failed"
-                                    if retryable
-                                    else exc.code
-                                )
-                                attempt = (
-                                    db.query(OCRAttempt)
-                                    .filter_by(id=job["attemptId"])
-                                    .first()
-                                )
-                                if attempt:
-                                    _fail_attempt(
-                                        db,
-                                        attempt,
-                                        attempt.inbox_item,
-                                        str(exc),
-                                        retryable=retryable,
-                                    )
-                                    db.commit()
-                                job["status"] = "failed"
-                                job["error"] = str(exc)
-                                job["errorCode"] = error_code
-                                job["retryable"] = retryable
-                                await ws.send_json(
-                                    {
-                                        "type": "result_rejected",
-                                        "jobId": job["id"],
-                                        "error": str(exc),
-                                        "errorCode": error_code,
-                                        "retryable": retryable,
-                                    }
-                                )
-                    else:
-                        job["rows"] = msg.get("rows", [])
-                        job["status"] = "done"
-                        job["progress"] = 100
-                        job["rowCount"] = len(job["rows"])
-                        job["completedAt"] = time.time()
-                        ack = {
-                            "type": "result_ack",
-                            "jobId": job["id"],
-                            "status": "done",
-                            "rowCount": job["rowCount"],
-                        }
-                    if ack:
-                        await ws.send_json(ack)
-                w = coordinator.workers.get(worker_id)
-                if w:
-                    w["status"] = "idle"
-                    if job and job.get("status") == "done":
-                        w["done"] += 1
-                if job:
-                    await dispatch_next_queued(
-                        preferred_worker_id=worker_id, bind=job.get("db_bind")
-                    )
+                await _handle_structured_result(ws, worker_id, msg)
             elif mtype == "error":
-                job = coordinator.jobs.get(msg.get("jobId"))
-                if job:
-                    job["status"] = "failed"
-                    job["error"] = msg.get("error", "worker error")
-                    job["errorCode"] = msg.get("errorCode", "worker_error")
-                    job["retryable"] = bool(msg.get("retryable", False))
-                    if job.get("kind") == "inbox":
-                        with Session(bind=job["db_bind"]) as db:
-                            attempt = (
-                                db.query(OCRAttempt)
-                                .filter_by(id=job["attemptId"])
-                                .first()
-                            )
-                            if attempt:
-                                _fail_attempt(
-                                    db,
-                                    attempt,
-                                    attempt.inbox_item,
-                                    job["error"],
-                                    retryable=job["retryable"],
-                                )
-                                db.commit()
-                w = coordinator.workers.get(worker_id)
-                if w:
-                    w["status"] = "idle"
-                if job:
-                    await dispatch_next_queued(
-                        preferred_worker_id=worker_id, bind=job.get("db_bind")
-                    )
+                await _handle_worker_error(worker_id, msg)
             elif mtype == "control_ack":
-                job = coordinator.jobs.get(msg.get("jobId"))
-                action = msg.get("action")
-                expected = "holding" if action == "hold" else "stopping"
-                if not job or job.get("status") != expected:
-                    continue
-                if job.get("kind") == "inbox":
-                    with Session(bind=job["db_bind"]) as db:
-                        attempt = (
-                            db.query(OCRAttempt).filter_by(id=job["attemptId"]).first()
-                        )
-                        if attempt:
-                            attempt.status = "held" if action == "hold" else "canceled"
-                            attempt.finished_at = datetime.now(timezone.utc)
-                            attempt.inbox_item.status = (
-                                "held" if action == "hold" else "uploaded"
-                            )
-                            attempt.inbox_item.error = None
-                            if action == "stop":
-                                attempt.progress = 0
-                            db.commit()
-                job["status"] = "held" if action == "hold" else "stopped"
-                w = coordinator.workers.get(worker_id)
-                if w:
-                    w["status"] = "idle"
-                await dispatch_next_queued(
-                    preferred_worker_id=worker_id, bind=job.get("db_bind")
-                )
+                await _handle_control_ack(worker_id, msg)
     except WebSocketDisconnect as e:
         logger.info("OCR worker %s disconnected (code=%s)", peer, e.code)
     except Exception:
         logger.exception("OCR worker %s protocol failure", peer)
     finally:
         if worker_id:
-            active_jobs = [
-                job
-                for job in coordinator.jobs.values()
-                if job.get("workerId") == worker_id
-                and job.get("kind") == "inbox"
-                and job.get("status") in {"sent", "parsing", "receiving_pages", "assembling"}
-            ]
-            for job in active_jobs:
-                with Session(bind=job["db_bind"]) as db:
-                    attempt = (
-                        db.query(OCRAttempt).filter_by(id=job["attemptId"]).first()
-                    )
-                    if attempt:
-                        _fail_attempt(
-                            db, attempt, attempt.inbox_item, "worker disconnected"
-                        )
-                        db.commit()
-                job["status"] = "failed"
-                job["error"] = "worker disconnected"
             coordinator.workers.pop(worker_id, None)
+            await _release_worker_jobs(worker_id)
+
+
+def _free_worker(worker_id: str, *, completed: bool = False) -> None:
+    w = coordinator.workers.get(worker_id)
+    if w:
+        w["status"] = "idle"
+        if completed:
+            w["done"] += 1
+
+
+def _finish_job(job: dict, status: str, **fields) -> None:
+    job["status"] = status
+    job["completedAt"] = time.time()
+    job.update(fields)
+
+
+async def _handle_progress(msg: dict) -> None:
+    job = coordinator.jobs.get(msg.get("jobId"))
+    # A progress frame can cross a hold/stop on the wire; it must not undo
+    # the pending control (that used to drop the control_ack).
+    if not job or job.get("status") not in ACTIVE_JOB_STATUSES:
+        return
+    try:
+        pct = max(0, min(100, int(msg.get("pct", 0))))
+    except (TypeError, ValueError):
+        return
+    job["progress"] = pct
+    if job["status"] == "sent":
+        job["status"] = "parsing"
+    if job.get("kind") != "inbox":
+        return
+
+    def update(db: Session) -> None:
+        attempt = _load_attempt(db, job["attemptId"])
+        if attempt and attempt.status in {"sent", "processing", "receiving_pages"}:
+            attempt.progress = pct
+            if attempt.status == "sent":
+                attempt.status = "processing"
+            db.commit()
+
+    await _db(job["db_bind"], update)
+
+
+async def _handle_page_result(ws: WebSocket, worker_id: str, msg: dict) -> None:
+    job = coordinator.jobs.get(msg.get("jobId"))
+    if not job:
+        await ws.send_json({
+            "type": "page_rejected",
+            "jobId": msg.get("jobId"),
+            "page": msg.get("page"),
+            "error": "Unknown OCR job",
+            "errorCode": "unknown_job",
+            "retryable": False,
+        })
+        return
+    if (
+        job.get("kind") != "inbox"
+        or job.get("resultFormat") != OCR_PAGE_RESULT_FORMAT
+    ):
+        await ws.send_json({
+            "type": "page_rejected",
+            "jobId": job["id"],
+            "page": msg.get("page"),
+            "error": "Job did not negotiate page_markdown_v2",
+            "errorCode": "invalid_result_format",
+            "retryable": False,
+        })
+        return
+    if job.get("status") in CONTROL_PENDING_STATUSES:
+        # The worker is about to see job_control and drop this job; answering
+        # here could race the control frame, so stay silent.
+        return
+    if job.get("status") not in ACTIVE_JOB_STATUSES:
+        await ws.send_json({
+            "type": "page_rejected",
+            "jobId": job["id"],
+            "page": msg.get("page"),
+            "error": f"OCR job is {job.get('status')}",
+            "errorCode": "job_not_active",
+            "retryable": False,
+        })
+        return
+
+    def store(db: Session) -> dict:
+        attempt = _load_attempt(db, job["attemptId"])
+        try:
+            if not attempt:
+                raise OCRPageContractError("OCR attempt no longer exists")
+            page, page_status = store_page_result(db, attempt, attempt.inbox_item, msg)
+            db.commit()
+            return {
+                "ok": True,
+                "page": page.page_number,
+                "status": page_status,
+                "receivedPages": attempt.received_pages,
+                "pageCount": attempt.expected_pages,
+            }
+        except OCRPageContractError as exc:
+            db.rollback()
+            _fail_attempt_by_id(db, job["attemptId"], str(exc), retryable=False)
+            return {"ok": False, "contract": exc}
+        except Exception:
+            db.rollback()
+            logger.exception("Could not persist OCR page for %s", job["id"])
+            return {"ok": False, "contract": None}
+
+    outcome = await _db(job["db_bind"], store)
+    if outcome["ok"]:
+        if job.get("status") in ACTIVE_JOB_STATUSES:
+            job["status"] = "receiving_pages"
+        job["receivedPages"] = outcome["receivedPages"]
+        await ws.send_json({
+            "type": "page_ack",
+            "jobId": job["id"],
+            "page": outcome["page"],
+            "status": outcome["status"],
+            "receivedPages": outcome["receivedPages"],
+            "pageCount": outcome["pageCount"],
+        })
+        return
+    exc = outcome["contract"]
+    if exc is None:
+        await ws.send_json({
+            "type": "page_rejected",
+            "jobId": job["id"],
+            "page": msg.get("page"),
+            "error": "Could not persist OCR page",
+            "errorCode": "page_persistence_failed",
+            "retryable": True,
+        })
+        return
+    _finish_job(job, "failed", error=str(exc), errorCode=exc.code, retryable=False)
+    await ws.send_json({
+        "type": "page_rejected",
+        "jobId": job["id"],
+        "page": msg.get("page"),
+        "error": str(exc),
+        "errorCode": exc.code,
+        "retryable": exc.retryable,
+    })
+    _free_worker(worker_id)
+    await dispatch_next_queued(preferred_worker_id=worker_id, bind=job.get("db_bind"))
+
+
+async def _handle_result_end(ws: WebSocket, worker_id: str, msg: dict) -> None:
+    job = coordinator.jobs.get(msg.get("jobId"))
+    if not job:
+        await ws.send_json({
+            "type": "result_rejected",
+            "jobId": msg.get("jobId"),
+            "error": "Unknown OCR job",
+            "errorCode": "unknown_job",
+            "retryable": False,
+        })
+        return
+    if (
+        job.get("kind") != "inbox"
+        or job.get("resultFormat") != OCR_PAGE_RESULT_FORMAT
+    ):
+        await ws.send_json({
+            "type": "result_rejected",
+            "jobId": job["id"],
+            "error": "Job did not negotiate page_markdown_v2",
+            "errorCode": "invalid_result_format",
+            "retryable": False,
+        })
+        return
+    if job.get("status") == "done":
+        await ws.send_json({
+            "type": "result_ack",
+            "jobId": job["id"],
+            "status": "ready_for_review",
+            "pageCount": job.get("receivedPages", job.get("pageCount")),
+            "reviewId": job.get("reviewId"),
+            "inboxItemId": job.get("inboxItemId"),
+        })
+        return
+
+    def finalize(db: Session) -> dict:
+        attempt = _load_attempt(db, job["attemptId"])
+        try:
+            if not attempt:
+                raise OCRPageContractError("OCR attempt no longer exists")
+            review, missing = finalize_page_result(db, attempt, attempt.inbox_item, msg)
+            db.commit()
+            return {
+                "ok": True,
+                "missing": missing,
+                "reviewId": review.id if review is not None else None,
+                "receivedPages": attempt.received_pages,
+            }
+        except OCRPageContractError as exc:
+            db.rollback()
+            _fail_attempt_by_id(db, job["attemptId"], str(exc), retryable=False)
+            return {"ok": False, "contract": exc}
+        except Exception:
+            db.rollback()
+            logger.exception("Could not finalize OCR pages for %s", job["id"])
+            return {"ok": False, "contract": None}
+
+    outcome = await _db(job["db_bind"], finalize)
+    completed = terminal_rejection = False
+    if outcome["ok"] and outcome["missing"]:
+        await ws.send_json({
+            "type": "result_incomplete",
+            "jobId": job["id"],
+            "errorCode": "missing_pages",
+            "missingPages": outcome["missing"],
+            "retryable": True,
+        })
+    elif outcome["ok"]:
+        completed = True
+        _finish_job(
+            job, "done", progress=100,
+            receivedPages=outcome["receivedPages"], reviewId=outcome["reviewId"],
+        )
+        await ws.send_json({
+            "type": "result_ack",
+            "jobId": job["id"],
+            "status": "ready_for_review",
+            "pageCount": outcome["receivedPages"],
+            "reviewId": outcome["reviewId"],
+            "inboxItemId": job.get("inboxItemId"),
+        })
+    elif outcome["contract"] is not None:
+        exc = outcome["contract"]
+        terminal_rejection = True
+        _finish_job(job, "failed", error=str(exc), errorCode=exc.code, retryable=False)
+        await ws.send_json({
+            "type": "result_rejected",
+            "jobId": job["id"],
+            "error": str(exc),
+            "errorCode": exc.code,
+            "retryable": exc.retryable,
+        })
+    else:
+        await ws.send_json({
+            "type": "result_rejected",
+            "jobId": job["id"],
+            "error": "Could not finalize OCR pages",
+            "errorCode": "result_persistence_failed",
+            "retryable": True,
+        })
+    if completed and settings.enable_automatic_ocr_label_review:
+        coordinator.spawn(asyncio.to_thread(
+            run_auto_document_label_review,
+            job["db_bind"],
+            job["reviewId"],
+        ))
+    if completed or terminal_rejection:
+        _free_worker(worker_id, completed=completed)
+        await dispatch_next_queued(preferred_worker_id=worker_id, bind=job.get("db_bind"))
+
+
+async def _handle_structured_result(ws: WebSocket, worker_id: str, msg: dict) -> None:
+    job = coordinator.jobs.get(msg.get("jobId"))
+    if job:
+        ack = None
+        if job.get("resultFormat", STRUCTURED_RESULT_FORMAT) != STRUCTURED_RESULT_FORMAT:
+            await ws.send_json({
+                "type": "result_rejected",
+                "jobId": job["id"],
+                "error": "Job requires page_result messages",
+                "errorCode": "invalid_result_format",
+                "retryable": False,
+            })
+            return
+        if job.get("kind") == "inbox":
+
+            def persist(db: Session) -> dict:
+                attempt = _load_attempt(db, job["attemptId"])
+                try:
+                    if not attempt:
+                        raise ValueError("OCR attempt no longer exists")
+                    review = create_review_from_result(db, attempt, attempt.inbox_item, msg)
+                    db.commit()
+                    return {"ok": True, "reviewId": review.id}
+                except Exception as exc:
+                    db.rollback()
+                    retryable = not isinstance(exc, OCRResultValidationError)
+                    error_code = "result_persistence_failed" if retryable else exc.code
+                    _fail_attempt_by_id(db, job["attemptId"], str(exc), retryable=retryable)
+                    return {
+                        "ok": False, "error": str(exc),
+                        "errorCode": error_code, "retryable": retryable,
+                    }
+
+            outcome = await _db(job["db_bind"], persist)
+            if outcome["ok"]:
+                rows = msg.get("rows", [])
+                _finish_job(
+                    job, "done", rows=rows, progress=100,
+                    rowCount=len(rows), reviewId=outcome["reviewId"],
+                )
+                ack = {
+                    "type": "result_ack",
+                    "jobId": job["id"],
+                    "status": "ready_for_review",
+                    "rowCount": job["rowCount"],
+                    "reviewId": outcome["reviewId"],
+                    "inboxItemId": job.get("inboxItemId"),
+                }
+            else:
+                _finish_job(
+                    job, "failed", error=outcome["error"],
+                    errorCode=outcome["errorCode"], retryable=outcome["retryable"],
+                )
+                await ws.send_json({
+                    "type": "result_rejected",
+                    "jobId": job["id"],
+                    "error": outcome["error"],
+                    "errorCode": outcome["errorCode"],
+                    "retryable": outcome["retryable"],
+                })
+        else:
+            rows = msg.get("rows", [])
+            _finish_job(job, "done", rows=rows, progress=100, rowCount=len(rows))
+            ack = {
+                "type": "result_ack",
+                "jobId": job["id"],
+                "status": "done",
+                "rowCount": job["rowCount"],
+            }
+        if ack:
+            await ws.send_json(ack)
+    _free_worker(worker_id, completed=bool(job and job.get("status") == "done"))
+    if job:
+        await dispatch_next_queued(preferred_worker_id=worker_id, bind=job.get("db_bind"))
+
+
+async def _handle_worker_error(worker_id: str, msg: dict) -> None:
+    job = coordinator.jobs.get(msg.get("jobId"))
+    if job:
+        _finish_job(
+            job, "failed",
+            error=msg.get("error", "worker error"),
+            errorCode=msg.get("errorCode", "worker_error"),
+            retryable=bool(msg.get("retryable", False)),
+        )
+        if job.get("kind") == "inbox":
+            await _db(
+                job["db_bind"],
+                lambda db: _fail_attempt_by_id(
+                    db, job["attemptId"], job["error"], retryable=job["retryable"],
+                ),
+            )
+    _free_worker(worker_id)
+    if job:
+        await dispatch_next_queued(preferred_worker_id=worker_id, bind=job.get("db_bind"))
+
+
+async def _handle_control_ack(worker_id: str, msg: dict) -> None:
+    job = coordinator.jobs.get(msg.get("jobId"))
+    action = msg.get("action")
+    # Trust the acknowledged action itself: a progress/page frame may have
+    # touched the job between the control request and this ack.
+    if (
+        action not in {"hold", "stop"}
+        or not job
+        or job.get("workerId") != worker_id
+        or job.get("status") in FINISHED_JOB_STATUSES
+    ):
+        return
+    if job.get("kind") == "inbox":
+
+        def resolve(db: Session) -> None:
+            attempt = _load_attempt(db, job["attemptId"])
+            if attempt:
+                _resolve_control(db, attempt, action)
+                db.commit()
+
+        await _db(job["db_bind"], resolve)
+    _finish_job(job, "held" if action == "hold" else "stopped")
+    _free_worker(worker_id)
+    await dispatch_next_queued(preferred_worker_id=worker_id, bind=job.get("db_bind"))
+
+
+def _persist_released_jobs(entries: list[tuple]) -> None:
+    for bind, attempt_id, action in entries:
+        with Session(bind=bind) as db:
+            if action is None:
+                _fail_attempt_by_id(db, attempt_id, "worker disconnected")
+                continue
+            attempt = _load_attempt(db, attempt_id)
+            if attempt:
+                _resolve_control(db, attempt, action)
+                db.commit()
+
+
+async def _release_worker_jobs(worker_id: str) -> None:
+    """Disconnect cleanup: fail running work, settle pending hold/stop.
+
+    In-memory state is settled first and all DB work is submitted in one
+    thread call, so a cancelled handler cannot leave a job half-released.
+    """
+    entries = []
+    for job in list(coordinator.jobs.values()):
+        status = job.get("status")
+        if job.get("workerId") != worker_id or status not in (
+            ACTIVE_JOB_STATUSES | CONTROL_PENDING_STATUSES | {"assembling"}
+        ):
+            continue
+        if status in CONTROL_PENDING_STATUSES:
+            # The user already asked to hold/stop; a vanished worker cannot
+            # continue anyway, so honour the request instead of failing.
+            action = "hold" if status == "holding" else "stop"
+            _finish_job(job, "held" if action == "hold" else "stopped")
+        else:
+            action = None
+            _finish_job(job, "failed", error="worker disconnected")
+        if job.get("kind") == "inbox":
+            entries.append((job["db_bind"], job["attemptId"], action))
+    if entries:
+        await asyncio.to_thread(_persist_released_jobs, entries)
 
 
 # ── HTTP control surface for the UI ────────────────────────────
@@ -974,13 +1110,14 @@ async def control_job(job_id: str, control: JobControl):
     job = coordinator.jobs.get(job_id)
     if not job:
         raise HTTPException(404, "Job not found")
-    if job.get("status") not in {"sent", "parsing", "receiving_pages"}:
+    if job.get("status") not in ACTIVE_JOB_STATUSES:
         raise HTTPException(
             409, f"Cannot {control.action} a job while it is {job.get('status')}"
         )
     worker = coordinator.workers.get(job.get("workerId"))
     if not worker:
         raise HTTPException(409, "Worker is no longer connected")
+    previous_status = job["status"]
     job["status"] = "holding" if control.action == "hold" else "stopping"
     try:
         await worker["ws"].send_json(
@@ -991,7 +1128,7 @@ async def control_job(job_id: str, control: JobControl):
             }
         )
     except Exception as exc:
-        job["status"] = "parsing"
+        job["status"] = previous_status
         raise HTTPException(500, "Could not send control command to worker") from exc
     return {"jobId": job_id, "status": job["status"], "action": control.action}
 
@@ -1014,7 +1151,7 @@ async def dispatch(filing_id: int, db: Session = Depends(get_db)):
         raise HTTPException(409, "No idle worker connected")
 
     job_id = "job_" + secrets.token_hex(5)
-    coordinator.jobs[job_id] = {
+    coordinator.add_job({
         "id": job_id,
         "filingId": f.id,
         "filename": f.filename,
@@ -1027,7 +1164,8 @@ async def dispatch(filing_id: int, db: Session = Depends(get_db)):
         "sentAt": time.time(),
         "kind": "filing",
         "resultFormat": STRUCTURED_RESULT_FORMAT,
-    }
+    })
+    worker["status"] = "busy"
     try:
         await _stream_job(
             worker,
@@ -1038,10 +1176,13 @@ async def dispatch(filing_id: int, db: Session = Depends(get_db)):
                 "filename": f.filename,
             },
         )
-    except RuntimeError as exc:
+    except Exception as exc:
+        # Any send failure (missing file, closed socket) must free the worker;
+        # only RuntimeError used to be caught, leaving it busy forever.
         coordinator.jobs.pop(job_id, None)
-        worker["status"] = "idle"
-        raise HTTPException(500, str(exc)) from exc
+        if coordinator.workers.get(worker["id"]) is worker:
+            worker["status"] = "idle"
+        raise HTTPException(500, str(exc) or "Could not send the PDF to the worker") from exc
     return {"jobId": job_id}
 
 
@@ -1050,4 +1191,4 @@ def get_result(job_id: str):
     job = coordinator.jobs.get(job_id)
     if not job:
         raise HTTPException(404, "Job not found")
-    return job
+    return _public_job(job)

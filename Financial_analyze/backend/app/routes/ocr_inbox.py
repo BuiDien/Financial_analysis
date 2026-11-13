@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import io
 import re
@@ -13,7 +14,7 @@ from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
-from ..config import get_settings
+from ..config import get_settings, resolve_backend_path, to_storage_path
 from ..db import get_db
 from ..models.filing import Filing
 from ..models.ocr import (
@@ -98,15 +99,40 @@ def _get_item(db: Session, item_id: int) -> OCRInboxItem:
     return item
 
 
+def _looks_like_pdf(path: Path) -> bool:
+    with path.open("rb") as source:
+        return b"%PDF-" in source.read(1024)
+
+
 @router.post("")
 async def upload_inbox_files(
     files: list[UploadFile] = File(...),
     allow_duplicate: bool = Form(False),
+    # Optional target labels, sent when the upload starts from a company's
+    # Financial Statements page. Unit stays unset: it is read from the PDF.
+    ticker: str | None = Form(None),
+    scope: str | None = Form(None),
+    fiscal_year: int | None = Form(None),
+    period_code: str | None = Form(None),
     db: Session = Depends(get_db),
 ):
     if not files or len(files) > MAX_BATCH_FILES:
         raise HTTPException(422, f"Upload between 1 and {MAX_BATCH_FILES} PDFs")
-    inbox_dir = Path(settings.upload_dir) / "ocr-inbox"
+    ticker = (ticker or "").strip().upper() or None
+    if ticker is not None and not TICKER_RE.fullmatch(ticker):
+        raise HTTPException(422, "Ticker contains unsupported characters")
+    if scope is not None and scope not in ("consolidated", "separate"):
+        raise HTTPException(422, "Scope must be consolidated or separate")
+    if period_code is not None and period_code not in ("Q1", "Q2", "Q3", "Q4", "H1", "FY"):
+        raise HTTPException(422, "Period must be Q1-Q4, H1 or FY")
+    if fiscal_year is not None and not 2000 <= fiscal_year <= 2100:
+        raise HTTPException(422, "Fiscal year must be between 2000 and 2100")
+    target = {"scope": scope, "fiscal_year": fiscal_year, "period_code": period_code}
+    if ticker:
+        target |= {"ticker": ticker, "company": ticker}
+    if period_code and fiscal_year:
+        target["period"] = f"{period_code} {fiscal_year}"
+    inbox_dir = resolve_backend_path(settings.upload_dir) / "ocr-inbox"
     inbox_dir.mkdir(parents=True, exist_ok=True)
     max_bytes = settings.max_upload_mb * 1024 * 1024
     saved_paths: list[Path] = []
@@ -120,19 +146,23 @@ async def upload_inbox_files(
             final_path = inbox_dir / f"{uuid.uuid4().hex}_{filename}"
             digest = hashlib.sha256()
             size = 0
-            with temp_path.open("wb") as output:
+            # Track the temp file before it exists so a 413/abort mid-write
+            # still removes it in the cleanup below.
+            saved_paths.append(temp_path)
+            output = await asyncio.to_thread(temp_path.open, "wb")
+            try:
                 while chunk := await upload.read(UPLOAD_CHUNK_SIZE):
                     size += len(chunk)
                     if size > max_bytes:
                         raise HTTPException(413, f"File exceeds {settings.max_upload_mb} MB limit")
                     digest.update(chunk)
-                    output.write(chunk)
-            saved_paths.append(temp_path)
-            with temp_path.open("rb") as source:
-                if b"%PDF-" not in source.read(1024):
-                    raise HTTPException(400, f"{filename} content is not a PDF")
+                    await asyncio.to_thread(output.write, chunk)
+            finally:
+                await asyncio.to_thread(output.close)
+            if not await asyncio.to_thread(_looks_like_pdf, temp_path):
+                raise HTTPException(400, f"{filename} content is not a PDF")
             try:
-                pages = pdf.page_count(str(temp_path))
+                pages = await asyncio.to_thread(pdf.page_count, str(temp_path))
             except Exception as exc:
                 raise HTTPException(422, f"{filename} is unreadable or corrupted") from exc
             checksum = digest.hexdigest()
@@ -142,11 +172,13 @@ async def upload_inbox_files(
                     "message": "PDF already exists in the OCR Inbox",
                     "duplicate_id": duplicate.id,
                 })
-            temp_path.replace(final_path)
+            await asyncio.to_thread(temp_path.replace, final_path)
             saved_paths[-1] = final_path
             item = OCRInboxItem(
-                filename=filename, storage_path=str(final_path), size_bytes=size,
+                filename=filename, storage_path=to_storage_path(final_path),
+                size_bytes=size,
                 pages=pages, checksum_sha256=checksum,
+                **{k: v for k, v in target.items() if v is not None},
             )
             db.add(item)
             items.append(item)
@@ -177,9 +209,10 @@ def get_inbox_item(item_id: int, db: Session = Depends(get_db)):
 @router.get("/{item_id}/file")
 def get_inbox_file(item_id: int, db: Session = Depends(get_db)):
     item = _get_item(db, item_id)
-    if not Path(item.storage_path).is_file():
+    path = resolve_backend_path(item.storage_path)
+    if not path.is_file():
         raise HTTPException(404, "OCR source PDF is missing")
-    return FileResponse(item.storage_path, media_type="application/pdf", filename=item.filename)
+    return FileResponse(path, media_type="application/pdf", filename=item.filename)
 
 
 @router.get("/{item_id}/pages/{page_number}")
@@ -189,7 +222,7 @@ def render_inbox_page(item_id: int, page_number: int, db: Session = Depends(get_
         raise HTTPException(404, "PDF page not found")
     try:
         import pdfplumber
-        with pdfplumber.open(item.storage_path) as document:
+        with pdfplumber.open(resolve_backend_path(item.storage_path)) as document:
             image = document.pages[page_number - 1].to_image(resolution=144).original
             output = io.BytesIO()
             image.save(output, format="PNG")
@@ -257,7 +290,7 @@ def delete_inbox_item(item_id: int, db: Session = Depends(get_db)):
         raise HTTPException(409, "Published OCR sources cannot be deleted from the inbox")
     if item.status in {"queued", "processing"}:
         raise HTTPException(409, "Cancel or finish OCR before deleting this item")
-    path = Path(item.storage_path)
+    path = resolve_backend_path(item.storage_path)
     history_store.delete_item_facts(db, item)
     db.delete(item)
     db.commit()
@@ -1105,6 +1138,50 @@ def verify_review(review_id: int, payload: ReviewActionIn, db: Session = Depends
     review.events.append(OCRAuditEvent(
         action="verified", revision=review.revision,
         after_data=review_counts(review),
+    ))
+    db.commit()
+    db.refresh(review)
+    return _serialize_review(review)
+
+
+class ReopenReviewIn(BaseModel):
+    revision: int = Field(ge=1)
+    reason: str | None = Field(default=None, max_length=1000)
+
+
+@router.post("/{item_id}/review/reopen")
+def reopen_review(item_id: int, payload: ReopenReviewIn, db: Session = Depends(get_db)):
+    """Return a verified (unpublished) review to editing.
+
+    The edit guards say "Verified reviews must be reopened before editing";
+    this is that reopen. Published reviews stay frozen (a Filing exists), and
+    a document already written to company history must be removed from it
+    first so history never holds facts from a review that is being edited.
+    """
+    item = _get_item(db, item_id)
+    review = _latest_review(item)
+    if not review:
+        raise HTTPException(409, "This document has no OCR review to reopen")
+    if payload.revision != review.revision:
+        raise HTTPException(409, "Review changed; refresh before reopening")
+    if review.status == "published" or item.published_filing_id:
+        raise HTTPException(409, "Published reviews cannot be reopened")
+    if review.status != "verified":
+        raise HTTPException(409, "Only verified reviews can be reopened")
+    if history_store.is_in_history(db, item):
+        raise HTTPException(
+            409, "Remove this document from company history before reopening it",
+        )
+    before = {"status": review.status, "item_status": item.status}
+    review.status = "reviewing"
+    review.verified_at = None
+    review.revision += 1
+    item.status = "ready_for_review"
+    reason = (payload.reason or "").strip() or None
+    review.events.append(OCRAuditEvent(
+        action="reopened", revision=review.revision,
+        before_data=before,
+        after_data={"status": review.status, "item_status": item.status, "reason": reason},
     ))
     db.commit()
     db.refresh(review)

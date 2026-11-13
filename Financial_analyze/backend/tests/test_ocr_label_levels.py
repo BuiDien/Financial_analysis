@@ -1,4 +1,5 @@
 import pytest
+from decimal import Decimal
 
 from app.services.ocr_label_levels import (
     apply_label_level_suggestions,
@@ -304,3 +305,25 @@ def test_applies_label_suggestions_and_rejects_l_on_financial_row():
         apply_label_level_suggestions(markdown, [
             {"table": 1, "row": 3, "level": -1},
         ])
+
+
+@pytest.mark.parametrize("value", ["1.234.56", "1.2345", "1,23,456", "12.34.567", "1.234,567.89", "1,2345.50"])
+def test_rejects_malformed_digit_grouping(value):
+    assert parse_financial_number(value) is None
+
+
+@pytest.mark.parametrize(("value", "expected"), [
+    ("1.234", 1234),
+    ("1,234", 1234),
+    ("1.234.567", 1_234_567),
+    ("(1.234.567)", -1_234_567),
+    ("-1.234.567", -1_234_567),
+    ("12.345.678,90", Decimal("12345678.90")),
+    ("12,345,678.90", Decimal("12345678.90")),
+    ("1234567", 1_234_567),
+    ("1234,5", Decimal("1234.5")),
+    ("0,25", Decimal("0.25")),
+    ("123.456.789.012", 123_456_789_012),
+])
+def test_accepts_well_formed_numbers(value, expected):
+    assert parse_financial_number(value) == expected

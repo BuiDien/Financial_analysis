@@ -140,6 +140,10 @@ fi
 # (BACKEND_PORT=... .venv/bin/uvicorn app.main:app --reload) during active
 # backend development.
 echo "-- Starting backend on :$BACKEND_PORT --"
+# The API has no auth; it only answers browser pages from these origins
+# (the static frontend below + its own /docs). An explicit environment
+# ALLOWED_ORIGINS wins; this also overrides a stale ALLOWED_ORIGINS=* in .env.
+export ALLOWED_ORIGINS="${ALLOWED_ORIGINS:-http://localhost:$FRONTEND_PORT,http://127.0.0.1:$FRONTEND_PORT,http://localhost:$BACKEND_PORT,http://127.0.0.1:$BACKEND_PORT}"
 (cd "$BACKEND" && ".venv/bin/uvicorn" app.main:app --host 127.0.0.1 --port "$BACKEND_PORT") &
 PIDS+=("$!")
 

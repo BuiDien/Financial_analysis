@@ -259,3 +259,67 @@ def test_incompatible_worker_is_rejected_before_pairing(client):
         assert denied["attemptsLeft"] == 0
         assert denied["requiredCapabilities"] == ["bbox"]
         assert "incompatible worker" in denied["reason"]
+
+
+def test_legacy_dispatch_send_failure_frees_worker(client, monkeypatch):
+    async def broken(*_args, **_kwargs):
+        raise ConnectionError("socket closed mid-stream")
+
+    with client.websocket_connect("/ws/ocr") as ws:
+        pair(ws)
+        monkeypatch.setattr(sync, "_stream_job", broken)
+        resp = client.post("/api/sync/dispatch/1")
+        assert resp.status_code == 500
+        assert [w["status"] for w in coordinator.workers.values()] == ["idle"]
+        assert not coordinator.jobs
+
+
+def test_finished_jobs_are_pruned_but_active_ones_kept():
+    saved = dict(coordinator.jobs)
+    coordinator.jobs.clear()
+    try:
+        coordinator.add_job({"id": "active", "status": "parsing", "sentAt": 0})
+        for i in range(sync.MAX_FINISHED_JOBS + 25):
+            coordinator.add_job({
+                "id": f"done{i}", "status": "done", "sentAt": i,
+                "completedAt": i, "rows": [{"code": "1"}] * 10,
+            })
+        finished = [j for j in coordinator.jobs.values() if j["status"] == "done"]
+        assert len(finished) == sync.MAX_FINISHED_JOBS
+        assert "active" in coordinator.jobs
+        assert "done0" not in coordinator.jobs
+        assert f"done{sync.MAX_FINISHED_JOBS + 24}" in coordinator.jobs
+    finally:
+        coordinator.jobs.clear()
+        coordinator.jobs.update(saved)
+
+
+def test_background_tasks_are_referenced_and_failures_logged(caplog):
+    import asyncio
+    import logging
+
+    async def boom():
+        raise ValueError("label review exploded")
+
+    async def main():
+        task = coordinator.spawn(boom())
+        assert task in coordinator.background_tasks
+        await asyncio.gather(task, return_exceptions=True)
+        await asyncio.sleep(0)
+        return task
+
+    with caplog.at_level(logging.ERROR, logger=sync.logger.name):
+        task = asyncio.run(main())
+    assert task not in coordinator.background_tasks
+    assert "label review exploded" in caplog.text
+
+
+def test_get_result_hides_internal_fields():
+    coordinator.jobs["job_x"] = {"id": "job_x", "status": "sent", "db_bind": object()}
+    try:
+        from fastapi.testclient import TestClient as _TC
+
+        body = _TC(app).get("/api/sync/result/job_x").json()
+        assert body == {"id": "job_x", "status": "sent"}
+    finally:
+        coordinator.jobs.pop("job_x", None)

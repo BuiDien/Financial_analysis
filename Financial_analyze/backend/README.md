@@ -9,7 +9,7 @@ From `Financial_analyze/backend`:
 
 ```bash
 python3.11 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+.venv/bin/pip install -r requirements.txt -r requirements-dev.txt
 cp .env.example .env
 .venv/bin/python -m app.db init
 .venv/bin/uvicorn app.main:app --reload --port 8000
@@ -76,7 +76,8 @@ The complete app can be started from `Financial_analyze/` with `./scripts/run.sh
 ## Implemented Areas
 
 - Market quotes/history: yfinance plus vnstock/VCI for `VN:<symbol>` tickers.
-- Deterministic VN scanner: persisted runs and ranked, explicitly unverified results.
+- VN screener rules funnel: editable good-company + oversold rules, saved strategies, background
+  vnstock refresh (prices daily, financials weekly), explicitly unverified results.
 - Filing prototype: validated PDF upload, download, tracker persistence, and OCR dispatch.
 - Distributed OCR coordinator: paired WebSocket worker and binary PDF chunks.
 - OCR Inbox: unlabeled PDF upload, durable worker attempts/retries, persistent source-backed row review,
@@ -90,7 +91,7 @@ The complete app can be started from `Financial_analyze/` with `./scripts/run.sh
 
 - `ENABLE_CLOUD_AI=false`: raw data is not sent to Anthropic by default.
 - `ALLOW_UNVERIFIED_FILING_AI=false`: filing analysis/Q&A stays blocked until reconciliation exists.
-- `ENABLE_SCHEDULER=false`: a full guest-tier VN scan takes hours and must currently be triggered explicitly.
+- `ENABLE_SCREENER_REFRESH=true`: starts the screener background refresh thread (prices after close, financials weekly); set false to disable. `SCREENER_PROVIDER` defaults to `vnstock` (VCI source; ~4 rate-limited calls per ticker for financials, 1 for prices). The thread never starts while `SCREENER_PROVIDER=fixture` (tests/dev sample data), so fake sample tickers never reach the real DB; `POST /api/screener/refresh` returns 503 then.
 - Article extraction rejects localhost, private, link-local, and other non-public targets.
 
 The API does not yet have authentication. Keep it on a trusted machine/network; do not expose port

@@ -1,14 +1,25 @@
 """Fundamentals — statements + ratios from yfinance."""
+import math
+
 import yfinance as yf
 
 
+def _num(val) -> float | None:
+    """A reported number, or None when the line was not reported (NaN/None)."""
+    try:
+        f = float(val)
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) else None
+
+
 def _to_records(df) -> list[dict]:
+    """Unreported lines come out as None, never as a fake 0."""
     if df is None or df.empty:
         return []
-    df = df.fillna(0)
     cols = [str(c.year) if hasattr(c, "year") else str(c) for c in df.columns]
     return [
-        {"label": str(idx), "values": {col: float(val) for col, val in zip(cols, row)}}
+        {"label": str(idx), "values": {col: _num(val) for col, val in zip(cols, row)}}
         for idx, row in df.iterrows()
     ]
 

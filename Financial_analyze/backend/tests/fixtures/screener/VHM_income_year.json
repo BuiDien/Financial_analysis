@@ -1,0 +1,227 @@
+[
+ {
+  "item": "Doanh thu bán hàng và cung cấp dịch vụ",
+  "item_en": "Sales",
+  "item_id": "sales",
+  "2025": 153270923000000.0,
+  "2024": 102323186000000.0,
+  "2023": 103556722000000.0,
+  "2022": 62392603000000.0
+ },
+ {
+  "item": "Các khoản giảm trừ doanh thu",
+  "item_en": "Sales deductions",
+  "item_id": "sales_deductions",
+  "2025": 0.0,
+  "2024": 0.0,
+  "2023": 0.0,
+  "2022": 0.0
+ },
+ {
+  "item": "Doanh thu thuần",
+  "item_en": "Net sales",
+  "item_id": "net_sales",
+  "2025": 153270923000000.0,
+  "2024": 102323186000000.0,
+  "2023": 103556722000000.0,
+  "2022": 62392603000000.0
+ },
+ {
+  "item": "Giá vốn hàng bán",
+  "item_en": "Cost of sales",
+  "item_id": "cost_of_sales",
+  "2025": -106928352000000.0,
+  "2024": -69355949000000.0,
+  "2023": -67850123000000.0,
+  "2022": -31696276000000.0
+ },
+ {
+  "item": "Lợi nhuận gộp",
+  "item_en": "Gross Profit",
+  "item_id": "gross_profit",
+  "2025": 46342571000000.0,
+  "2024": 32967237000000.0,
+  "2023": 35706599000000.0,
+  "2022": 30696327000000.0
+ },
+ {
+  "item": "Doanh thu hoạt động tài chính",
+  "item_en": "Financial income",
+  "item_id": "financial_income",
+  "2025": 29331638000000.0,
+  "2024": 26844293000000.0,
+  "2023": 19954131000000.0,
+  "2022": 16690167000000.0
+ },
+ {
+  "item": "Chi phí tài chính",
+  "item_en": "Financial expenses",
+  "item_id": "financial_expenses",
+  "2025": -15151171000000.0,
+  "2024": -10487365000000.0,
+  "2023": -3870289000000.0,
+  "2022": -4394119000000.0
+ },
+ {
+  "item": "Chi phí lãi vay",
+  "item_en": "Interest expenses",
+  "item_id": "interest_expenses",
+  "2025": -11213790000000.0,
+  "2024": -7589251000000.0,
+  "2023": -3052805000000.0,
+  "2022": -2075514000000.0
+ },
+ {
+  "item": "Chi phí bán hàng",
+  "item_en": "Selling expenses",
+  "item_id": "selling_expenses",
+  "2025": -1899284000000.0,
+  "2024": -3791457000000.0,
+  "2023": -3662804000000.0,
+  "2022": -2431780000000.0
+ },
+ {
+  "item": "Chi phí quản lý doanh nghiệp",
+  "item_en": "General and admin expenses",
+  "item_id": "general_and_admin_expenses",
+  "2025": -6188358000000.0,
+  "2024": -4593011000000.0,
+  "2023": -4092923000000.0,
+  "2022": -2643927000000.0
+ },
+ {
+  "item": "Lãi/(lỗ) từ hoạt động kinh doanh",
+  "item_en": "Operating profit/(loss)",
+  "item_id": "operating_profit_loss",
+  "2025": 52437535000000.0,
+  "2024": 40942908000000.0,
+  "2023": 44045413000000.0,
+  "2022": 37973052000000.0
+ },
+ {
+  "item": "Thu nhập khác",
+  "item_en": "Other incomes",
+  "item_id": "other_incomes",
+  "2025": 1371116000000.0,
+  "2024": 1163593000000.0,
+  "2023": 784716000000.0,
+  "2022": 1133744000000.0
+ },
+ {
+  "item": "Chi phí khác",
+  "item_en": "Other expenses",
+  "item_id": "other_expenses",
+  "2025": -998745000000.0,
+  "2024": -1258552000000.0,
+  "2023": -1519844000000.0,
+  "2022": -464097000000.0
+ },
+ {
+  "item": "Thu nhập khác, ròng",
+  "item_en": "Net other income/(expenses)",
+  "item_id": "net_other_income_expenses",
+  "2025": 372371000000.0,
+  "2024": -94959000000.0,
+  "2023": -735128000000.0,
+  "2022": 669647000000.0
+ },
+ {
+  "item": "Lãi/(lỗ) từ công ty liên doanh",
+  "item_en": "Income from investments in other entities",
+  "item_id": "income_from_investments_in_other_entities",
+  "2025": 0.0,
+  "2024": 0.0,
+  "2023": 0.0,
+  "2022": 0.0
+ },
+ {
+  "item": "Lãi/(lỗ) trước thuế",
+  "item_en": "Net accounting profit/(loss) before tax",
+  "item_id": "net_accounting_profit_loss_before_tax",
+  "2025": 52809906000000.0,
+  "2024": 40847949000000.0,
+  "2023": 43310285000000.0,
+  "2022": 38642699000000.0
+ },
+ {
+  "item": "Thuế thu nhập doanh nghiệp - hiện thời",
+  "item_en": "Business income tax - current",
+  "item_id": "business_income_tax_current",
+  "2025": -8585601000000.0,
+  "2024": -5667211000000.0,
+  "2023": -9232770000000.0,
+  "2022": -9820841000000.0
+ },
+ {
+  "item": "Thuế thu nhập doanh nghiệp - hoãn lại",
+  "item_en": "Business income tax - deferred",
+  "item_id": "business_income_tax_deferred",
+  "2025": -889529000000.0,
+  "2024": -108052000000.0,
+  "2023": -544639000000.0,
+  "2022": 339732000000.0
+ },
+ {
+  "item": "Chi phí thuế thu nhập doanh nghiệp",
+  "item_en": "Corporate income tax expenses",
+  "item_id": "corporate_income_tax_expenses",
+  "2025": -9475130000000.0,
+  "2024": -5775263000000.0,
+  "2023": -9777409000000.0,
+  "2022": -9481109000000.0
+ },
+ {
+  "item": "Lãi/(lỗ) thuần sau thuế",
+  "item_en": "Net profit/(loss) after tax",
+  "item_id": "net_profit_loss_after_tax",
+  "2025": 43334776000000.0,
+  "2024": 35072686000000.0,
+  "2023": 33532876000000.0,
+  "2022": 29161590000000.0
+ },
+ {
+  "item": "Lợi ích của cổ đông thiểu số",
+  "item_en": "Minority interests",
+  "item_id": "minority_interests",
+  "2025": 1439521000000.0,
+  "2024": 3271428000000.0,
+  "2023": 161470000000.0,
+  "2022": 330721000000.0
+ },
+ {
+  "item": "Lợi nhuận của Cổ đông của Công ty mẹ",
+  "item_en": "Attributable to parent company",
+  "item_id": "attributable_to_parent_company",
+  "2025": 41895255000000.0,
+  "2024": 31801258000000.0,
+  "2023": 33371406000000.0,
+  "2022": 28830869000000.0
+ },
+ {
+  "item": "Lãi cơ bản trên cổ phiếu (VND)",
+  "item_en": "EPS basic (VND)",
+  "item_id": "eps_basic_vnd",
+  "2025": 10200.0,
+  "2024": 7348.0,
+  "2023": 7664.0,
+  "2022": 6621.0
+ },
+ {
+  "item": "Lãi trên cổ phiếu pha loãng (VND)",
+  "item_en": "EPS diluted (VND)",
+  "item_id": "eps_diluted_vnd",
+  "2025": 10200.0,
+  "2024": 7348.0,
+  "2023": 7664.0,
+  "2022": 6621.0
+ },
+ {
+  "item": "Lãi/(lỗ) từ công ty liên doanh (từ năm 2015)",
+  "item_en": "Gain/(loss) from joint ventures (from 2015)",
+  "item_id": "gain_loss_from_joint_ventures_from_2015",
+  "2025": 2139000000.0,
+  "2024": 3211000000.0,
+  "2023": 10699000000.0,
+  "2022": 56384000000.0
+ }
+]

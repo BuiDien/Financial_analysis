@@ -33,19 +33,10 @@ const toQuarters = (bars) => {
 const QUOTE_POLL_MS = 60 * 1000;
 const CHART_POLL_MS = { '5m': 2 * 60 * 1000, '15m': 2 * 60 * 1000, '1H': 5 * 60 * 1000 };   // daily+ candles: live quote updates the last bar
 
-// Map an app ticker to the backend market symbol + price scale. Vietnamese
-// listings route to vnstock/VCI via "VN:" (Yahoo has no HOSE data) and VCI
-// quotes stocks in nghìn đồng → ×1000 to đồng, same rule as the portfolio
-// engine (market_symbol). VN indices are points, not prices: no scaling.
-const VN_INDEXES = new Set(['VNINDEX', 'VN30', 'HNXINDEX', 'HNX30', 'UPCOMINDEX']);
-const resolveMarket = (sym, holding) => {
-  const s = String(sym).toUpperCase();
-  const mapped = (window.HOME_LIVE_TICKER || {})[s];
-  const vnHolding = holding?.currency === 'VND' && !/[.=^-]/.test(s);
-  const market = s.startsWith('VN:') ? s : mapped || (vnHolding ? `VN:${s}` : s);
-  const vn = market.startsWith('VN:');
-  return { market, vn, scale: vn && !VN_INDEXES.has(market.slice(3)) ? 1000 : 1 };
-};
+// Map an app ticker to the backend market symbol + price scale — shared rule
+// in watchlist-store.jsx (helixMarketFor): "VN:" → vnstock/VCI, VN stock
+// prices ×1000 (nghìn đồng → đồng), VN indices unscaled.
+const resolveMarket = (sym, holding) => helixMarketFor(sym, holding?.currency);
 
 // Bars are plotted in the exchange's own clock: the wall-clock part of the
 // date string ("2026-11-05 09:15:00" for HOSE, "2026-11-03 09:30:00-05:00"
@@ -87,16 +78,6 @@ const usePoll = (fn, ms, deps) => {
     document.addEventListener('visibilitychange', onVis);
     return () => { cancelled = true; if (iv) clearInterval(iv); document.removeEventListener('visibilitychange', onVis); };
   }, deps);
-};
-
-const detailBig = (n) => {
-  if (n == null || !Number.isFinite(n)) return '—';
-  const a = Math.abs(n);
-  if (a >= 1e12) return (n / 1e12).toFixed(2) + 'T';
-  if (a >= 1e9) return (n / 1e9).toFixed(2) + 'B';
-  if (a >= 1e6) return (n / 1e6).toFixed(2) + 'M';
-  if (a >= 1e3) return (n / 1e3).toFixed(1) + 'K';
-  return String(Math.round(n));
 };
 
 // ── Technical indicators from real closes ───────────────────────────────
@@ -162,6 +143,105 @@ const maSignal = (ma, last) => {
   return `${d >= 0 ? 'Above' : 'Below'} · ${d >= 0 ? '+' : ''}${d.toFixed(1)}%`;
 };
 
+// Dated notes log per ticker (backend: /api/notes). Symbol is stored without any "VN:" prefix.
+const NotesCard = ({ symbol }) => {
+  const sym = String(symbol).toUpperCase().replace(/^VN:/, '');
+  const live = !!window.HelixAPI?.live;
+  const [notes, setNotes] = React.useState(null);   // null = loading
+  const [failed, setFailed] = React.useState(false);
+  const [draft, setDraft] = React.useState('');
+  const [editId, setEditId] = React.useState(null);
+  const [editText, setEditText] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState('');
+  const [reload, setReload] = React.useState(0);
+  const alive = React.useRef(true);   // card is keyed by symbol, so unmount == symbol switch
+  React.useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+
+  React.useEffect(() => {
+    setNotes(null); setFailed(false);
+    if (!live) return undefined;
+    let cancelled = false;
+    window.HelixAPI.notesList(sym).then(r => { if (!cancelled) setNotes(r); }).catch(() => { if (!cancelled) setFailed(true); });
+    return () => { cancelled = true; };
+  }, [sym, live, reload]);
+
+  const offline = !live;
+  const run = async (fn) => {
+    setBusy(true); setErr('');
+    try { await fn(); } catch (e) { if (alive.current) setErr(e.message || 'Request failed'); }
+    if (alive.current) setBusy(false);
+  };
+  const add = () => run(async () => {
+    const n = await window.HelixAPI.notesAdd(sym, draft);
+    if (!alive.current) return;
+    setNotes(list => [n, ...(list || [])]); setDraft('');
+  });
+  const save = (id) => run(async () => {
+    const n = await window.HelixAPI.notesEdit(id, editText);
+    if (!alive.current) return;
+    setNotes(list => (list || []).map(x => x.id === id ? n : x)); setEditId(null);
+  });
+  const del = async (n) => {
+    if (!await window.askConfirm({ title: 'Delete note', message: 'Delete this note? This can\'t be undone.', confirmText: 'Delete', danger: true })) return;
+    run(async () => { await window.HelixAPI.notesDelete(n.id); if (!alive.current) return; setNotes(list => (list || []).filter(x => x.id !== n.id)); });
+  };
+  const when = (iso) => new Date(iso).toLocaleString();
+  const link = { background: 'none', border: 0, padding: 0, cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11 };
+
+  return (
+    <div className="card">
+      <div className="card-header"><h3 className="card-title">Notes</h3></div>
+      <div className="card-body" style={{ padding: 16 }}>
+        {offline ? (
+          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Notes need the backend</div>
+        ) : failed ? (
+          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            Could not load notes. <button className="btn" onClick={() => setReload(k => k + 1)}>Retry</button>
+          </div>
+        ) : (
+          <>
+            <textarea value={draft} onChange={e => setDraft(e.target.value)} rows={3} disabled={busy}
+              placeholder={`Why is ${sym} a good company?`}
+              style={{ width: '100%', boxSizing: 'border-box', resize: 'vertical', font: 'inherit', fontSize: 12, padding: 8, background: 'var(--bg)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 6 }} />
+            <div className="row" style={{ marginTop: 8, gap: 8, alignItems: 'center' }}>
+              <button className="btn btn-primary" onClick={add} disabled={busy || !draft.trim()}>Add note</button>
+              {err && <span style={{ fontSize: 11, color: 'var(--red, #dc2626)' }}>{err}</span>}
+            </div>
+            <div style={{ marginTop: 12 }}>
+              {notes === null && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Loading…</div>}
+              {notes && notes.length === 0 && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>No notes yet.</div>}
+              {(notes || []).map(n => (
+                <div key={n.id} style={{ borderTop: '1px solid var(--border)', padding: '10px 0' }}>
+                  <div className="row" style={{ gap: 8, fontSize: 11, color: 'var(--text-subtle)', alignItems: 'center' }}>
+                    <span>{when(n.created_at)}</span>
+                    {n.updated_at && <span title={`Edited ${when(n.updated_at)}`}>edited</span>}
+                    <span style={{ flex: 1 }} />
+                    {editId !== n.id && <button style={link} onClick={() => { setEditId(n.id); setEditText(n.body); }} disabled={busy}>Edit</button>}
+                    <button style={link} onClick={() => del(n)} disabled={busy}>Delete</button>
+                  </div>
+                  {editId === n.id ? (
+                    <div style={{ marginTop: 6 }}>
+                      <textarea value={editText} onChange={e => setEditText(e.target.value)} rows={3} disabled={busy}
+                        style={{ width: '100%', boxSizing: 'border-box', resize: 'vertical', font: 'inherit', fontSize: 12, padding: 8, background: 'var(--bg)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 6 }} />
+                      <div className="row" style={{ gap: 8, marginTop: 6 }}>
+                        <button className="btn btn-primary" onClick={() => save(n.id)} disabled={busy || !editText.trim()}>Save</button>
+                        <button className="btn" onClick={() => setEditId(null)} disabled={busy}>Cancel</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ marginTop: 4, fontSize: 12, whiteSpace: 'pre-wrap' }}>{n.body}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const PageDetail = ({ activeAsset = 'NVDA', data, setActiveAsset, setPage }) => {
   const [range, setRange] = React.useState('1D');   // candle timeframe
   const [chartType, setChartType] = React.useState('candle'); // candle | area
@@ -170,9 +250,27 @@ const PageDetail = ({ activeAsset = 'NVDA', data, setActiveAsset, setPage }) => 
   const live = !!window.HelixAPI?.live;
 
   const holdings = data.portfolio?.holdings || [];
-  const nameOf = (sym) => data.watchlist.find(x => x.sym === sym)?.name || sym;
-  const holding = holdings.find(h => h.sym === activeAsset);
-  const inWatchlist = store.isInAny(activeAsset);
+  // The screener opens VN tickers as "VN:HDB" so a bare symbol that is also a US
+  // ticker (HDB) is not routed to Yahoo; holdings, names and tags use the bare symbol.
+  const bareAsset = String(activeAsset).toUpperCase().replace(/^VN:/, '');
+  const sameSym = (sym) => sym === activeAsset || sym === bareAsset;
+  const nameOf = (sym) => {
+    const bare = String(sym).toUpperCase().replace(/^VN:/, '');
+    return (data.watchlist || []).find(x => x.sym === sym || x.sym === bare)?.name || (window.SYMBOL_CATALOG || {})[bare]?.name || sym;
+  };
+  const holding = holdings.find(h => sameSym(h.sym));
+  // Vietnamese tickers without a fixed route are stored as "VN:XXX" so the
+  // watchlist quotes them from VCI, not a same-named US listing.
+  const vnAsset = String(activeAsset).toUpperCase().startsWith('VN:') || holding?.currency === 'VND';
+  const watchSym = vnAsset && !(window.HOME_LIVE_TICKER || {})[bareAsset] ? `VN:${bareAsset}` : bareAsset;
+  const inWatchlist = store.isInAny(bareAsset) || store.isInAny(`VN:${bareAsset}`);
+  const toggleWatch = () => {
+    const active = store.getActive();
+    const present = [bareAsset, `VN:${bareAsset}`].filter(x => active.symbols.includes(x));
+    if (present.length) present.forEach(x => store.removeSymbol(active.id, x));
+    else store.addSymbol(active.id, watchSym);
+    return !present.length;
+  };
   const activeListName = store.getActive()?.name || 'watchlist';
 
   const { market, vn, scale } = resolveMarket(activeAsset, holding);
@@ -248,11 +346,7 @@ const PageDetail = ({ activeAsset = 'NVDA', data, setActiveAsset, setPage }) => 
   // Prices are shown in the listing's own currency, exactly as the exchange
   // quotes them — no FX conversion. VND → "53,600 ₫"; others → "186.64 USD".
   const nativeCcy = (quote?.currency || holding?.currency || (vn ? 'VND' : 'USD')).toUpperCase();
-  const fmtMoney = (n, ccy) => {
-    if (n == null || !Number.isFinite(n)) return '—';
-    return ccy === 'VND' ? `${fmtNum(n, 0)} ₫` : `${fmtNum(n)} ${ccy}`;
-  };
-  const money = (n) => fmtMoney(n, nativeCcy);
+  const money = (n) => fmtNativePrice(n, nativeCcy);
 
   // How far back each scroll-back request reaches, per bar size.
   const OLDER_CHUNK = { '5m': '5d', '15m': '1mo', '1h': '3mo', '1d': '1y', '1wk': '5y', '1mo': '5y' };
@@ -293,7 +387,8 @@ const PageDetail = ({ activeAsset = 'NVDA', data, setActiveAsset, setPage }) => 
   const yearLow = quote?.year_low ?? (daily?.length ? Math.min(...daily.map(b => b.low)) : null);
   const yearHigh = quote?.year_high ?? (daily?.length ? Math.max(...daily.map(b => b.high)) : null);
 
-  const price = quote?.price ?? holding?.price ?? null;
+  // Holding price is a real (ledger-valued) fallback only when live — never the demo snapshot.
+  const price = quote?.price ?? (live && !data.portfolio?.demo ? holding?.price : null) ?? null;
   const chg = quote?.change_pct ?? null;
   const chgAbs = quote?.change ?? null;
   const lastVolume = daily && daily.length ? daily[daily.length - 1].volume : null;
@@ -308,7 +403,21 @@ const PageDetail = ({ activeAsset = 'NVDA', data, setActiveAsset, setPage }) => 
       : quoteErr ? `No quote for ${market}` : 'Loading quote…';
 
   const macd = tech.macd;
-  const newsForAsset = (data.news || []).filter(n => (n.tags || []).includes(activeAsset)).slice(0, 6);
+  // Related news: the feed's ticker tags first, then a whole-word title match
+  // on the symbol (3+ letters, to avoid noise) or the company name.
+  const assetName = nameOf(activeAsset);
+  const titleRe = (() => {
+    const terms = [];
+    if (bareAsset.length >= 3) terms.push(bareAsset);
+    if (assetName && assetName !== activeAsset && assetName.length >= 4) terms.push(assetName.split(' ')[0]);
+    const esc = terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    return esc.length ? new RegExp(`(^|[^\\p{L}\\p{N}])(${esc.join('|')})(?=$|[^\\p{L}\\p{N}])`, 'iu') : null;
+  })();
+  const tickerHit = (n) => (n.tickers || n.tags || []).some(t => sameSym(String(t).toUpperCase().replace(/^VN:/, '')));
+  const newsForAsset = [
+    ...(data.news || []).filter(tickerHit),
+    ...(data.news || []).filter(n => !tickerHit(n) && titleRe && titleRe.test(n.title || '')),
+  ].slice(0, 6);
 
   return (
     <div className="page">
@@ -343,13 +452,15 @@ const PageDetail = ({ activeAsset = 'NVDA', data, setActiveAsset, setPage }) => 
                     borderRadius: 8, boxShadow: '0 12px 32px rgba(0,0,0,0.16)', padding: 6,
                   }}>
                     <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-subtle)', padding: '8px 10px 4px' }}>
-                      Your portfolio · {holdings.length} holdings
+                      {data.portfolio?.demo ? `Sample portfolio (offline demo) · ${holdings.length} holdings` : `Your portfolio · ${holdings.length} holdings`}
                     </div>
                     {holdings.length === 0 && (
-                      <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '8px 10px' }}>No holdings yet.</div>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '8px 10px' }}>
+                        {data.portfolio?.status === 'error' ? 'Portfolio unavailable right now.' : data.portfolio?.status === 'loading' ? 'Loading portfolio…' : 'No holdings yet.'}
+                      </div>
                     )}
                     {holdings.map(h => {
-                      const active = h.sym === activeAsset;
+                      const active = sameSym(h.sym);
                       return (
                         <button key={h.sym}
                           onClick={() => { setActiveAsset && setActiveAsset(h.sym); setSwitcherOpen(false); }}
@@ -363,7 +474,7 @@ const PageDetail = ({ activeAsset = 'NVDA', data, setActiveAsset, setPage }) => 
                           onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent'; }}>
                           <span className="ticker" style={{ fontSize: 13, color: active ? 'var(--accent)' : 'var(--text)' }}>{h.sym}</span>
                           <span style={{ fontSize: 12, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{nameOf(h.sym)}</span>
-                          <span className="num" style={{ fontSize: 12, fontWeight: 600 }}>{fmtMoney(h.price, (h.currency || 'USD').toUpperCase())}</span>
+                          <span className="num" style={{ fontSize: 12, fontWeight: 600 }}>{fmtNativePrice(h.price, (h.currency || 'USD').toUpperCase())}</span>
                         </button>
                       );
                     })}
@@ -386,13 +497,13 @@ const PageDetail = ({ activeAsset = 'NVDA', data, setActiveAsset, setPage }) => 
           </div>
         </div>
         <div className="row">
-          <button className="btn" onClick={() => { store.toggleInActive(activeAsset); window.toast(inWatchlist ? `Removed ${activeAsset} from ${activeListName}` : `Added ${activeAsset} to ${activeListName}`, { type: inWatchlist ? 'info' : 'success' }); }}
+          <button className="btn" onClick={() => { const added = toggleWatch(); window.toast(added ? `Added ${bareAsset} to ${activeListName}` : `Removed ${bareAsset} from ${activeListName}`, { type: added ? 'success' : 'info' }); }}
             title={inWatchlist ? 'Remove from active watchlist' : `Add to ${activeListName}`}
             style={inWatchlist ? { background: 'var(--accent-bg)', borderColor: 'var(--accent-soft)', color: 'var(--accent)' } : undefined}>
             <Icon name={inWatchlist ? 'starFill' : 'star'} size={12} /> {inWatchlist ? 'In watchlist' : 'Watchlist'}
           </button>
-          <button className="btn" onClick={() => { window.__statementsTicker = activeAsset; setPage && setPage('statements'); }}><Icon name="portfolio" size={12} /> Financials</button>
-          <button className="btn" onClick={() => { window.__alertTicker = activeAsset; setPage && setPage('alerts'); }}><Icon name="alerts" size={12} /> Alert</button>
+          <button className="btn" onClick={() => { window.__statementsTicker = bareAsset; setPage && setPage('statements'); }}><Icon name="portfolio" size={12} /> Financials</button>
+          <button className="btn" onClick={() => { window.__alertTicker = watchSym; setPage && setPage('alerts'); }}><Icon name="alerts" size={12} /> Alert</button>
         </div>
       </div>
 
@@ -431,8 +542,8 @@ const PageDetail = ({ activeAsset = 'NVDA', data, setActiveAsset, setPage }) => 
         <StatBlock label="Open" value={money(quote?.open)} />
         <StatBlock label="Day Range" value={quote?.day_low != null && quote?.day_high != null ? `${money(quote.day_low)} – ${money(quote.day_high)}` : '—'} />
         <StatBlock label="52W Range" value={yearLow != null && yearHigh != null ? `${money(yearLow)} – ${money(yearHigh)}` : '—'} />
-        <StatBlock label="Volume" value={detailBig(lastVolume)} />
-        <StatBlock label="Mkt Cap" value={quote?.market_cap == null ? '—' : `${detailBig(quote.market_cap)} ${nativeCcy === 'VND' ? '₫' : nativeCcy}`} />
+        <StatBlock label="Volume" value={fmtBig(lastVolume)} />
+        <StatBlock label="Mkt Cap" value={quote?.market_cap == null ? '—' : `${fmtBig(quote.market_cap)} ${nativeCcy === 'VND' ? '₫' : nativeCcy}`} />
         <StatBlock label="P/E" value={num(v.pe_trailing, 1)} />
       </div>
 
@@ -489,6 +600,8 @@ const PageDetail = ({ activeAsset = 'NVDA', data, setActiveAsset, setPage }) => 
             )}
           </div>
         </div>
+
+        <NotesCard key={String(activeAsset).toUpperCase().replace(/^VN:/, '')} symbol={activeAsset} />
       </div>
 
       {/* News */}
@@ -501,11 +614,11 @@ const PageDetail = ({ activeAsset = 'NVDA', data, setActiveAsset, setPage }) => 
             <div style={{ padding: '16px 0', fontSize: 12, color: 'var(--text-muted)' }}>No recent news tagged {activeAsset}.</div>
           )}
           {newsForAsset.map((n, i) => (
-            <div key={i} className="news-row" style={{ gridTemplateColumns: '50px 1fr' }}>
+            <div key={i} className="news-row" style={{ gridTemplateColumns: '96px 1fr' }}>
               <span className="news-time">{n.time}</span>
               <div>
                 <div className="news-title" style={{ fontSize: 13 }}>
-                  {n.url ? <a href={n.url} target="_blank" rel="noreferrer" style={{ color: 'inherit' }}>{n.title}</a> : n.title}
+                  {safeHttpUrl(n.url) ? <a href={safeHttpUrl(n.url)} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit' }}>{n.title}</a> : n.title}
                 </div>
                 <div className="news-meta">
                   <span style={{ color: 'var(--text-subtle)' }}>{n.src}</span>

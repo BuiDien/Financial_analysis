@@ -66,6 +66,13 @@ class TransactionIn(BaseModel):
     def normalize_currency(cls, value):
         return str(value).strip().upper()
 
+    @field_validator("effective_at")
+    @classmethod
+    def normalize_effective_at(cls, value: datetime):
+        # Stored as UTC; the ledger's day is derived in Asia/Ho_Chi_Minh
+        # (engine.local_day). A naive timestamp is taken to be UTC.
+        return value.astimezone(timezone.utc) if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
     @model_validator(mode="after")
     def validate_shape(self):
         if self.type in {"BUY", "SELL"} and (
@@ -105,6 +112,10 @@ class ImportMapping(BaseModel):
 
 
 IMPORT_REQUIRED = {"type", "effective_at", "currency"}
+MAX_IMPORT_BYTES = 20 * 1024 * 1024
+STALE_IMPORT_AGE = timedelta(hours=24)
+# Only an import that has not touched the ledger may be (re)validated.
+REVALIDATABLE = {"preview", "validated", "invalid"}
 IMPORT_FIELDS = {
     "type",
     "effective_at",
@@ -213,7 +224,7 @@ def _run_import_job(factory, import_id: str) -> None:
             job.result = json.dumps({"imported": len(valid), "phase": "ledger"})
             # Transactions and the durable phase marker commit atomically.
             db.commit()
-        engine.rebuild(db, p.id)
+        engine.rebuild(db, p.id)  # takes the per-portfolio rebuild lock
         job = db.get(PortfolioJob, import_id)
         job.status, job.progress = "completed", 100
         job.result = json.dumps({"imported": len(valid)})
@@ -417,15 +428,15 @@ def list_transactions(
         query = query.filter(PortfolioTransaction.ticker == ticker.upper())
     if status:
         query = query.filter(PortfolioTransaction.status == status.lower())
+    def day_start_utc(day: date) -> datetime:
+        local = datetime.combine(day, datetime.min.time(), tzinfo=engine.VN_TZ)
+        return local.astimezone(timezone.utc).replace(tzinfo=None)
+
     if date_from:
-        query = query.filter(
-            PortfolioTransaction.effective_at
-            >= datetime.combine(date_from, datetime.min.time())
-        )
+        query = query.filter(PortfolioTransaction.effective_at >= day_start_utc(date_from))
     if date_to:
         query = query.filter(
-            PortfolioTransaction.effective_at
-            < datetime.combine(date_to + timedelta(days=1), datetime.min.time())
+            PortfolioTransaction.effective_at < day_start_utc(date_to + timedelta(days=1))
         )
     if search:
         term = f"%{search.strip()}%"
@@ -608,9 +619,13 @@ def job_status(job_id: str, db: Session = Depends(get_db)):
 @router.post("/portfolio/imports/preview")
 async def import_preview(file: UploadFile = File(...), db: Session = Depends(get_db)):
     p = _get_or_create(db)
-    raw = await file.read()
-    if len(raw) > 20 * 1024 * 1024:
-        raise HTTPException(413, "CSV exceeds 20 MB")
+    chunks, size = [], 0
+    while chunk := await file.read(1024 * 1024):
+        size += len(chunk)
+        if size > MAX_IMPORT_BYTES:
+            raise HTTPException(413, f"CSV exceeds {MAX_IMPORT_BYTES // (1024 * 1024)} MB")
+        chunks.append(chunk)
+    raw = b"".join(chunks)
     try:
         text = raw.decode("utf-8-sig")
         reader = csv.DictReader(io.StringIO(text))
@@ -620,6 +635,14 @@ async def import_preview(file: UploadFile = File(...), db: Session = Depends(get
     if not reader.fieldnames:
         raise HTTPException(422, "CSV has no header row")
     import_id = "imp_" + __import__("secrets").token_hex(10)
+    # Abandoned previews hold the whole CSV in their payload: drop them.
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - STALE_IMPORT_AGE
+    db.query(PortfolioJob).filter(
+        PortfolioJob.portfolio_id == p.id,
+        PortfolioJob.type == "import",
+        PortfolioJob.status.in_(REVALIDATABLE),
+        PortfolioJob.created_at < cutoff,
+    ).delete(synchronize_session=False)
     db.add(
         PortfolioJob(
             id=import_id,
@@ -682,6 +705,10 @@ def validate_import(
     )
     if not job:
         raise HTTPException(404, "Import preview expired")
+    if job.status not in REVALIDATABLE:
+        raise HTTPException(
+            409, f"Import is {job.status}; upload the CSV again to start a new import"
+        )
     entry = json.loads(job.payload or "{}")
     valid, errors = _mapped_transactions(entry, payload.mapping)
     entry["mapping"] = payload.mapping

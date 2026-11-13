@@ -2,34 +2,32 @@
 
 const ALERTS_KEY = 'helix_alerts_v1';
 
-const DEFAULT_ALERTS = [
-  { id: 'a1', ticker: 'NVDA', type: 'price_above', value: 150, note: 'Take-profit trim level', active: true, triggered: false, created: '2026-06-10' },
-  { id: 'a2', ticker: 'TSLA', type: 'price_below', value: 320, note: 'Add on weakness', active: true, triggered: true, created: '2026-06-08' },
-  { id: 'a3', ticker: 'AAPL', type: 'pct_move', value: 5, note: 'Big move either way', active: true, triggered: false, created: '2026-06-12' },
-  { id: 'a4', ticker: 'SPY', type: 'rsi_above', value: 70, note: 'Market overbought watch', active: false, triggered: false, created: '2026-05-30' },
-];
-
+// monitored: evaluated by the app's alert monitor against live quotes.
+// RSI / volume alerts need indicator data the monitor doesn't fetch yet, so
+// they can't be created; existing ones are shown as "Not monitored".
+// unit 'price' = the listing's own currency (Vietnamese stocks in đồng).
 const ALERT_TYPES = [
-  { id: 'price_above', label: 'Price rises above', unit: '$', icon: 'arrowUp' },
-  { id: 'price_below', label: 'Price falls below', unit: '$', icon: 'arrowDown' },
-  { id: 'pct_move', label: 'Daily move exceeds', unit: '%', icon: 'trending' },
-  { id: 'rsi_above', label: 'RSI rises above', unit: '', icon: 'chart' },
-  { id: 'rsi_below', label: 'RSI falls below', unit: '', icon: 'chart' },
-  { id: 'volume_spike', label: 'Volume spikes above avg', unit: '×', icon: 'trending' },
+  { id: 'price_above', label: 'Price rises above', unit: 'price', icon: 'arrowUp', monitored: true },
+  { id: 'price_below', label: 'Price falls below', unit: 'price', icon: 'arrowDown', monitored: true },
+  { id: 'pct_move', label: 'Daily move exceeds', unit: '%', icon: 'trending', monitored: true },
+  { id: 'rsi_above', label: 'RSI rises above', unit: '', icon: 'chart', monitored: false },
+  { id: 'rsi_below', label: 'RSI falls below', unit: '', icon: 'chart', monitored: false },
+  { id: 'volume_spike', label: 'Volume spikes above avg', unit: '×', icon: 'trending', monitored: false },
 ];
 
+// New users start with no alerts (no seeded samples); saved ones are kept.
 const loadAlerts = () => {
   try {
-    const s = localStorage.getItem(ALERTS_KEY);
-    if (s) return JSON.parse(s);
+    const s = JSON.parse(localStorage.getItem(ALERTS_KEY) || 'null');
+    if (Array.isArray(s)) return s;
   } catch {}
-  return DEFAULT_ALERTS;
+  return [];
 };
 
 const describeAlert = (a) => {
   const t = ALERT_TYPES.find(x => x.id === a.type);
   if (!t) return a.type;
-  const val = t.unit === '$' ? `$${a.value}` : t.unit === '%' ? `${a.value}%` : t.unit === '×' ? `${a.value}×` : a.value;
+  const val = t.unit === 'price' ? (a.currency ? fmtNativePrice(a.value, a.currency) : fmtNum(a.value, a.value % 1 ? 2 : 0)) : t.unit === '%' ? `${a.value}%` : t.unit === '×' ? `${a.value}×` : a.value;
   return `${t.label} ${val}`;
 };
 
@@ -48,7 +46,10 @@ const PageAlerts = ({ setActiveAsset, setPage }) => {
     }
   }, []);
 
-  React.useEffect(() => { localStorage.setItem(ALERTS_KEY, JSON.stringify(alerts)); }, [alerts]);
+  React.useEffect(() => {
+    localStorage.setItem(ALERTS_KEY, JSON.stringify(alerts));
+    window.dispatchEvent(new Event('helix-alerts-saved'));   // lets the monitor check new alerts now
+  }, [alerts]);
 
   // Refresh when the app's alert monitor fires a trigger
   React.useEffect(() => {
@@ -57,7 +58,7 @@ const PageAlerts = ({ setActiveAsset, setPage }) => {
     return () => window.removeEventListener('helix-alerts-updated', reload);
   }, []);
 
-  const addAlert = (a) => { setAlerts(prev => [{ ...a, id: 'a_' + Date.now(), created: new Date().toISOString().slice(0, 10), triggered: false }, ...prev]); setShowForm(false); window.toast && window.toast(`Alert created for ${a.sym || 'asset'}`, { type: 'success' }); };
+  const addAlert = (a) => { setAlerts(prev => [{ ...a, id: 'a_' + Date.now(), created: new Date().toISOString().slice(0, 10), triggered: false }, ...prev]); setShowForm(false); window.toast && window.toast(`Alert created for ${a.ticker || 'asset'}`, { type: 'success' }); };
   const removeAlert = (id) => { setAlerts(prev => prev.filter(a => a.id !== id)); window.toast && window.toast('Alert removed', { type: 'info' }); };
   const toggleAlert = (id) => setAlerts(prev => prev.map(a => a.id === id ? { ...a, active: !a.active } : a));
 
@@ -76,7 +77,7 @@ const PageAlerts = ({ setActiveAsset, setPage }) => {
       <div className="page-header">
         <div>
           <h1 className="page-title">Alerts.</h1>
-          <p className="page-sub">Get notified when price, technical, or volume conditions are met</p>
+          <p className="page-sub">In-app notice when a price or daily-move condition is met · checked every 5 minutes while the backend is live</p>
         </div>
         <button className="btn btn-primary" onClick={() => setShowForm(true)}>
           <Icon name="plus" size={12} /> New alert
@@ -88,7 +89,7 @@ const PageAlerts = ({ setActiveAsset, setPage }) => {
         <div className="stat">
           <div className="stat-label">Active alerts</div>
           <div className="stat-value">{counts.active}</div>
-          <div className="stat-delta" style={{ color: 'var(--text-muted)' }}>watching the market</div>
+          <div className="stat-delta" style={{ color: 'var(--text-muted)' }}>{window.HelixAPI?.live ? 'watching live quotes' : 'paused · backend offline'}</div>
         </div>
         <div className="stat">
           <div className="stat-label">Triggered</div>
@@ -161,7 +162,9 @@ const PageAlerts = ({ setActiveAsset, setPage }) => {
                       <td className="num" style={{ color: 'var(--text-subtle)', fontSize: 12 }}>{a.created}</td>
                       <td>
                         {a.triggered ? (
-                          <span className="pill" style={{ background: 'var(--accent-bg)', color: 'var(--accent)' }}>● Triggered</span>
+                          <span className="pill" style={{ background: 'var(--accent-bg)', color: 'var(--accent)' }} title={a.triggeredAt ? `Triggered ${new Date(a.triggeredAt).toLocaleString()}${a.triggeredPrice != null ? ` at ${fmtNativePrice(a.triggeredPrice, a.currency || 'USD')}` : ''}` : undefined}>● Triggered</span>
+                        ) : !t?.monitored ? (
+                          <span className="pill pill-neutral" title="RSI and volume alerts are not evaluated yet">Not monitored</span>
                         ) : a.active ? (
                           <span className="pill pill-pos">Active</span>
                         ) : (
@@ -195,9 +198,10 @@ const PageAlerts = ({ setActiveAsset, setPage }) => {
 const AlertForm = ({ onClose, onCreate, defaultSym = '' }) => {
   const [ticker, setTicker] = React.useState(defaultSym);
   const [type, setType] = React.useState('price_above');
+  const isVn = /^VN:/.test(ticker) || (window.HOME_LIVE_TICKER || {})[ticker.trim().toUpperCase()]?.startsWith('VN:');
   const [value, setValue] = React.useState('');
   const [note, setNote] = React.useState('');
-  const [channels, setChannels] = React.useState({ inApp: true, email: false });
+  const [channels, setChannels] = React.useState({ inApp: true });
   const [error, setError] = React.useState('');
 
   const selectedType = ALERT_TYPES.find(t => t.id === type);
@@ -205,7 +209,8 @@ const AlertForm = ({ onClose, onCreate, defaultSym = '' }) => {
   const submit = () => {
     if (!ticker.trim()) { setError('Enter a ticker symbol'); return; }
     if (value === '' || isNaN(parseFloat(value))) { setError('Enter a numeric value'); return; }
-    onCreate({ ticker: ticker.toUpperCase(), type, value: parseFloat(value), note: note.trim(), active: true, channels });
+    if (!selectedType?.monitored) { setError('This condition is not monitored yet'); return; }
+    onCreate({ ticker: ticker.trim().toUpperCase(), type, value: parseFloat(value), note: note.trim(), active: true, channels, ...(selectedType.unit === 'price' && isVn ? { currency: 'VND' } : {}) });
   };
 
   const inputStyle = {
@@ -229,12 +234,12 @@ const AlertForm = ({ onClose, onCreate, defaultSym = '' }) => {
           <div>
             <label style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 6 }}>Condition</label>
             <select style={inputStyle} value={type} onChange={e => setType(e.target.value)}>
-              {ALERT_TYPES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+              {ALERT_TYPES.map(t => <option key={t.id} value={t.id} disabled={!t.monitored}>{t.label}{t.monitored ? '' : ' — not monitored yet'}</option>)}
             </select>
           </div>
           <div>
             <label style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 6 }}>
-              Value {selectedType?.unit && <span style={{ color: 'var(--text-subtle)' }}>({selectedType.unit === '$' ? 'dollars' : selectedType.unit === '%' ? 'percent' : selectedType.unit === '×' ? 'multiple' : 'level'})</span>}
+              Value {selectedType?.unit && <span style={{ color: 'var(--text-subtle)' }}>({selectedType.unit === 'price' ? (isVn ? 'price in đồng, e.g. 61500' : "price in the listing's currency") : selectedType.unit === '%' ? 'percent' : selectedType.unit === '×' ? 'multiple' : 'level'})</span>}
             </label>
             <input style={inputStyle} type="number" value={value} onChange={e => setValue(e.target.value)} placeholder="0" />
           </div>
@@ -245,7 +250,7 @@ const AlertForm = ({ onClose, onCreate, defaultSym = '' }) => {
           <div>
             <label style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 6 }}>Notify via</label>
             <div style={{ display: 'flex', gap: 8 }}>
-              {[{ k: 'inApp', label: 'In-app' }, { k: 'email', label: 'Email' }].map(c => (
+              {[{ k: 'inApp', label: 'In-app' }].map(c => (
                 <button key={c.k} onClick={() => setChannels(s => ({ ...s, [c.k]: !s[c.k] }))}
                   style={{
                     flex: 1, padding: '8px', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: 'inherit',

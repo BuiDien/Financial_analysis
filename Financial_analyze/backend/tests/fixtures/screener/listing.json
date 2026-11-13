@@ -1,0 +1,532 @@
+[
+ {
+  "symbol": "YTC",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3564.0,
+  "organ_short_name": "XNK Y tế TP.HCM",
+  "organ_name": "Công ty Cổ phần Xuất nhập khẩu Y tế Thành phố Hồ Chí Minh",
+  "product_grp_id": "UPX",
+  "icb_code2": "4500"
+ },
+ {
+  "symbol": "YEG",
+  "exchange": "HSX",
+  "type": "STOCK",
+  "sid": 3563.0,
+  "organ_short_name": "Tập đoàn Yeah1",
+  "organ_name": "Công ty Cổ phần Tập đoàn Yeah1",
+  "product_grp_id": "STO",
+  "icb_code2": "5500"
+ },
+ {
+  "symbol": "YBM",
+  "exchange": "HSX",
+  "type": "STOCK",
+  "sid": 3562.0,
+  "organ_short_name": "Khoáng sản CN Yên Bái",
+  "organ_name": "Công ty Cổ phần Khoáng sản Công nghiệp Yên Bái",
+  "product_grp_id": "STO",
+  "icb_code2": "1700"
+ },
+ {
+  "symbol": "YBC",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3561.0,
+  "organ_short_name": "Xi măng và Khoáng sản Yên Bái",
+  "organ_name": "Công ty Cổ phần Xi măng và Khoáng sản Yên Bái",
+  "product_grp_id": "UPX",
+  "icb_code2": "2300"
+ },
+ {
+  "symbol": "XPH",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3560.0,
+  "organ_short_name": "Xà phòng Hà Nội",
+  "organ_name": "Công ty Cổ phần Xà phòng Hà Nội",
+  "product_grp_id": "UPX",
+  "icb_code2": "3700"
+ },
+ {
+  "symbol": "XMP",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3559.0,
+  "organ_short_name": "Thủy điện Xuân Minh",
+  "organ_name": "Công ty Cổ phần Thủy điện Xuân Minh",
+  "product_grp_id": "UPX",
+  "icb_code2": "7500"
+ },
+ {
+  "symbol": "XMD",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3558.0,
+  "organ_short_name": "Xuân Mai - Đạo Tú",
+  "organ_name": "Công ty Cổ phần Xuân Mai - Đạo Tú",
+  "product_grp_id": "UPX",
+  "icb_code2": "2300"
+ },
+ {
+  "symbol": "XMC",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3557.0,
+  "organ_short_name": "Bê tông Xuân Mai",
+  "organ_name": "Công ty cổ phần Đầu tư và Xây dựng Xuân Mai",
+  "product_grp_id": "UPX",
+  "icb_code2": "2300"
+ },
+ {
+  "symbol": "XLV",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3556.0,
+  "organ_short_name": "XL và DV Sông Đà",
+  "organ_name": "Công ty Cổ phần Xây lắp và Dịch vụ Sông Đà",
+  "product_grp_id": "UPX",
+  "icb_code2": "2300"
+ },
+ {
+  "symbol": "XHC",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3555.0,
+  "organ_short_name": "Nội thất Xuân Hòa",
+  "organ_name": "Công ty Cổ phần Xuân Hòa Việt Nam",
+  "product_grp_id": "UPX",
+  "icb_code2": "3700"
+ },
+ {
+  "symbol": "XDH",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3554.0,
+  "organ_short_name": "Đầu tư XD Dân dụng Hà Nội",
+  "organ_name": "Công ty Cổ phần Đầu tư Xây dựng Dân dụng Hà Nội",
+  "product_grp_id": "UPX",
+  "icb_code2": "8600"
+ },
+ {
+  "symbol": "XDC",
+  "exchange": "DELISTED",
+  "type": "STOCK",
+  "sid": 3553.0,
+  "organ_short_name": "Xây dựng Công trình Tân Cảng",
+  "organ_name": "Công ty Cổ phần Xây dựng Công trình Tân Cảng",
+  "product_grp_id": null,
+  "icb_code2": "2300"
+ },
+ {
+  "symbol": "X77",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3552.0,
+  "organ_short_name": "Thành An 77",
+  "organ_name": "Công ty Cổ phần Thành An 77",
+  "product_grp_id": "UPX",
+  "icb_code2": "2300"
+ },
+ {
+  "symbol": "X26",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3551.0,
+  "organ_short_name": "Công ty 26",
+  "organ_name": "Công ty Cổ phần 26",
+  "product_grp_id": "UPX",
+  "icb_code2": "3700"
+ },
+ {
+  "symbol": "X20",
+  "exchange": "HNX",
+  "type": "STOCK",
+  "sid": 3550.0,
+  "organ_short_name": "May mặc X20",
+  "organ_name": "Công ty Cổ phần X20",
+  "product_grp_id": "STX",
+  "icb_code2": "3700"
+ },
+ {
+  "symbol": "WTC",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3549.0,
+  "organ_short_name": "Vận tải thủy Vinacomin",
+  "organ_name": "Công ty Cổ phần Vận tải thủy - Vinacomin",
+  "product_grp_id": "UPX",
+  "icb_code2": "2700"
+ },
+ {
+  "symbol": "WSS",
+  "exchange": "HNX",
+  "type": "STOCK",
+  "sid": 3548.0,
+  "organ_short_name": "Chứng khoán Phố Wall",
+  "organ_name": "Công ty Cổ phần Chứng khoán Phố Wall",
+  "product_grp_id": "STX",
+  "icb_code2": "8700"
+ },
+ {
+  "symbol": "WSB",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3547.0,
+  "organ_short_name": "Bia Sài Gòn - Miền Tây",
+  "organ_name": "Công ty Cổ phần Bia Sài Gòn - Miền Tây",
+  "product_grp_id": "UPX",
+  "icb_code2": "3500"
+ },
+ {
+  "symbol": "WCS",
+  "exchange": "HNX",
+  "type": "STOCK",
+  "sid": 3546.0,
+  "organ_short_name": "Bến xe Miền Tây",
+  "organ_name": "Công ty Cổ phần Bến xe Miền Tây",
+  "product_grp_id": "STX",
+  "icb_code2": "2700"
+ },
+ {
+  "symbol": "VXT",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3545.0,
+  "organ_short_name": "Kho vận và DV Thương mại",
+  "organ_name": "Công ty Cổ phần Kho vận và dịch vụ thương mại",
+  "product_grp_id": "UPX",
+  "icb_code2": "2700"
+ },
+ {
+  "symbol": "VXP",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3544.0,
+  "organ_short_name": "Thuốc Thú y Trung ương VETVACO",
+  "organ_name": "Công ty Cổ phần Thuốc Thú y Trung ương VETVACO",
+  "product_grp_id": "UPX",
+  "icb_code2": "1300"
+ },
+ {
+  "symbol": "VXB",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3543.0,
+  "organ_short_name": "VLXD Bến Tre",
+  "organ_name": "Công ty Cổ phần Vật liệu xây dựng Bến Tre",
+  "product_grp_id": "UPX",
+  "icb_code2": "2300"
+ },
+ {
+  "symbol": "VWS",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3542.0,
+  "organ_short_name": "Nước và Môi trường VN",
+  "organ_name": "Công ty Cổ phần Nước và Môi trường Việt Nam",
+  "product_grp_id": "UPX",
+  "icb_code2": "7500"
+ },
+ {
+  "symbol": "VW3",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3541.0,
+  "organ_short_name": "VIWASEEN.3",
+  "organ_name": "Công ty Cổ phần VIWASEEN3",
+  "product_grp_id": "UPX",
+  "icb_code2": "2300"
+ },
+ {
+  "symbol": "VVS",
+  "exchange": "HSX",
+  "type": "STOCK",
+  "sid": 3540.0,
+  "organ_short_name": "Đầu tư Phát triển Máy Việt Nam",
+  "organ_name": "Công ty Cổ phần Đầu tư Phát triển Máy Việt Nam",
+  "product_grp_id": "STO",
+  "icb_code2": "3300"
+ },
+ {
+  "symbol": "VVN",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3539.0,
+  "organ_short_name": "XD Công nghiệp Việt Nam",
+  "organ_name": "Tổng Công ty Cổ phần Xây dựng Công nghiệp Việt Nam",
+  "product_grp_id": "UPX",
+  "icb_code2": "2300"
+ },
+ {
+  "symbol": "VUG",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3705.0,
+  "organ_short_name": "Cổ phiếu CTCP Thủy sản Việt Úc",
+  "organ_name": "Cổ phiếu CTCP Thủy sản Việt Úc",
+  "product_grp_id": "UPX",
+  "icb_code2": "3500"
+ },
+ {
+  "symbol": "VUA",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3538.0,
+  "organ_short_name": "Chứng khoán Stanley Brothers",
+  "organ_name": "Công ty Cổ phần Chứng khoán Stanley Brothers",
+  "product_grp_id": "UPX",
+  "icb_code2": "8700"
+ },
+ {
+  "symbol": "VTZ",
+  "exchange": "HNX",
+  "type": "STOCK",
+  "sid": 3537.0,
+  "organ_short_name": "Nhựa Việt Thành",
+  "organ_name": "Công ty Cổ phần Sản xuất và Thương mại Nhựa Việt Thành",
+  "product_grp_id": "STX",
+  "icb_code2": "1300"
+ },
+ {
+  "symbol": "VTX",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3536.0,
+  "organ_short_name": "Vận tải Đa phương thức",
+  "organ_name": "Công ty Cổ phần Vận tải Đa phương thức VIETRANSTIMEX",
+  "product_grp_id": "UPX",
+  "icb_code2": "2700"
+ },
+ {
+  "symbol": "VTV",
+  "exchange": "HNX",
+  "type": "STOCK",
+  "sid": 3535.0,
+  "organ_short_name": "Năng lượng và Môi trường VICEM",
+  "organ_name": "Công ty Cổ phần Năng lượng và Môi trường VICEM",
+  "product_grp_id": "STX",
+  "icb_code2": "2300"
+ },
+ {
+  "symbol": "VTS",
+  "exchange": "DELISTED",
+  "type": "STOCK",
+  "sid": 3534.0,
+  "organ_short_name": "Gạch Ngói Từ Sơn",
+  "organ_name": "Công ty Cổ phần Gạch Ngói Từ Sơn",
+  "product_grp_id": "UPX",
+  "icb_code2": "2300"
+ },
+ {
+  "symbol": "VTR",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3533.0,
+  "organ_short_name": "Du lịch Vietravel",
+  "organ_name": "Công ty Cổ phần Du lịch Vietravel",
+  "product_grp_id": "UPX",
+  "icb_code2": "5700"
+ },
+ {
+  "symbol": "VTQ",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3532.0,
+  "organ_short_name": "Việt Trung Quảng Bình",
+  "organ_name": "Công ty Cổ phần Việt Trung Quảng Bình",
+  "product_grp_id": "UPX",
+  "icb_code2": "1300"
+ },
+ {
+  "symbol": "VTP",
+  "exchange": "HSX",
+  "type": "STOCK",
+  "sid": 3531.0,
+  "organ_short_name": "Bưu chính Viettel",
+  "organ_name": "Tổng Công ty Cổ phần Bưu chính Viettel",
+  "product_grp_id": "STO",
+  "icb_code2": "2700"
+ },
+ {
+  "symbol": "VTO",
+  "exchange": "HSX",
+  "type": "STOCK",
+  "sid": 3530.0,
+  "organ_short_name": "VITACO",
+  "organ_name": "Công ty Cổ phần Vận tải Xăng dầu VITACO",
+  "product_grp_id": "STO",
+  "icb_code2": "2700"
+ },
+ {
+  "symbol": "VTM",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3529.0,
+  "organ_short_name": "Đưa đón thợ mỏ - Vinacomin",
+  "organ_name": "Công ty Cổ phần Vận tải và Đưa đón thợ mỏ - Vinacomin",
+  "product_grp_id": "UPX",
+  "icb_code2": "5700"
+ },
+ {
+  "symbol": "VTL",
+  "exchange": "DELISTED",
+  "type": "STOCK",
+  "sid": 3528.0,
+  "organ_short_name": "Vang Thăng Long",
+  "organ_name": "Công ty Cổ phần Vang Thăng Long",
+  "product_grp_id": "UPX",
+  "icb_code2": "3500"
+ },
+ {
+  "symbol": "VTK",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3527.0,
+  "organ_short_name": "Tư vấn thiết kế Viettel",
+  "organ_name": "Công ty Cổ phần Tư vấn và Dịch vụ Viettel",
+  "product_grp_id": "UPX",
+  "icb_code2": "2700"
+ },
+ {
+  "symbol": "VTJ",
+  "exchange": "HNX",
+  "type": "STOCK",
+  "sid": 3526.0,
+  "organ_short_name": "TM và Đầu tư VINATABA",
+  "organ_name": "Công ty Cổ phần Thương mại và Đầu tư VI NA TA BA",
+  "product_grp_id": "STX",
+  "icb_code2": "3700"
+ },
+ {
+  "symbol": "VTI",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3525.0,
+  "organ_short_name": "Sản xuất - XNK Dệt may",
+  "organ_name": "Công ty Cổ phần Sản xuất - Xuất nhập khẩu Dệt may",
+  "product_grp_id": "UPX",
+  "icb_code2": "3700"
+ },
+ {
+  "symbol": "VTH",
+  "exchange": "HNX",
+  "type": "STOCK",
+  "sid": 3524.0,
+  "organ_short_name": "Dây cáp điện Việt Thái",
+  "organ_name": "Công ty Cổ phần Dây cáp điện Việt Thái",
+  "product_grp_id": "STX",
+  "icb_code2": "2700"
+ },
+ {
+  "symbol": "VTG",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3523.0,
+  "organ_short_name": "Du lịch tỉnh BR-VT",
+  "organ_name": "Công ty Cổ phần Du lịch tỉnh Bà Rịa - Vũng Tàu",
+  "product_grp_id": "UPX",
+  "icb_code2": "5700"
+ },
+ {
+  "symbol": "VTE",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3522.0,
+  "organ_short_name": "VINACAP Kim Long",
+  "organ_name": "Công ty Cổ phần VINACAP Kim Long",
+  "product_grp_id": "UPX",
+  "icb_code2": "9500"
+ },
+ {
+  "symbol": "VTD",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3521.0,
+  "organ_short_name": "Du lịch Vietourist",
+  "organ_name": "Công ty Cổ phần Vietourist Holdings",
+  "product_grp_id": "UPX",
+  "icb_code2": "5700"
+ },
+ {
+  "symbol": "VTC",
+  "exchange": "HNX",
+  "type": "STOCK",
+  "sid": 3520.0,
+  "organ_short_name": "Viễn thông VTC",
+  "organ_name": "Công ty Cổ phần Viễn Thông VTC",
+  "product_grp_id": "STX",
+  "icb_code2": "9500"
+ },
+ {
+  "symbol": "VTB",
+  "exchange": "HSX",
+  "type": "STOCK",
+  "sid": 3519.0,
+  "organ_short_name": "Viettronics Tân Bình",
+  "organ_name": "Công ty Cổ phần Viettronics Tân Bình",
+  "product_grp_id": "STO",
+  "icb_code2": "2700"
+ },
+ {
+  "symbol": "VTA",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3518.0,
+  "organ_short_name": "Gạch men VITALY",
+  "organ_name": "Công ty Cổ phần VITALY",
+  "product_grp_id": "UPX",
+  "icb_code2": "2300"
+ },
+ {
+  "symbol": "VST",
+  "exchange": "UPCOM",
+  "type": "STOCK",
+  "sid": 3517.0,
+  "organ_short_name": "Vận tải và Thuê Tàu biển Việt Nam",
+  "organ_name": "Công ty Cổ phần Vận tải và Thuê Tàu biển Việt Nam",
+  "product_grp_id": "UPX",
+  "icb_code2": "2700"
+ },
+ {
+  "symbol": "VSP",
+  "exchange": "DELISTED",
+  "type": "STOCK",
+  "sid": 3516.0,
+  "organ_short_name": "ShinPetrol",
+  "organ_name": "Công ty Cổ phần Vận tải biển và Bất động sản Việt Hải",
+  "product_grp_id": null,
+  "icb_code2": "2700"
+ },
+ {
+  "symbol": "VNM",
+  "exchange": "HSX",
+  "type": "STOCK",
+  "sid": 3478.0,
+  "organ_short_name": "VINAMILK",
+  "organ_name": "Công ty Cổ phần Sữa Việt Nam",
+  "product_grp_id": "STO",
+  "icb_code2": "3500"
+ },
+ {
+  "symbol": "VHM",
+  "exchange": "HSX",
+  "type": "STOCK",
+  "sid": 3396.0,
+  "organ_short_name": "Vinhomes",
+  "organ_name": "Công ty Cổ phần Vinhomes",
+  "product_grp_id": "STO",
+  "icb_code2": "8600"
+ },
+ {
+  "symbol": "VCB",
+  "exchange": "HSX",
+  "type": "STOCK",
+  "sid": 3342.0,
+  "organ_short_name": "Vietcombank",
+  "organ_name": "Ngân hàng Thương mại Cổ phần Ngoại thương Việt Nam",
+  "product_grp_id": "STO",
+  "icb_code2": "8300"
+ }
+]

@@ -1,0 +1,94 @@
+<style>
+  .rb { font-size: 12px; line-height: 1.5; }
+  .rb .row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-bottom: 1px solid rgba(128,128,128,.25); }
+  .rb .row:last-child { border-bottom: 0; }
+  .rb .tog { width: 26px; height: 14px; border-radius: 999px; background: #16a34a; position: relative; flex: none; }
+  .rb .tog::after { content: ''; position: absolute; top: 2px; right: 2px; width: 10px; height: 10px; border-radius: 50%; background: #fff; }
+  .rb .tog.off { background: rgba(128,128,128,.45); }
+  .rb .tog.off::after { right: auto; left: 2px; }
+  .rb .box { border: 1px solid rgba(128,128,128,.5); border-radius: 4px; padding: 1px 7px; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .rb .sel { border: 1px solid rgba(128,128,128,.5); border-radius: 4px; padding: 1px 7px; }
+  .rb .sel::after { content: ' ▾'; opacity: .6; }
+  .rb .grow { flex: 1; }
+  .rb .muted { opacity: .6; }
+  .rb .x { opacity: .5; }
+  .rb .add { padding: 6px 8px; opacity: .8; font-weight: 600; }
+  .rb .head { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; opacity: .6; padding: 8px 8px 2px; font-weight: 700; }
+  .rb .chip { display: inline-block; border: 1px solid rgba(128,128,128,.5); border-radius: 999px; padding: 2px 10px; margin: 0 4px 4px 0; }
+  .rb .chip.on { background: #2563eb; border-color: #2563eb; color: #fff; }
+  .funnel { display: flex; gap: 6px; align-items: center; font-size: 12px; flex-wrap: wrap; margin: 4px 0 14px; }
+  .funnel b { font-variant-numeric: tabular-nums; }
+  .funnel .st { border: 1px solid rgba(128,128,128,.4); border-radius: 6px; padding: 6px 10px; }
+  .funnel .hot { border-color: #d97706; color: #d97706; }
+</style>
+
+<h2>How do you want to change the rules?</h2>
+<p class="subtitle">Same funnel underneath in all three. Only difference: how much freedom you get when editing good-company rules.</p>
+
+<div class="funnel">
+  <div class="st">Whole market <b>1,519</b></div> →
+  <div class="st">Pass good-company rules <b>42</b></div> →
+  <div class="st hot">Oversold now <b>5</b> ⚡</div>
+</div>
+
+<div class="cards">
+
+  <div class="card" data-choice="a-checklist" onclick="toggleSelect(this)">
+    <div class="card-image"><div class="rb">
+      <div class="head">Good company rules</div>
+      <div class="row"><span class="tog"></span><span class="grow">ROE at least</span><span class="box">15%</span><span class="muted">for</span><span class="box">3 yrs</span></div>
+      <div class="row"><span class="tog"></span><span class="grow">Profit growth at least</span><span class="box">10%</span></div>
+      <div class="row"><span class="tog"></span><span class="grow">Debt / equity below</span><span class="box">1.0</span></div>
+      <div class="row"><span class="tog off"></span><span class="grow muted">Cash flow ≥ profit</span><span class="box muted">80%</span></div>
+      <div class="row"><span class="tog"></span><span class="grow">P/E below sector by</span><span class="box">0%</span></div>
+      <div class="row"><span class="tog"></span><span class="grow">Daily value above</span><span class="box">5 bn</span></div>
+      <div class="head">Oversold highlight</div>
+      <div class="row"><span class="tog"></span><span class="grow">RSI below</span><span class="box">30</span></div>
+    </div></div>
+    <div class="card-body">
+      <h3>A — Checklist</h3>
+      <p>Fixed list of rules I build in. You switch each on/off and change its number. Simple, hard to break. New kind of rule = ask me to add it.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b-builder" onclick="toggleSelect(this)">
+    <div class="card-image"><div class="rb">
+      <div class="head">Good company rules</div>
+      <div class="row"><span class="sel">ROE</span><span class="sel">≥</span><span class="box">15%</span><span class="sel">3 yrs</span><span class="grow"></span><span class="x">✕</span></div>
+      <div class="row"><span class="sel">Profit growth</span><span class="sel">≥</span><span class="box">10%</span><span class="grow"></span><span class="x">✕</span></div>
+      <div class="row"><span class="sel">Debt/Equity</span><span class="sel">&lt;</span><span class="box">1.0</span><span class="grow"></span><span class="x">✕</span></div>
+      <div class="row"><span class="sel">P/E</span><span class="sel">&lt;</span><span class="sel">sector median</span><span class="grow"></span><span class="x">✕</span></div>
+      <div class="add">+ Add rule</div>
+      <div class="head">Oversold highlight</div>
+      <div class="row"><span class="sel">RSI</span><span class="sel">&lt;</span><span class="box">30</span><span class="grow"></span><span class="x">✕</span></div>
+      <div class="add">+ Add rule</div>
+    </div></div>
+    <div class="card-body">
+      <h3>B — Rule builder</h3>
+      <p>You build each rule yourself: pick any metric, pick compare, type number. Add or delete freely. Most freedom, more clicks, easier to make a screen that matches nothing.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c-strategies" onclick="toggleSelect(this)">
+    <div class="card-image"><div class="rb">
+      <div class="head">Strategy</div>
+      <div style="padding: 4px 8px 8px">
+        <span class="chip on">Quality</span><span class="chip">Deep value</span><span class="chip">Dividend</span><span class="chip">Banks</span><span class="chip">+ My own</span>
+      </div>
+      <div class="head">Rules in “Quality” — tweak any</div>
+      <div class="row"><span class="tog"></span><span class="grow">ROE at least</span><span class="box">15%</span><span class="muted">for</span><span class="box">3 yrs</span></div>
+      <div class="row"><span class="tog"></span><span class="grow">Profit growth at least</span><span class="box">10%</span></div>
+      <div class="row"><span class="tog"></span><span class="grow">Debt / equity below</span><span class="box">1.0</span></div>
+      <div class="row"><span class="tog"></span><span class="grow">P/E below sector by</span><span class="box">0%</span></div>
+      <div class="head">Oversold highlight</div>
+      <div class="row"><span class="tog"></span><span class="grow">RSI below</span><span class="box">30</span></div>
+    </div></div>
+    <div class="card-body">
+      <h3>C — Strategies + checklist</h3>
+      <p>Checklist like A, but saved as named strategies. One click switches whole rule set (e.g. banks need different rules than factories). Tweak, save as your own.</p>
+    </div>
+  </div>
+
+</div>
+
+<p class="subtitle" style="margin-top:16px">Numbers shown are examples, not final rules. Click the one that feels right, then answer in terminal.</p>

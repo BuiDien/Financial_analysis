@@ -70,7 +70,7 @@ const ToastHost = () => {
 };
 
 // ── Command Palette ───────────────────────────────────────────
-const CommandPalette = ({ nav = [], tickers = [], filings = [], onNavigate, onPickTicker, onOpenFiling }) => {
+const CommandPalette = ({ nav = [], tickers = [], onNavigate, onPickTicker }) => {
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState('');
   const [sel, setSel] = React.useState(0);
@@ -101,8 +101,7 @@ const CommandPalette = ({ nav = [], tickers = [], filings = [], onNavigate, onPi
   const items = React.useMemo(() => {
     const navItems = nav.map(n => ({ kind: 'page', id: n.id, label: n.label, sub: 'Page', icon: n.icon || 'arrowRight' }));
     const tickerItems = tickers.map(t => ({ kind: 'ticker', id: t.sym, label: t.sym, sub: t.name || 'Ticker', icon: 'chart' }));
-    const filingItems = filings.map(f => ({ kind: 'filing', id: f.id, label: f.name, sub: `${f.ticker} · ${f.type || ''}`.trim(), icon: 'news' }));
-    let all = [...navItems, ...tickerItems, ...filingItems];
+    let all = [...navItems, ...tickerItems];
     if (q) {
       all = all.filter(it => it.label.toLowerCase().includes(q) || (it.sub || '').toLowerCase().includes(q));
       // rank: startsWith first
@@ -113,7 +112,7 @@ const CommandPalette = ({ nav = [], tickers = [], filings = [], onNavigate, onPi
       });
     }
     return all.slice(0, 40);
-  }, [nav, tickers, filings, q]);
+  }, [nav, tickers, q]);
 
   React.useEffect(() => { setSel(0); }, [query]);
 
@@ -122,7 +121,6 @@ const CommandPalette = ({ nav = [], tickers = [], filings = [], onNavigate, onPi
     setOpen(false);
     if (it.kind === 'page') onNavigate?.(it.id);
     else if (it.kind === 'ticker') onPickTicker?.(it.id);
-    else if (it.kind === 'filing') onOpenFiling?.(it);
   };
 
   const onKeyDown = (e) => {
@@ -136,7 +134,6 @@ const CommandPalette = ({ nav = [], tickers = [], filings = [], onNavigate, onPi
   const groups = [
     { kind: 'page', label: 'Pages' },
     { kind: 'ticker', label: 'Tickers' },
-    { kind: 'filing', label: 'Filings' },
   ];
 
   return (
@@ -147,7 +144,7 @@ const CommandPalette = ({ nav = [], tickers = [], filings = [], onNavigate, onPi
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
           <Icon name="search" size={16} style={{ color: 'var(--text-subtle)' }} />
           <input ref={inputRef} value={query} onChange={e => setQuery(e.target.value)} onKeyDown={onKeyDown}
-            placeholder="Search pages, tickers, filings…"
+            placeholder="Search pages, tickers…"
             style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', fontSize: 15, color: 'var(--text)', fontFamily: 'inherit' }} />
           <kbd style={kbdStyle}>ESC</kbd>
         </div>

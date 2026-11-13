@@ -12,6 +12,12 @@ def client():
     return TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def _no_db_exchange_lookup(monkeypatch):
+    """The route looks up a VN ticker's exchange in the DB; never touch a real one."""
+    monkeypatch.setattr("app.routes.backtest._vn_exchange", lambda symbol: None)
+
+
 def fake_bars(n=600, start="2020-01-01", step=0.1):
     d0 = datetime.fromisoformat(start).date()
     out = []
@@ -52,7 +58,8 @@ def test_run_vn_defaults(client, monkeypatch):
     j = r.json()
     assert j["ticker"] == "VN:VNM" and j["currency"] == "VND"
     s = j["settings"]
-    assert s["lot_size"] == 100 and s["price_scale"] == 1000
+    assert s["lot_size"] == 100 and s["price_scale"] == 1  # bars are full VND now
+    assert s["slippage_pct"] == 0.1 and s["max_volume_pct"] == 10
     assert s["fee_pct"] == 0.15 and s["sell_tax_pct"] == 0.1
     assert s["initial_capital"] == 100000000 and s["min_hold_bars"] == 3
     assert len(j["equity"]) == len(j["bars"]) == len(j["benchmark_equity"])
@@ -143,3 +150,54 @@ def test_run_reports_skipped_buys(client, monkeypatch):
     assert r.status_code == 200, r.text
     j = r.json()
     assert j["trades"] == [] and j["skipped_buys"] > 0
+
+
+# ---- fill realism (bug: fills were optimistic) -----------------------------
+
+@pytest.mark.parametrize("field,value", [
+    ("fee_pct", -0.1), ("sell_tax_pct", -1), ("slippage_pct", -0.05),
+    ("initial_capital", 0), ("initial_capital", -5), ("max_volume_pct", 0),
+])
+def test_run_rejects_invalid_costs_422(client, monkeypatch, field, value):
+    patch_loader(monkeypatch)
+    r = client.post("/api/backtest/run", json=body(**{field: value}))
+    assert r.status_code == 422, r.text
+
+
+def test_run_applies_default_slippage_adversely(client, monkeypatch):
+    patch_loader(monkeypatch)
+    r = client.post("/api/backtest/run", json=body(ticker="AAPL", strategy="buy_hold"))
+    j = r.json()
+    t = j["trades"][0]
+    entry_bar = next(b for b in j["bars"] if b["date"] == t["entry_date"])
+    assert t["entry_price"] == pytest.approx(entry_bar["open"] * 1.001)
+
+
+def test_run_skips_locked_bar(client, monkeypatch):
+    bars = fake_bars()
+    i = next(k for k, b in enumerate(bars) if b["date"] >= "2021-06-01")
+    p = bars[i + 1]["open"]
+    bars[i + 1].update(high=p, low=p)  # one-price (locked) bar where buy_hold would fill
+    patch_loader(monkeypatch, bars=bars)
+    j = client.post("/api/backtest/run", json=body(strategy="buy_hold")).json()
+    assert j["blocked_fills"] >= 1
+    assert j["trades"][0]["entry_date"] == bars[i + 2]["date"]
+
+
+def test_run_skips_buy_opening_at_hose_ceiling(client, monkeypatch):
+    bars = fake_bars()
+    i = next(k for k, b in enumerate(bars) if b["date"] >= "2021-06-01")
+    prev = bars[i]["close"] = 10_000.0
+    bars[i + 1].update(open=10_700.0, high=10_700.0, low=10_500.0)  # opens at +7%
+    patch_loader(monkeypatch, bars=bars)
+    j = client.post("/api/backtest/run",
+                    json=body(strategy="buy_hold", exchange="HOSE")).json()
+    assert j["settings"]["limit_pct"] == 0.07 and j["blocked_fills"] >= 1
+    assert j["trades"][0]["entry_date"] != bars[i + 1]["date"]
+    assert prev == 10_000.0
+
+
+def test_run_caps_quantity_to_bar_volume(client, monkeypatch):
+    patch_loader(monkeypatch)  # volume 1000 per bar
+    j = client.post("/api/backtest/run", json=body(strategy="buy_hold")).json()
+    assert j["trades"][0]["shares"] == 100  # 10% of 1000, in lots of 100

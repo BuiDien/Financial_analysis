@@ -4,9 +4,9 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Helix — Markets</title>
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&display=swap" rel="stylesheet" />
+<!-- Fonts are self-hosted (vendor/fonts) so the app boots fully offline;
+     the CSS font stacks below fall back to system fonts if they are missing. -->
+<link rel="stylesheet" href="vendor/fonts/fonts.css" />
 
 <style>
   :root {
@@ -685,7 +685,7 @@
   .wl-row:hover .wl-remove { opacity: 1 !important; }
   .wl-remove:hover { background: var(--neg-bg) !important; color: var(--neg) !important; }
 </style>
-<link rel="stylesheet" href="src/lucian-ui.css?v=20261106-labels-2" />
+<link rel="stylesheet" href="src/lucian-ui.css?v=20261112-audit-1" />
 </head>
 <body>
 <template id="__bundler_thumbnail">
@@ -768,41 +768,59 @@
 }
 </script>
 
-<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
-<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
-<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
-<script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+<!-- Vendored libraries (exact versions previously loaded from unpkg):
+     React 18.3.1 + ReactDOM 18.3.1 (production UMD), @babel/standalone 7.29.0,
+     lightweight-charts 4.2.3. No network needed at boot. -->
+<script src="vendor/react.production.min.js"></script>
+<script src="vendor/react-dom.production.min.js"></script>
+<script src="vendor/babel.min.js"></script>
+<script src="vendor/lightweight-charts.standalone.production.js"></script>
 
-<script type="text/babel" src="tweaks-panel.jsx"></script>
-<script type="text/babel" src="src/api-client.jsx?v=20261109-backtest"></script>
-<script type="text/babel" src="src/icons.jsx"></script>
-<script type="text/babel" src="src/ui-kit.jsx"></script>
-<script type="text/babel" src="src/lucian-ui.jsx?v=20261106-labels-2"></script>
-<script type="text/babel" src="src/shortcuts.jsx?v=20261109-backtest"></script>
-<script type="text/babel" src="src/shortcuts-ui.jsx"></script>
-<script type="text/babel" src="src/primitives.jsx"></script>
-<script type="text/babel" src="src/charts.jsx"></script>
-<script type="text/babel" src="src/lwchart.jsx?v=20261109-backtest-2"></script>
-<script type="text/babel" src="src/watchlist-store.jsx"></script>
-<script type="text/babel" src="src/sidebar.jsx?v=20261109-backtest"></script>
-<script type="text/babel" src="src/header.jsx"></script>
-<script type="text/babel" src="src/ai-panel.jsx"></script>
-<script type="text/babel" src="src/page-dashboard.jsx"></script>
-<script type="text/babel" src="src/page-home.jsx?v=20261107-live-map"></script>
-<script type="text/babel" src="src/page-detail.jsx?v=20261107-native-ccy"></script>
-<script type="text/babel" src="src/page-portfolio.jsx"></script>
-<script type="text/babel" src="src/page-screener.jsx"></script>
-<script type="text/babel" src="src/page-backtest.jsx?v=20261109-backtest-2"></script>
-<script type="text/babel" src="src/page-news.jsx"></script>
-<script type="text/babel" src="src/page-statements.jsx?v=20261106-company-history-6"></script>
-<script type="text/babel" src="src/page-settings.jsx"></script>
-<script type="text/babel" src="src/page-alerts.jsx"></script>
-<script type="text/babel" src="src/page-sync.jsx"></script>
-<script type="text/babel" src="src/page-ocr-inbox.jsx?v=20261106-labels-2"></script>
-<script type="text/babel" src="src/page-filings.jsx"></script>
-<script type="text/babel" src="src/page-reader.jsx"></script>
-<script type="text/babel" src="src/ocr-tool.jsx"></script>
-<script type="text/babel" src="src/app.jsx?v=20261109-backtest"></script>
+<!-- App scripts, in load order. HELIX_BUILD is the single cache-busting stamp
+     for every local script: bump it once after editing any file.
+     'babel' = compiled in the browser (text/babel); 'js' = plain script.
+     Babel scripts run in this order after the page parses; plain scripts run
+     immediately, before any of them. -->
+<script>
+  window.HELIX_BUILD = '20261112-audit-1';
+  [
+    ['babel', 'tweaks-panel.jsx'],
+    ['babel', 'src/api-client.jsx'],
+    ['babel', 'src/icons.jsx'],
+    ['babel', 'src/ui-kit.jsx'],
+    ['babel', 'src/lucian-ui.jsx'],
+    ['babel', 'src/shortcuts.jsx'],
+    ['babel', 'src/shortcuts-ui.jsx'],
+    ['babel', 'src/primitives.jsx'],
+    ['babel', 'src/charts.jsx'],
+    ['babel', 'src/lwchart.jsx'],
+    ['babel', 'src/watchlist-store.jsx'],
+    ['babel', 'src/sidebar.jsx'],
+    ['babel', 'src/header.jsx'],
+    ['babel', 'src/ai-panel.jsx'],
+    ['babel', 'src/page-dashboard.jsx'],
+    ['babel', 'src/page-home.jsx'],
+    ['babel', 'src/page-detail.jsx'],
+    ['babel', 'src/page-portfolio.jsx'],
+    ['js',    'src/screener-plain.js'],
+    ['babel', 'src/page-screener.jsx'],
+    ['babel', 'src/page-backtest.jsx'],
+    ['babel', 'src/page-news.jsx'],
+    ['babel', 'src/page-statements.jsx'],
+    ['babel', 'src/page-settings.jsx'],
+    ['babel', 'src/page-alerts.jsx'],
+    ['js',    'src/sync-poller.js'],
+    ['js',    'src/ocr-inbox-utils.js'],
+    ['babel', 'src/page-sync.jsx'],
+    ['babel', 'src/page-ocr-inbox.jsx'],
+    ['babel', 'src/ocr-inbox-review.jsx'],
+    ['babel', 'src/ocr-inbox-history.jsx'],
+    ['babel', 'src/app.jsx'],
+  ].forEach(function (f) {
+    document.write('<script ' + (f[0] === 'babel' ? 'type="text/babel" ' : '') +
+      'src="' + f[1] + '?v=' + window.HELIX_BUILD + '"><\/script>');
+  });
+</script>
 
 </body>
 </html>

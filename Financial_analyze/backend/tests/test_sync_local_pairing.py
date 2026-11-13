@@ -17,7 +17,17 @@ HELLO = {
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
+    # A paired worker triggers dispatch_next_queued → SessionLocal; keep that
+    # on an empty in-memory DB, never the real helix.db.
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool,
+    )
+    monkeypatch.setattr(sync, "SessionLocal", sessionmaker(bind=engine))
     coordinator.workers.clear()
     yield TestClient(app)
     coordinator.workers.clear()

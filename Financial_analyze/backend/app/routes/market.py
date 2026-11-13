@@ -1,7 +1,7 @@
-"""Market data — quotes, history, indices, screener."""
+"""Market data — quotes, history, indices."""
 from datetime import date
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException
 from ..services import market
 
 router = APIRouter()
@@ -16,12 +16,17 @@ def get_quote(ticker: str):
 
 
 @router.get("/history/{ticker}")
-def get_history(ticker: str, period: str = "1mo", interval: str = "1d", end: date | None = None):
-    """period: 1d 5d 1mo 3mo 6mo 1y 2y 5y 10y ytd max.
+def get_history(ticker: str, period: str = "1mo", interval: str = "1d", end: date | None = None,
+                adjusted: bool = False):
+    """period: 1d 5d 1mo 3mo 6mo 1y 2y 5y 10y ytd max (anything else: 422).
     end (YYYY-MM-DD): return the `period`-long window ending on that day — for
-    loading older bars as the chart scrolls back."""
+    loading older bars as the chart scrolls back.
+    adjusted: Yahoo tickers only — dividend-adjusted closes (default: as traded)."""
     try:
-        return market.get_history(ticker.upper(), period=period, interval=interval, end=end)
+        kw = {"adjusted": True} if adjusted else {}  # keep the default call shape
+        return market.get_history(ticker.upper(), period=period, interval=interval, end=end, **kw)
+    except market.InvalidPeriod as e:
+        raise HTTPException(422, str(e))
     except Exception as e:
         raise HTTPException(404, f"History unavailable: {e}")
 
@@ -29,17 +34,3 @@ def get_history(ticker: str, period: str = "1mo", interval: str = "1d", end: dat
 @router.get("/indices")
 def indices():
     return market.get_indices()
-
-
-@router.get("/screener")
-def screener(
-    sector: str | None = None,
-    min_market_cap: float | None = None,
-    max_pe: float | None = None,
-    min_div_yield: float | None = None,
-    limit: int = Query(50, le=200),
-):
-    return market.screen(
-        sector=sector, min_market_cap=min_market_cap,
-        max_pe=max_pe, min_div_yield=min_div_yield, limit=limit,
-    )

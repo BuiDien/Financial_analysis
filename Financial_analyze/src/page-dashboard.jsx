@@ -6,7 +6,7 @@ const StatTile = ({ label, value, delta, suffix = '', spark }) => (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
       <div>
         <div className="stat-value">{value}{suffix}</div>
-        {delta !== undefined && (
+        {isNum(delta) && (
           <div className="stat-delta">
             <ChangeText value={delta} />
             <span style={{ color: 'var(--text-subtle)', marginLeft: 6 }}>today</span>
@@ -18,12 +18,7 @@ const StatTile = ({ label, value, delta, suffix = '', spark }) => (
   </div>
 );
 
-const dashboardNumber = (value, digits = 2) => {
-  const number = Number(value);
-  return Number.isFinite(number)
-    ? number.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })
-    : '—';
-};
+const dashboardNumber = (value, digits = 2) => fmtNum(value, digits, 'user');
 
 const dashboardDate = () => new Intl.DateTimeFormat(undefined, {
   weekday: 'long', month: 'long', day: 'numeric',
@@ -57,10 +52,12 @@ const WatchlistTable = ({ rows, onSelect, onRemove }) => (
         <tr key={r.sym} onClick={() => onSelect && onSelect(r.sym)} className="wl-row">
           <td><span className="ticker">{r.sym}</span></td>
           <td style={{ color: 'var(--text-muted)' }}>{r.name}</td>
-          <td className="right num">{fmtNum(r.price)}</td>
+          <td className="right num" title={r.status === 'missing' ? 'No quote available' : r.status === 'loading' ? 'Loading quote…' : undefined}>
+            {r.status === 'loading' ? '…' : r.currency === 'VND' ? fmtNativePrice(r.price, 'VND') : fmtNum(r.price)}
+          </td>
           <td className="right"><Pill value={r.chg} /></td>
-          <td className="right num" style={{ color: 'var(--text-muted)' }}>{r.vol}</td>
-          <td className="right num" style={{ color: 'var(--text-muted)' }}>{r.mcap}</td>
+          <td className="right num" style={{ color: 'var(--text-muted)' }}>{r.vol || '—'}</td>
+          <td className="right num" style={{ color: 'var(--text-muted)' }}>{r.mcap || '—'}</td>
           <td className="right"><Sparkline data={r.spark} width={80} height={20} /></td>
           <td className="right">
             <button className="wl-remove" title="Remove from watchlist"
@@ -133,11 +130,10 @@ const AddSymbol = ({ onAdd, existing }) => {
 };
 
 // Full watchlist card — list switcher + add/remove + rename/delete
-const WatchlistCard = ({ data, onSelect }) => {
+const WatchlistCard = ({ rows, onSelect }) => {
   const store = useWatchlists();
   const lists = store.getLists();
   const active = store.getActive();
-  const rows = active.symbols.map(sym => quoteFor(sym, data));
 
   const renameList = async () => {
     const name = await window.askPrompt({ title: 'Rename watchlist', label: 'Name', value: active.name, confirmText: 'Rename' });
@@ -223,6 +219,7 @@ const SectorHeatmap = ({ sectors, watchlist }) => {
 
 const MoversList = ({ rows, type }) => (
   <div>
+    {rows.length === 0 && <div style={{ padding: '12px 0', fontSize: 12, color: 'var(--text-subtle)' }}>No quotes yet.</div>}
     {rows.map(r => (
       <div key={r.sym} style={{
         display: 'grid', gridTemplateColumns: '60px 1fr auto', gap: 8,
@@ -240,7 +237,10 @@ const MoversList = ({ rows, type }) => (
 const PageDashboard = ({ data, setPage, setActiveAsset }) => {
   const store = useWatchlists();
   const activeWatchlist = store.getActive();
+  useQuotes(activeWatchlist.symbols, !data.demo);
   const watchlistRows = activeWatchlist.symbols.map(sym => quoteFor(sym, data));
+  // Movers and the CSV only use rows with a real price + change.
+  const quoted = watchlistRows.filter(r => isNum(r.price) && isNum(r.chg));
   const [updatedAt, setUpdatedAt] = React.useState(dashboardTime);
 
   React.useEffect(() => setUpdatedAt(dashboardTime()), [data]);
@@ -250,8 +250,8 @@ const PageDashboard = ({ data, setPage, setActiveAsset }) => {
     setPage('detail');
   };
 
-  const gainers = [...watchlistRows].sort((a, b) => b.chg - a.chg).slice(0, 5);
-  const losers = [...watchlistRows].sort((a, b) => a.chg - b.chg).slice(0, 5);
+  const gainers = quoted.filter(r => r.chg > 0).sort((a, b) => b.chg - a.chg).slice(0, 5);
+  const losers = quoted.filter(r => r.chg < 0).sort((a, b) => a.chg - b.chg).slice(0, 5);
   const indexFor = (symbol) => data.indices.find(index => index.sym === symbol) || {};
   const sp500 = indexFor('S&P 500');
   const nasdaq = indexFor('NASDAQ');
@@ -263,14 +263,15 @@ const PageDashboard = ({ data, setPage, setActiveAsset }) => {
   const exportMarketCSV = () => {
     const header = ['Ticker', 'Name', 'Price', 'Change %', 'Volume', 'Market Cap'];
     const rows = [header.join(',')];
-    watchlistRows.forEach(w => {
+    quoted.forEach(w => {
       const csvName = String(w.name || '').replaceAll('"', '""');
       rows.push([w.sym, `"${csvName}"`, w.price, w.chg, `"${w.vol || ''}"`, `"${w.mcap || ''}"`].join(','));
     });
+    if (rows.length === 1) { window.toast && window.toast('No quotes to export yet', { type: 'info' }); return; }
     const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = 'market_watchlist.csv'; a.click();
+    a.href = url; a.download = data.demo ? 'market_watchlist_DEMO.csv' : 'market_watchlist.csv'; a.click();
     URL.revokeObjectURL(url);
     window.toast && window.toast('Exported market data', { type: 'success' });
   };
@@ -280,7 +281,7 @@ const PageDashboard = ({ data, setPage, setActiveAsset }) => {
       <div className="page-header">
         <div>
           <h1 className="page-title">Markets, at a glance.</h1>
-          <p className="page-sub">{dashboardDate()} · Market overview</p>
+          <p className="page-sub">{dashboardDate()} · Market overview{data.demo ? ' · offline demo data (sample numbers)' : ''}</p>
         </div>
         <div className="row">
           <span style={{ fontSize: 11, color: 'var(--text-subtle)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Last update {updatedAt}</span>
@@ -293,13 +294,13 @@ const PageDashboard = ({ data, setPage, setActiveAsset }) => {
         <StatTile label="S&P 500" value={dashboardNumber(sp500.val)} delta={sp500.chg} spark={sp500.spark} />
         <StatTile label="NASDAQ" value={dashboardNumber(nasdaq.val)} delta={nasdaq.chg} spark={nasdaq.spark} />
         <StatTile label="VIX" value={dashboardNumber(vix.val)} delta={vix.chg} spark={vix.spark} />
-        <StatTile label="10Y Treasury" value={dashboardNumber(tenYear.val)} suffix={tenYear.val == null ? '' : '%'} delta={tenYear.chg} spark={tenYear.spark} />
+        <StatTile label="10Y Treasury" value={dashboardNumber(tenYear.val)} suffix={!isNum(tenYear.val) ? '' : '%'} delta={tenYear.chg} spark={tenYear.spark} />
       </div>
 
       {/* Main grid */}
       <div className="grid-2" style={{ marginBottom: 20 }}>
         {/* Watchlist */}
-        <WatchlistCard data={data} onSelect={handleSelect} />
+        <WatchlistCard rows={watchlistRows} onSelect={handleSelect} />
 
         {/* Right column */}
         <div className="stack">
@@ -324,11 +325,12 @@ const PageDashboard = ({ data, setPage, setActiveAsset }) => {
         </div>
       </div>
 
-      {/* Heatmap + News teaser */}
-      <div className="grid-2" style={{ marginBottom: 20 }}>
-        <div className="card">
+      {/* News teaser (+ sector heatmap in offline demo mode only — there is
+          no live sector-performance source, so it is never shown as real) */}
+      <div className={data.demo ? 'grid-2' : undefined} style={{ marginBottom: 20 }}>
+        {data.demo && <div className="card">
           <div className="card-header">
-            <h3 className="card-title">Sector Performance · Today</h3>
+            <h3 className="card-title">Sector Performance · Sample</h3>
             <div className="row">
               <span className="num" style={{ fontSize: 11, color: 'var(--text-subtle)' }}>
                 <span style={{ display: 'inline-block', width: 10, height: 10, background: heatColor(-2), marginRight: 4, verticalAlign: 'middle', borderRadius: 2 }}></span>
@@ -341,9 +343,9 @@ const PageDashboard = ({ data, setPage, setActiveAsset }) => {
             </div>
           </div>
           <div className="card-body">
-            <SectorHeatmap sectors={data.sectors} watchlist={data.watchlist} />
+            <SectorHeatmap sectors={data.sectors || []} watchlist={data.watchlist} />
           </div>
-        </div>
+        </div>}
 
         <div className="card">
           <div className="card-header">
@@ -351,6 +353,11 @@ const PageDashboard = ({ data, setPage, setActiveAsset }) => {
             <button className="card-action" onClick={() => setPage('news')}>All news →</button>
           </div>
           <div className="card-body" style={{ padding: '0 16px' }}>
+            {data.news.length === 0 && (
+              <div style={{ padding: '16px 0', fontSize: 12, color: 'var(--text-muted)' }}>
+                {data.status?.news === 'loading' ? 'Loading news…' : data.status?.news === 'error' ? 'News feed unavailable right now.' : 'No stories yet.'}
+              </div>
+            )}
             {data.news.slice(0, 5).map((n, i) => (
               <div key={i} className="news-row" style={{ gridTemplateColumns: '50px 1fr', padding: '12px 0' }}>
                 <span className="news-time">{n.time}</span>
@@ -359,8 +366,8 @@ const PageDashboard = ({ data, setPage, setActiveAsset }) => {
                   <div className="news-meta">
                     <span style={{ color: 'var(--text-subtle)' }}>{n.src}</span>
                     {' · '}
-                    <span className="num" style={{ fontSize: 10, fontWeight: 600, color: n.sentiment === 'positive' ? 'var(--pos)' : n.sentiment === 'negative' ? 'var(--neg)' : 'var(--text-muted)' }}>
-                      {n.tags[0]}
+                    <span className="num" style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)' }}>
+                      {(n.tags || [])[0]}
                     </span>
                   </div>
                 </div>
@@ -378,9 +385,9 @@ const PageDashboard = ({ data, setPage, setActiveAsset }) => {
         </div>
         <div className="card-body">
           <div className="grid-3">
-            <MacroIndicator name="US 10-Year Yield" value={`${dashboardNumber(tenYear.val)}${tenYear.val == null ? '' : '%'}`} delta={tenYear.chg} spark={tenYear.spark} />
-            <MacroIndicator name="Gold" value={gold.val == null ? '—' : `$${dashboardNumber(gold.val)}`} delta={gold.chg} spark={gold.spark} />
-            <MacroIndicator name="Crude Oil (WTI)" value={oil.val == null ? '—' : `$${dashboardNumber(oil.val)}`} delta={oil.chg} spark={oil.spark} />
+            <MacroIndicator name="US 10-Year Yield" value={`${dashboardNumber(tenYear.val)}${!isNum(tenYear.val) ? '' : '%'}`} delta={tenYear.chg} spark={tenYear.spark} />
+            <MacroIndicator name="Gold" value={!isNum(gold.val) ? '—' : `$${dashboardNumber(gold.val)}`} delta={gold.chg} spark={gold.spark} />
+            <MacroIndicator name="Crude Oil (WTI)" value={!isNum(oil.val) ? '—' : `$${dashboardNumber(oil.val)}`} delta={oil.chg} spark={oil.spark} />
           </div>
         </div>
       </div>
@@ -394,7 +401,7 @@ const MacroIndicator = ({ name, value, delta, spark }) => (
     <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginTop: 6 }}>
       <div>
         <div className="num" style={{ fontSize: 20, fontWeight: 600 }}>{value}</div>
-        {delta !== undefined && <ChangeText value={delta} />}
+        {isNum(delta) && <ChangeText value={delta} />}
       </div>
       <Sparkline data={spark} width={100} height={36} fill />
     </div>

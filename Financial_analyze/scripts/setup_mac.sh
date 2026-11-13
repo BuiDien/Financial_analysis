@@ -29,7 +29,7 @@ if [ ! -d "$BACKEND/.venv" ]; then
 fi
 "$BACKEND/.venv/bin/pip" install -q --upgrade pip
 echo "-- Installing backend/requirements.txt --"
-"$BACKEND/.venv/bin/pip" install -q -r "$BACKEND/requirements.txt"
+"$BACKEND/.venv/bin/pip" install -q -r "$BACKEND/requirements.txt" -r "$BACKEND/requirements-dev.txt"
 
 # ── 3. .env ────────────────────────────────────────────────────────────
 if [ ! -f "$BACKEND/.env" ]; then

@@ -328,6 +328,9 @@ def _order(toks: list[str]) -> Order:
 
 
 def _self_check(st: Statement) -> None:
+    """Any error recorded here makes the importer reject the whole statement."""
+    if st.period_from is None or st.period_to is None:
+        st.errors.append("missing statement period (Từ ngày … đến ngày …)")
     if st.opening is None or st.closing is None:
         st.errors.append("missing opening/closing balance")
         return
