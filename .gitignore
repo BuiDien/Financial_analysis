@@ -29,3 +29,10 @@ helix.db*
 .thumbnail
 
 Financial_analyze/models/
+
+# Frontend build (Vite) — rebuilt by scripts/run.sh / npm run build
+node_modules/
+Financial_analyze/dist/
+
+# Personal SSI brokerage statements (account number + real trades) — never commit
+docs/archive/*[Kk]et_[Qq]ua_[Gg]iao_[Dd]ich*

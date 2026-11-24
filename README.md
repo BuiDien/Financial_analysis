@@ -59,12 +59,25 @@ Mac (M2 Max, 64GB)
 
 | Layer | Runs on | Technology |
 |---|---|---|
-| Presentation | Mac (served by Core) | Web dashboard (React-in-browser), AI sidebar |
+| Presentation | Mac (static `dist/` on :5500) | React 18 + Vite, `src/ui` component library, AI side panel |
 | Business logic | Mac | Python, FastAPI, SQLAlchemy |
 | Market data | Mac | vnstock (VN equities), yfinance (gold/US) |
 | OCR engine | Mac (local worker) | MiniCPM-OCR-1.0 on MLX + layout SDK |
 | AI brain | Mac (M2 Max) | Hermes Agent + Qwen3 35B via Ollama |
 | Data | Mac | SQLite + Obsidian vault + filesystem |
+
+## Running it
+
+```bash
+cd Financial_analyze && ./scripts/run.sh     # backend :8000 + frontend :5500 + local OCR worker
+```
+
+The frontend is a Vite app in `Financial_analyze/src/` (pages under `src/pages/<section>/`, shared
+components in `src/ui/` — see [`src/ui/README.md`](Financial_analyze/src/ui/README.md)); `run.sh`
+rebuilds `dist/` when sources change. `npm run dev` gives hot reload on the same port 5500, so it
+conflicts with `run.sh`'s frontend — run one or the other. Routes, backend layout (services, jobs,
+market-data seam, Alembic migrations) and the `/api/jobs` and `/api/alerts` endpoints are in
+[`Financial_analyze/INTEGRATION.md`](Financial_analyze/INTEGRATION.md).
 
 ## Key subsystems
 
@@ -82,6 +95,8 @@ Everything lives in [`docs/`](docs/) — start with [`docs/README.md`](docs/READ
 - [`docs/design/`](docs/design/) — architecture & contracts
 - [`docs/specs/`](docs/specs/) — feature design specs
 - [`docs/plans/`](docs/plans/) — TDD implementation plans
+- [`Financial_analyze/INTEGRATION.md`](Financial_analyze/INTEGRATION.md) — how to run, frontend layout + routes, backend layout, frontend ↔ backend wiring
+- [`Financial_analyze/backend/README.md`](Financial_analyze/backend/README.md) — backend setup, migrations, safety defaults
 
 ## Build sequence
 

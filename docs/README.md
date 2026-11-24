@@ -7,6 +7,7 @@ All planning & design docs for the project. Start with **PLAN.md** (the master b
 ### Top level
 - [`PLAN.md`](PLAN.md) — **master build plan & sequence** (single source of truth)
 - [`system_description.md`](system_description.md) — the original system spec
+- [`../Financial_analyze/INTEGRATION.md`](../Financial_analyze/INTEGRATION.md) — running the app, frontend layout (Vite, `src/pages`, `src/ui`) and routes, backend layout (jobs, market data, Alembic), `/api/jobs` + `/api/alerts`
 
 ### `design/` — architecture & reference
 - [`CORE_DESIGN.md`](design/CORE_DESIGN.md) — Core (business + data tier) internals
