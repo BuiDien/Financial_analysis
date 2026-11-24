@@ -38,7 +38,7 @@ RSS_FEEDS = [
     ("https://cafef.vn/thi-truong-chung-khoan.rss", "market"),
     ("https://cafef.vn/doanh-nghiep.rss", "companies"),
 ]
-_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 
 
 def _resolved_addresses(hostname: str) -> set[str]:
@@ -74,7 +74,7 @@ def validate_article_url(url: str) -> None:
 _TAG_RE = re.compile(r"<[^>]+>")
 
 
-def _plain_summary(value: str, limit: int = 500) -> str:
+def plain_summary(value: str, limit: int = 500) -> str:
     text = html.unescape(_TAG_RE.sub(" ", value or ""))
     return " ".join(text.split())[:limit]
 
@@ -129,7 +129,7 @@ def fetch_vn_rss(query: str | None = None, limit: int = 30) -> list[dict]:
     needle = query.strip().lower() if query else None
     items = []
     for feed_url, category in RSS_FEEDS:
-        req = urllib.request.Request(feed_url, headers={"User-Agent": _UA})
+        req = urllib.request.Request(feed_url, headers={"User-Agent": USER_AGENT})
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 raw = resp.read()
@@ -149,7 +149,7 @@ def fetch_vn_rss(query: str | None = None, limit: int = 30) -> list[dict]:
                 "url": entry.get("link", ""),
                 "published": published,
                 "category": category,
-                "summary": _plain_summary(entry.get("summary", "")),
+                "summary": plain_summary(entry.get("summary", "")),
             })
     items.sort(key=lambda i: i["published"], reverse=True)
     return items[:limit]
@@ -164,7 +164,9 @@ def search_web(query: str, count: int = 5, time_range: str = "week") -> list[dic
         time_range: SearXNG freshness window (day, week, or month).
 
     Returns [{title, url, content, source, published}]. Empty and duplicate
-    results are removed. Raises RuntimeError with a clear "is it running?"
+    results are removed. When the news engines returned nothing and the
+    general-engine fallback was used, each result also carries
+    ``"fallback": True`` (callers that need real news can tell). Raises RuntimeError with a clear "is it running?"
     message if SearXNG isn't reachable.
     """
     if time_range not in {"day", "week", "month"}:
@@ -192,6 +194,7 @@ def search_web(query: str, count: int = 5, time_range: str = "week") -> list[dic
     # Public news engines are frequently rate-limited or CAPTCHA-blocked.
     # Preserve a working search by falling back to general engines, while
     # keeping the same freshness window and making news intent explicit.
+    used_fallback = not raw_results
     if not raw_results:
         try:
             raw_results = fetch_results(f"{query} news", "general")
@@ -218,13 +221,16 @@ def search_web(query: str, count: int = 5, time_range: str = "week") -> list[dic
 
         engines = item.get("engines") or []
         source = item.get("engine") or (engines[0] if engines else "")
-        results.append({
+        result = {
             "title": title,
             "url": urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, "")),
             "content": str(item.get("content") or "").strip(),
             "source": str(source or ""),
             "published": str(item.get("publishedDate") or item.get("pubdate") or ""),
-        })
+        }
+        if used_fallback:
+            result["fallback"] = True
+        results.append(result)
         if len(results) >= count:
             break
     return results
@@ -244,7 +250,7 @@ def _open_once(url: str) -> dict:
     Returns {"status", "location", "body", "charset"}.
     """
     req = urllib.request.Request(url, headers={
-        "User-Agent": _UA,
+        "User-Agent": USER_AGENT,
         "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5",
     })
     try:

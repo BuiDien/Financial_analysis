@@ -406,6 +406,12 @@ class VnstockProvider:
         industries = self._call(lambda: vn["Listing"]().symbols_by_industries())
         return map_universe(_rows(listing), _rows(industries))
 
+    def list_company_names(self) -> dict[str, str]:
+        vn = _vnstock()
+        df = self._call(lambda: vn["Listing"]().all_symbols())
+        return {str(r["symbol"]).upper(): str(r["organ_name"]).strip()
+                for r in _rows(df) if r.get("symbol") and r.get("organ_name")}
+
     def fetch_financials(self, entry: UniverseEntry) -> Financials:
         vn = _vnstock()
         sym, is_bank = entry["symbol"], bool(entry.get("is_bank"))

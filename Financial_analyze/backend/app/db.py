@@ -61,7 +61,7 @@ def get_db():
 def init_db():
     """Create all tables. Run once on startup or via `python -m app.db init`."""
     # Import models so they're registered on Base.metadata
-    from .models import user, portfolio, filing, ocr, gmail, screener  # noqa: F401
+    from .models import user, portfolio, filing, ocr, gmail, screener, newswatch  # noqa: F401
 
     _upgrade_legacy_portfolio_schema()
     _upgrade_legacy_ocr_schema()

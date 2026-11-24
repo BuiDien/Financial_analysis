@@ -14,7 +14,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.db import Base
-from app.models import user, portfolio, filing, ocr, gmail, screener  # noqa: F401 — register tables
+from app.models import user, portfolio, filing, ocr, gmail, screener, newswatch  # noqa: F401 — register tables
 
 
 @pytest.fixture

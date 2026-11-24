@@ -32,9 +32,31 @@ if os.path.exists(_VENV_PYTHON) and os.path.realpath(sys.executable) != os.path.
 sys.path.insert(0, _BACKEND_DIR)
 
 import argparse
+import contextlib
 from datetime import datetime
 
 from app.services import news_collector
+
+
+def _build_holdings() -> dict[str, list[str]]:
+    """Ticker -> search names for current VN holdings; {} if anything fails."""
+    from app.db import SessionLocal, init_db
+    from app.newswatch import aliases, holdings as holdings_mod
+    from app.newswatch.watch_config import load_watch_config
+    from app.screener.provider import get_provider
+
+    init_db()
+    cfg = load_watch_config()
+    db = SessionLocal()
+    try:
+        try:
+            aliases.refresh_official_names(db, get_provider())
+        except Exception as e:  # noqa: BLE001
+            print(f"official-name refresh skipped: {e}", file=sys.stderr)
+        tickers = holdings_mod.current_vn_holdings(db, cfg["etf_tickers"])
+        return {t: aliases.resolve(db, t, cfg).terms for t in tickers}
+    finally:
+        db.close()
 
 
 def main():
@@ -49,8 +71,18 @@ def main():
 
     date = datetime.now().strftime("%Y-%m-%d") if args.date == "today" else args.date
 
-    result = news_collector.collect_all_articles(date)
-    path = news_collector.write_daily_note(date, result, overwrite_processed=args.force)
+    # init_db() and vnstock print banners to stdout; stdout must carry only the
+    # confirmation line Hermes reads, so everything else goes to stderr.
+    with contextlib.redirect_stdout(sys.stderr):
+        try:
+            holdings = _build_holdings()
+        except Exception as e:  # noqa: BLE001
+            print(f"holdings unavailable, continuing without: {e}", file=sys.stderr)
+            holdings = {}
+        result = news_collector.collect_all_articles(date, holdings=holdings)
+        path = news_collector.write_daily_note(date, result, overwrite_processed=args.force)
+    for err in result.get("source_errors", []):
+        print(f"source error: {err}", file=sys.stderr)
 
     print(f"Collected {result['total_articles']} articles for {date} → {path} — summarize them.")
 

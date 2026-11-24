@@ -337,7 +337,30 @@ def test_fetch_vn_rss_includes_plain_summary(monkeypatch):
     assert items[0]["summary"] == "VNM tang 2% trong phien sang nay"
 
 
+def test_plain_summary_strips_tags():
+    assert news.plain_summary("<p>A &amp;  <b>B</b></p>", 3) == "A &"
+
+
 def test_searxng_url_comes_from_settings():
     from app.config import get_settings
 
     assert news.SEARXNG_URL == get_settings().searxng_url
+
+
+def test_search_web_marks_general_fallback_results(monkeypatch):
+    def _opener(req, timeout=10):
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(req.full_url).query)
+        if query["categories"] == ["news"]:
+            return _FakeSearchResponse({"results": []})
+        return _FakeSearchResponse({"results": [
+            {"title": "Fallback", "url": "https://example.test/news", "content": "c"},
+        ]})
+
+    monkeypatch.setattr(urllib.request, "urlopen", _opener)
+    assert news.search_web("markets")[0]["fallback"] is True
+
+
+def test_search_web_news_results_have_no_fallback_flag(monkeypatch):
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=10: _FakeSearchResponse(
+        {"results": [{"title": "A", "url": "https://a.test", "content": "c"}]}))
+    assert "fallback" not in news.search_web("markets")[0]

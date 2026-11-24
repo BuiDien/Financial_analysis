@@ -472,3 +472,22 @@ def test_fetch_prices_drops_todays_bar_before_close(monkeypatch):
     assert intraday[-1]["date"] == "2026-11-09" and intraday[-1]["close"] > 1000  # full VND
     monkeypatch.setattr(vp, "_now", lambda: datetime(2026, 11, 10, 15, 5, tzinfo=VN_TZ))
     assert p.fetch_prices("VNM")[-1]["date"] == "2026-11-10"
+
+
+# ---- company names (news-watch) --------------------------------------------
+
+def test_list_company_names_maps_and_skips_blank(monkeypatch):
+    class Listing:
+        def all_symbols(self):
+            return pd.DataFrame([
+                {"symbol": "hpg", "organ_name": "  Công ty Cổ phần Tập đoàn Hòa Phát "},
+                {"symbol": "VNM", "organ_name": "Công ty Cổ phần Sữa Việt Nam"},
+                {"symbol": "XXX", "organ_name": None},
+                {"symbol": None, "organ_name": "Orphan"},
+            ])
+    monkeypatch.setattr(vp, "_vnstock", lambda: {"Listing": Listing})
+    lim = RecordingLimiter()
+    names = vp.VnstockProvider(limiter=lim).list_company_names()
+    assert names == {"HPG": "Công ty Cổ phần Tập đoàn Hòa Phát",
+                     "VNM": "Công ty Cổ phần Sữa Việt Nam"}
+    assert lim.priorities == ["background"]

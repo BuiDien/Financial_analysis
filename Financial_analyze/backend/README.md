@@ -104,3 +104,56 @@ The API does not yet have authentication. Keep it on a trusted machine/network; 
 - The laptop worker transport is implemented, but `run_ocr()` still returns a placeholder row.
 - Scanner and market-provider data are `verified=false`; they are candidate-generation inputs.
 - Real statement analysis must wait for the canonical schema, TT200 placement, and reconciliation gate.
+
+## News watch
+
+Telegram alerts for holdings that turn oversold (with a local-LLM verdict on whether news explains it)
+and for market-wide / Vietnam-topic events. Runs as three Hermes cron jobs, Mon-Fri, Asia/Ho_Chi_Minh:
+
+| Job | Time | Mode |
+| --- | --- | --- |
+| `news-daily-collect` | 08:00 | agent; writes the daily digest into the vault, delivery `local` |
+| `newswatch-morning` | 08:30 | no-agent script; delivers to Telegram |
+| `newswatch-after-close` | 15:15 | no-agent script; delivers to Telegram |
+
+**One-time setup**
+
+1. Create a Telegram bot with BotFather and connect it to the Hermes gateway (`hermes gateway setup`,
+   or the Telegram section of `~/.hermes/config.yaml`). Send a test message from Hermes to confirm.
+2. SearXNG and the llama.cpp / Hermes API must be running at 08:00, 08:30 and 15:15. If the model is
+   offline, verdicts degrade to `unavailable` (the morning alert then sends the matched articles
+   unverified); if SearXNG is down or only returns general (non-news) results, it is listed under
+   "Sources unavailable".
+3. Register the jobs (safe to re-run; existing jobs are skipped):
+
+   ```bash
+   Financial_analyze/scripts/register_newswatch_cron.sh --dry-run   # print commands only
+   Financial_analyze/scripts/register_newswatch_cron.sh
+   ```
+
+   Hermes only runs scripts that live inside `~/.hermes/scripts/` (it resolves and blocks symlinks
+   pointing elsewhere), so the script writes a small real Python wrapper there per job script. Each
+   wrapper has the absolute repo paths baked in and execs `backend/.venv/bin/python` on the repo script
+   (with `PYTHONPATH`/`PYTHONHOME` cleared). `--dry-run` prints the wrapper contents instead of writing
+   them. Re-run the script after moving the repo. It aborts if `hermes cron list --all` fails, matches
+   existing jobs by exact name, and reports `failed to create <name>` (exit 1) without stopping the
+   other jobs.
+
+**Pause or remove**
+
+```bash
+hermes cron list --all
+hermes cron pause <job_id>           # hermes cron resume <job_id> to undo
+hermes cron remove <job_id>
+hermes cron runs                        # execution history
+```
+
+`pause`, `resume` and `remove` take a job id; use the id shown by `hermes cron list`.
+
+**Where alerts are logged**: the `news_alerts` table (dedupe and daily caps) and the vault note
+`News/Alerts/<date>.md`.
+
+**Configuration**: `backend/newswatch.json` is user-editable: alert thresholds (`thresholds`: RSI
+trigger/reset, drop % over N sessions, news look-back days, daily holding-alert cap, VN-Index day drop %;
+a missing key falls back to the `NEWSWATCH_*` settings), global topics, ticker aliases, and the ETF list
+excluded from holding alerts. Changes apply on the next run.

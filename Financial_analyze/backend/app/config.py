@@ -94,6 +94,16 @@ class Settings(BaseSettings):
     searxng_url: str = "http://127.0.0.1:8888"
     vault_news_dir: str = "/Users/dien/Obsidian/Projects/Financial_Automation/News"
 
+    # News watch + oversold alerts
+    newswatch_config_path: str = str(BACKEND_DIR / "newswatch.json")
+    newswatch_rsi_oversold: float = 30.0
+    newswatch_rsi_reset: float = 40.0
+    newswatch_drop_pct: float = 10.0
+    newswatch_drop_sessions: int = 5
+    newswatch_news_days: int = 7
+    newswatch_max_holding_alerts: int = 3
+    newswatch_vnindex_drop_pct: float = 2.0
+
     # Browser origins allowed to call the API (comma-separated). Requests
     # carrying any other Origin header are rejected; "*" is not honoured.
     allowed_origins: str = DEFAULT_ALLOWED_ORIGINS

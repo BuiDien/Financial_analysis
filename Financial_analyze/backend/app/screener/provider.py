@@ -77,6 +77,9 @@ class MarketDataProvider(Protocol):
         INTERVALS. May include today's still-forming bar (charts want it)."""
         ...
     def fetch_board(self, symbols: list[str]) -> dict[str, BoardEntry]: ...
+    def list_company_names(self) -> dict[str, str]:
+        """symbol -> official company name (Vietnamese)."""
+        ...
 
 
 def price_unit(symbol: str) -> float:
@@ -209,7 +212,8 @@ class FixtureProvider:
     def __init__(self, universe: list[UniverseEntry] | None = None,
                  financials: dict | None = None, prices: dict | None = None,
                  fail: set[str] = frozenset(), end_date: date | None = None,
-                 board: dict | None = None, ohlc: dict[str, list[Bar]] | None = None):
+                 board: dict | None = None, ohlc: dict[str, list[Bar]] | None = None,
+                 company_names: dict | None = None):
         self.universe = SAMPLE_UNIVERSE if universe is None else universe
         self.financials = SAMPLE_FINANCIALS if financials is None else financials
         self._prices = prices
@@ -217,6 +221,7 @@ class FixtureProvider:
         self.end_date = end_date
         self.board = board or {}
         self._ohlc = ohlc
+        self.company_names = company_names or {}
         self.calls: list[tuple[str, str]] = []
         self.ohlc_calls: list[dict] = []
 
@@ -269,6 +274,9 @@ class FixtureProvider:
         lo, hi = start.isoformat(), end.isoformat()
         return [dict(b) for b in bars if lo <= str(b["date"])[:10] <= hi]  # type: ignore[misc]
 
+    def list_company_names(self) -> dict[str, str]:
+        self.calls.append(("company_names", ""))
+        return dict(self.company_names)
 
     def fetch_board(self, symbols: list[str]) -> dict:
         self.calls.append(("board", ""))

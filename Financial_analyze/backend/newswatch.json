@@ -1,0 +1,31 @@
+{
+  "thresholds": {
+    "rsi_max": 30.0,
+    "drop_pct": 10.0,
+    "sessions": 5,
+    "rsi_reset": 40.0,
+    "news_days": 7,
+    "max_holding_alerts": 3,
+    "vnindex_drop_pct": 2.0
+  },
+  "etf_tickers": ["E1VFVN30", "FUEVFVND", "FUESSVFL", "FUEVN100", "FUEKIV30"],
+  "aliases": {
+    "CMG": ["CMC Corp", "Tập đoàn Công nghệ CMC", "Tap doan Cong nghe CMC"],
+    "HPG": ["Hòa Phát", "Hoa Phat"],
+    "MBB": ["MB Bank", "MBBank", "Ngân hàng Quân đội", "Ngan hang Quan doi"],
+    "NKG": ["Thép Nam Kim", "Thep Nam Kim", "Nam Kim"],
+    "PLX": ["Petrolimex"],
+    "SSI": ["Chứng khoán SSI", "Chung khoan SSI", "SSI Securities"],
+    "TPB": ["TPBank", "Tiên Phong Bank", "Tien Phong Bank"],
+    "VCB": ["Vietcombank"],
+    "VNM": ["Vinamilk"]
+  },
+  "vietnam_terms": ["vietnam", "việt nam", "viet nam"],
+  "topics": {
+    "tariffs": ["tariff", "thuế đối ứng", "thuế quan", "trade deal"],
+    "reclassification": ["ftse", "msci", "nâng hạng", "emerging market"],
+    "sbv": ["state bank of vietnam", "sbv", "ngân hàng nhà nước", "lãi suất điều hành", "tỷ giá"],
+    "sanctions": ["sanction", "trừng phạt"]
+  },
+  "trusted_sources": ["reuters.com", "bloomberg.com", "sbv.gov.vn", "ssc.gov.vn", "hsx.vn", "hnx.vn", "chinhphu.vn"]
+}

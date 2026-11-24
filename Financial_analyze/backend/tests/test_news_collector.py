@@ -534,3 +534,49 @@ Keep this summary.
         overwrite_processed=True,
     )
     assert "processed: false" in path.read_text()
+
+
+def _holding_item():
+    return {"id": "x", "title": "HPG lãi lớn", "url": "https://v.vn/hpg", "source": "cafef",
+            "published": int(__import__("time").time()), "summary": ""}
+
+
+def test_tracked_tickers_has_no_vn_names():
+    for t in ("VNM", "VIC", "FPT", "HPG", "MBB"):
+        assert t not in news_collector.TRACKED_TICKERS
+    assert "VN30" in news_collector.TRACKED_TICKERS
+
+
+def test_daily_note_has_holdings_section(tmp_path):
+    result = {"collection_date": "2026-11-13", "total_articles": 0, "articles": [],
+              "holdings": {"HPG": [_holding_item()], "FPT": []}, "source_errors": []}
+    path = news_collector.write_daily_note("2026-11-13", result, vault_dir=str(tmp_path))
+    text = open(path, encoding="utf-8").read()
+    assert "## Holdings" in text
+    assert "### HPG" in text
+    assert "- [HPG lãi lớn](https://v.vn/hpg) — cafef" in text
+    assert "### FPT\n\n_No news._" in text
+    assert text.index("## Day Summary") < text.index("## Holdings") < text.index("## Articles")
+
+
+def test_parse_daily_note_ignores_holdings_lines(tmp_path):
+    arts = [{"title": "Story", "summary": "s", "source": "rss/x", "url": "https://x/1"}]
+    base = {"collection_date": "2026-11-13", "total_articles": 1, "articles": arts}
+    p1 = news_collector.write_daily_note("2026-11-13", base, vault_dir=str(tmp_path / "a"))
+    p2 = news_collector.write_daily_note(
+        "2026-11-13", {**base, "holdings": {"HPG": [_holding_item()]}}, vault_dir=str(tmp_path / "b"))
+    assert news_collector.parse_daily_note(p2) == news_collector.parse_daily_note(p1)
+    assert len(news_collector.parse_daily_note(p2)["articles"]) == 1
+
+
+def test_collect_all_articles_matches_holdings(monkeypatch):
+    for fn in ("fetch_yfinance_news", "fetch_yfinance_global_news", "fetch_global_rss_feeds",
+               "fetch_exa_search", "fetch_searxng_search", "fetch_youtube_world_news"):
+        monkeypatch.setattr(news_collector, fn, lambda *a, **k: [])
+    monkeypatch.setattr(news_collector.news, "fetch_vn_rss", lambda limit=30: [])
+    monkeypatch.setattr(news_collector, "fetch_all_vn", lambda: ([_holding_item()], ["vietstock: boom"]))
+    monkeypatch.setattr(news_collector.news, "search_web", lambda q, n: [])
+    result = news_collector.collect_all_articles("2026-11-13", holdings={"HPG": ["HPG"], "FPT": ["FPT"]})
+    assert [i["url"] for i in result["holdings"]["HPG"]] == ["https://v.vn/hpg"]
+    assert result["holdings"]["FPT"] == []
+    assert result["source_errors"] == ["vietstock: boom"]

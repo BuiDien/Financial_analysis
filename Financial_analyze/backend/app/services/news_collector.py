@@ -24,6 +24,7 @@ import xml.etree.ElementTree as ET
 from urllib.request import Request, urlopen
 
 from . import news
+from .news_feeds import fetch_all_vn, match_holding_news
 from ..config import get_settings
 
 FULL_TEXT_WORKERS = 8
@@ -61,7 +62,6 @@ SEARXNG_QUERIES = SEARCH_QUERIES
 
 TRACKED_TICKERS = [
     "VN30", "HNX30", "UPCoM",
-    "VNM", "VIC", "FPT", "HPG", "MBB",
     "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA",
     "SPY", "QQQ",
     "BTC-USD", "ETH-USD",
@@ -563,8 +563,25 @@ def attach_full_text(articles: list[dict], max_workers: int = FULL_TEXT_WORKERS)
     return articles
 
 
-def collect_all_articles(date: str) -> dict:
-    """Collect and curate daily market news before Hermes summarizes it."""
+def _collect_holdings_news(holdings: dict[str, list[str]]) -> tuple[dict, list[str]]:
+    """Per-holding VN news from the DB-free feed module."""
+    items, errors = fetch_all_vn()
+    errors = list(errors)
+    since = int(time.time()) - get_settings().newswatch_news_days * 86400
+    out: dict = {}
+    for ticker, names in holdings.items():
+        matches, fb_errors = match_holding_news(items, names, since, search=news.search_web)
+        out[ticker] = matches
+        errors.extend(fb_errors)
+    return out, errors
+
+
+def collect_all_articles(date: str, holdings: dict[str, list[str]] | None = None) -> dict:
+    """Collect and curate daily market news before Hermes summarizes it.
+
+    `holdings` maps ticker -> search names; built by the caller (the script owns
+    the DB access, this module stays DB-free).
+    """
     all_articles = []
 
     for ticker in TRACKED_TICKERS:
@@ -597,8 +614,12 @@ def collect_all_articles(date: str) -> dict:
             if a["source"].startswith(prefix) and (exclude is None or not a["source"].startswith(exclude))
         ])
 
+    holdings_news, source_errors = _collect_holdings_news(holdings) if holdings else ({}, [])
+
     return {
         "collection_date": date,
+        "holdings": holdings_news,
+        "source_errors": source_errors,
         "total_articles": len(unique_articles),
         "sources": {
             "reddit": _count("reddit/"),
@@ -653,9 +674,21 @@ def write_daily_note(
         "",
         "_(pending — Hermes fills this in during the daily cron run)_",
         "",
-        "## Articles",
-        "",
     ]
+
+    holdings_news = result.get("holdings") or {}
+    if holdings_news:
+        lines.extend(["## Holdings", ""])
+        for ticker, items in holdings_news.items():
+            lines.extend([f"### {ticker}", ""])
+            if not items:
+                lines.append("_No news._")
+            for it in items:
+                title = it["title"].replace("\n", " ").strip()
+                lines.append(f"- [{title}]({it['url']}) — {it['source']}")
+            lines.append("")
+
+    lines.extend(["## Articles", ""])
 
     if not result["articles"]:
         lines.append("_No articles collected today._")
