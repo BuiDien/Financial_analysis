@@ -7,7 +7,7 @@ from app.backtest import data
 from app.backtest.engine import VN_LIMIT_PCT, run_backtest, vn_tick
 from app.backtest.metrics import compute_metrics
 from app.backtest.strategies import get_strategy, list_strategies, resolve_params
-from app.screener.provider import VN_INDEX_SYMBOLS
+from app.marketdata import VN_INDEX_SYMBOLS
 from app.services import market
 
 router = APIRouter()

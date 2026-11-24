@@ -8,8 +8,9 @@ from sqlalchemy.pool import StaticPool
 from app.db import Base
 from app.models.screener import TickerMetrics
 from app.screener import store
-from app.screener.provider import VN_TZ, FixtureProvider
-from app.screener.ratelimit import RateLimited
+from app.marketdata import VN_TZ
+from app.marketdata.fixture import FixtureProvider
+from app.marketdata.ratelimit import RateLimited
 from app.screener.refresh import RefreshManager, is_stale, last_trading_close
 
 NOW = datetime(2026, 11, 10, 16, 0, tzinfo=VN_TZ)  # Tuesday after close
@@ -357,7 +358,7 @@ def test_rate_limit_strike_resets_after_success(factory):
 # ---- never store today's still-forming bar ---------------------------------
 
 def test_price_pass_before_close_drops_todays_bar(factory):
-    from app.screener.provider import trading_days_ending
+    from app.marketdata import trading_days_ending
     morning = vn(2026, 11, 10, 10, 30)   # Tuesday, session open
     days = trading_days_ending(morning.date(), 30)
     bars = [{"date": d, "close": 10_000.0 + i, "volume": 1000.0} for i, d in enumerate(days)]
@@ -368,3 +369,14 @@ def test_price_pass_before_close_drops_todays_bar(factory):
     mgr.run_pending()
     with factory() as db:
         assert db.get(TickerMetrics, "GOODCO").prices["last_date"] == "2026-11-09"
+
+
+def test_module_manager_looks_up_get_provider_at_call_time(monkeypatch):
+    """Patching app.marketdata.registry.get_provider must reach the module-level
+    manager (it used to bind the function at import time)."""
+    from app.marketdata import registry
+    from app.screener import refresh
+
+    sentinel = object()
+    monkeypatch.setattr(registry, "get_provider", lambda: sentinel)
+    assert refresh.manager._provider_factory() is sentinel

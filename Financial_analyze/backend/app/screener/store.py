@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from ..models.screener import ScreenerState, TickerMetrics
 from .metrics import compute_price_metrics
-from .provider import VN_TZ, Financials, UniverseEntry
+from ..marketdata import VN_TZ, Financials, UniverseEntry
 
 STALE_AFTER_TRADING_DAYS = 3
 DEAD_AFTER_TRADING_DAYS = 10  # no bars for this long: delisted/suspended, liquidity is frozen

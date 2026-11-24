@@ -14,7 +14,7 @@ from sqlalchemy.orm import sessionmaker
 from app.db import Base, get_db
 from app.main import app
 from app.models.portfolio import Portfolio, PortfolioJob, PortfolioTransaction
-from app.routes import portfolio as routes
+from app.services import portfolio_imports
 from app.services import portfolio_engine as engine
 
 
@@ -83,7 +83,7 @@ def test_invalid_import_can_be_revalidated(env):
 
 def test_upload_is_capped_while_reading(env, monkeypatch):
     client, _ = env
-    monkeypatch.setattr(routes, "MAX_IMPORT_BYTES", 64)
+    monkeypatch.setattr(portfolio_imports, "MAX_IMPORT_BYTES", 64)
     assert _preview(client, CSV + "DEPOSIT,2026-01-02T03:00:00Z,USD,1\n" * 10).status_code == 413
     assert _preview(client).status_code == 200
 

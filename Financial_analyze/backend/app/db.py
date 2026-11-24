@@ -1,8 +1,10 @@
 """SQLAlchemy engine, Base, session factory."""
 
+import importlib
 import sys
 from datetime import timezone
 from decimal import Decimal
+from pathlib import Path
 
 from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -58,17 +60,77 @@ def get_db():
         db.close()
 
 
-def init_db():
-    """Create all tables. Run once on startup or via `python -m app.db init`."""
-    # Import models so they're registered on Base.metadata
-    from .models import user, portfolio, filing, ocr, gmail, screener, newswatch  # noqa: F401
+MODEL_MODULES = ("user", "portfolio", "filing", "ocr", "gmail", "screener", "newswatch", "alerts", "jobs")
+ALEMBIC_INI = Path(__file__).resolve().parent.parent / "alembic.ini"
 
-    _upgrade_legacy_portfolio_schema()
-    _upgrade_legacy_ocr_schema()
-    _upgrade_screener_schema()
-    Base.metadata.create_all(bind=engine)
+
+def import_models() -> None:
+    """Register every model on Base.metadata (needed by create_all and Alembic)."""
+    for name in MODEL_MODULES:
+        importlib.import_module(f"{__package__}.models.{name}")
+
+
+def alembic_config(connection=None):
+    """Alembic Config for this backend. With `connection`, migrations run on it
+    (so they share the app engine); otherwise env.py uses settings.database_url."""
+    from alembic.config import Config
+
+    config = Config(str(ALEMBIC_INI))
+    if connection is not None:
+        config.attributes["connection"] = connection
+    return config
+
+
+def _alembic(command_name: str, revision: str = "head") -> None:
+    from alembic import command
+
+    with engine.begin() as connection:
+        getattr(command, command_name)(alembic_config(connection), revision)
+
+
+def _schema_state() -> str:
+    """'fresh' (no tables), 'managed' (has an alembic revision) or 'legacy'
+    (tables created by the pre-Alembic create_all + ad-hoc ALTER era)."""
+    names = set(inspect(engine).get_table_names())
+    if "alembic_version" in names:
+        with engine.connect() as connection:
+            if connection.execute(text("SELECT version_num FROM alembic_version")).first():
+                return "managed"
+        names.discard("alembic_version")
+    return "legacy" if names else "fresh"
+
+
+def init_db():
+    """Bring the database schema to Alembic head. Runs on every startup or via
+    `python -m app.db init`.
+
+    - fresh DB              -> `alembic upgrade head` (baseline creates everything)
+    - managed DB            -> `alembic upgrade head`
+    - legacy DB (no revision, pre-Alembic) -> legacy column ALTERs + create_all
+      for tables that did not exist yet, then `alembic stamp head`. The bridge is
+      only correct while head == the schema create_all builds from the models,
+      which holds for the one-time switch to Alembic.
+
+    Afterwards any legacy `holdings` rows not yet moved to the ledger are migrated
+    (idempotent; a no-op for every DB created after the ledger shipped).
+    """
+    import_models()
+    state = _schema_state()
+    if state == "legacy":
+        _upgrade_legacy_portfolio_schema()
+        _upgrade_legacy_ocr_schema()
+        _upgrade_screener_schema()
+        Base.metadata.create_all(bind=engine)
+        _alembic("stamp")
+    else:
+        _alembic("upgrade")
     _migrate_legacy_holdings()
-    print("✓ Database initialized at", settings.database_url)
+    print(f"✓ Database initialized ({state}) at", settings.database_url)
+
+
+# --- Legacy (pre-Alembic) bridge ----------------------------------------------
+# Only called by init_db() for databases without an alembic revision. New schema
+# changes go in alembic/versions/, never here.
 
 
 def _upgrade_screener_schema():
@@ -166,6 +228,13 @@ def _upgrade_legacy_ocr_schema():
                     conn.execute(
                         text(f"ALTER TABLE {table_name} ADD COLUMN {name} {ddl}")
                     )
+        if "ocr_page_results" in names:
+            # The model indexes this ALTER-added column; create_all skips
+            # existing tables, so the index never appeared on legacy DBs.
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_ocr_page_results_label_check_status "
+                "ON ocr_page_results (label_check_status)"
+            ))
 
 
 def _migrate_legacy_holdings():

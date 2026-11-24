@@ -1,3 +1,4 @@
+from app.marketdata import yfinance_provider as yp
 from app.services import market
 
 
@@ -32,7 +33,7 @@ class _FakeTicker:
 
 
 def test_get_news_reads_new_content_envelope(monkeypatch):
-    monkeypatch.setattr(market.yf, "Ticker", lambda t: _FakeTicker(t))
+    monkeypatch.setattr(yp.yf, "Ticker", lambda t: _FakeTicker(t))
 
     items = market.get_news(limit=10)
 
@@ -47,7 +48,7 @@ def test_get_news_reads_new_content_envelope(monkeypatch):
 
 
 def test_get_news_falls_back_to_clickthrough_url(monkeypatch):
-    monkeypatch.setattr(market.yf, "Ticker", lambda t: _FakeTicker(t))
+    monkeypatch.setattr(yp.yf, "Ticker", lambda t: _FakeTicker(t))
 
     items = market.get_news(limit=10)
 
@@ -57,6 +58,6 @@ def test_get_news_falls_back_to_clickthrough_url(monkeypatch):
 def test_get_news_returns_empty_list_on_error(monkeypatch):
     def _boom(t):
         raise RuntimeError("yfinance down")
-    monkeypatch.setattr(market.yf, "Ticker", _boom)
+    monkeypatch.setattr(yp.yf, "Ticker", _boom)
 
     assert market.get_news() == []

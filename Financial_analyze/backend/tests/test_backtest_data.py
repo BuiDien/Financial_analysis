@@ -4,9 +4,9 @@ from datetime import date, datetime
 import pytest
 
 from app.backtest import data
-from app.screener import provider as provider_mod
-from app.screener.provider import VN_TZ, FixtureProvider
-from app.screener.ratelimit import RateLimited
+from app.marketdata import VN_TZ
+from app.marketdata.fixture import FixtureProvider
+from app.marketdata.ratelimit import RateLimited
 from app.services import market
 
 OHLC = [{"date": f"2026-11-{d:02d} 00:00:00", "open": 50_000.0, "high": 51_000.0,
@@ -26,7 +26,7 @@ def _use(monkeypatch, prov):
 def test_vn_bars_from_provider_in_full_vnd(monkeypatch, no_cache):
     prov = FixtureProvider(ohlc={"VNM": OHLC})
     _use(monkeypatch, prov)
-    monkeypatch.setattr("app.screener.provider.datetime", _Frozen)  # after close
+    monkeypatch.setattr("app.marketdata.base.datetime", _Frozen)  # after close
     bars = data.load_daily_bars("VN:VNM", date(2026, 11, 1), date(2026, 11, 10))
     assert [b["date"] for b in bars] == ["2026-11-06", "2026-11-09", "2026-11-10"]
     assert bars[0]["open"] == 50_000.0 and bars[0]["volume"] == 1000
@@ -47,7 +47,7 @@ def test_vn_partial_bar_dropped_before_close(monkeypatch, no_cache):
     class Morning(_Frozen):
         now_value = datetime(2026, 11, 10, 10, 0, tzinfo=VN_TZ)
 
-    monkeypatch.setattr("app.screener.provider.datetime", Morning)
+    monkeypatch.setattr("app.marketdata.base.datetime", Morning)
     bars = data.load_daily_bars("VN:VNM", date(2026, 11, 1), date(2026, 11, 10))
     assert bars[-1]["date"] == "2026-11-09"
 

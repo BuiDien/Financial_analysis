@@ -13,7 +13,7 @@ from typing import Callable, Protocol
 from zoneinfo import ZoneInfo
 
 from ..config import get_settings
-from ..screener.provider import get_provider
+from ..marketdata import get_provider
 from ..services import ai, market, news
 from ..services.news_feeds import NewsItem, dedupe_by_url, fetch_all_vn, match_holding_news
 from . import aliases, episodes, global_rule, holdings, message, oversold, store, verdict

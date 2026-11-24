@@ -11,11 +11,12 @@ from pypdf import PdfWriter
 
 from app.db import Base, get_db
 from app.main import app
-from app.routes import ocr_inbox, sync
-from app.routes.sync import (
+from app.services import ocr_inbox
+from app.services import ocr_sync_attempts, ocr_sync_coordinator, ocr_sync_worker
+from app.services.ocr_sync_coordinator import coordinator
+from app.services.ocr_sync_protocol import (
     OCR_PROTOCOL_VERSION,
     OCR_RESULT_SCHEMA_VERSION,
-    coordinator,
 )
 from app.ocr_page_contract import OCR_PAGE_RESULT_FORMAT
 from app.services import ocr_label_review
@@ -59,9 +60,9 @@ def client(tmp_path, monkeypatch):
         "Financial Analyze/Label Library",
     )
     monkeypatch.setattr(ocr_inbox.pdf, "page_count", lambda _path: 2)
-    monkeypatch.setattr(sync, "SessionLocal", Session)
+    monkeypatch.setattr(ocr_sync_attempts, "SessionLocal", Session)
     monkeypatch.setattr(
-        sync.settings, "enable_automatic_ocr_label_review", False,
+        ocr_sync_worker.settings, "enable_automatic_ocr_label_review", False,
     )
     coordinator.jobs.clear()
     coordinator.workers.clear()
@@ -355,10 +356,10 @@ def test_page_markdown_worker_stores_acks_and_finalizes_pages(client, monkeypatc
         automatic_review_started.set()
 
     monkeypatch.setattr(
-        sync.settings, "enable_automatic_ocr_label_review", True,
+        ocr_sync_worker.settings, "enable_automatic_ocr_label_review", True,
     )
     monkeypatch.setattr(
-        sync, "run_auto_document_label_review", automatic_review,
+        ocr_sync_worker, "run_auto_document_label_review", automatic_review,
     )
     item = upload(client).json()["items"][0]
     with client.websocket_connect("/ws/ocr") as ws:
@@ -546,6 +547,11 @@ def test_ollama_label_suggestions_require_user_decision_and_atomic_apply(
         f"label-review-runs/{run_id}",
     ).json()
     assert run["status"] == "completed"
+    # The run executed on the job runner, so it is listed in /api/jobs.
+    jobs = client.get("/api/jobs?kind=ocr_label_review").json()["items"]
+    assert [(j["status"], j["result"]) for j in jobs] == [
+        ("done", {"run_id": run_id, "status": "completed"}),
+    ]
     assert len(run["suggestions"]) == 1
     suggestion = run["suggestions"][0]
     assert suggestion["suggestion_kind"] == "label_text"
@@ -989,6 +995,35 @@ def test_labels_reject_bad_period_code(client):
     assert client.patch(url, json=_BASE_LABELS | {"fiscal_year": 1999}).status_code == 422
 
 
+def test_label_review_run_interrupted_by_restart_can_be_rerun(client, monkeypatch):
+    """A run a crash left queued/running blocks new runs for that page (the
+    active one is returned instead); restart recovery fails it so the user can
+    ask again."""
+    from app.services import ocr_inbox_labels
+
+    markdown = """| Label | Current |
+| --- | ---: |
+| TỔNG TÀI SẢN CỔ | 100 |"""
+    _item, review = create_markdown_review(client, markdown)
+    url = f"/api/ocr-inbox/reviews/{review['id']}/pages/1/label-review-runs"
+    body = {"revision": review["revision"], "targets": [{"table": 1, "row": 1}]}
+    # Simulate the crash: the run is created but its job never executes.
+    monkeypatch.setattr(ocr_inbox_labels, "run_label_review_job", lambda *_a: None)
+    stuck = client.post(url, json=body).json()
+    assert stuck["status"] == "queued"
+    assert client.post(url, json=body).json()["id"] == stuck["id"]  # blocked
+
+    bind = ocr_sync_attempts.SessionLocal().get_bind()
+    assert ocr_label_review.recover_interrupted_runs(bind=bind) == 1
+    failed = client.get(f"{url}/{stuck['id']}").json()
+    assert (failed["status"], failed["error"]) == ("failed", "interrupted by restart")
+    assert failed["active_target"] is None
+    assert ocr_label_review.recover_interrupted_runs(bind=bind) == 0  # idempotent
+
+    rerun = client.post(url, json=body).json()
+    assert rerun["id"] != stuck["id"] and rerun["status"] == "queued"
+
+
 # ── Robustness fixes ────────────────────────────────────────────────
 
 
@@ -1016,8 +1051,20 @@ def test_sync_result_for_inbox_job_is_serializable(client):
     ("action", "expected_status"), [("hold", "held"), ("stop", "uploaded")],
 )
 def test_worker_disconnect_while_holding_or_stopping_resolves_item(
-    client, action, expected_status,
+    client, action, expected_status, monkeypatch,
 ):
+    # The disconnect cleanup commits on an executor thread after the socket
+    # closes; wait for that commit itself instead of polling a fixed count.
+    released = threading.Event()
+    persist = ocr_sync_coordinator.persist_released_jobs
+
+    def persist_and_signal(entries):
+        try:
+            persist(entries)
+        finally:
+            released.set()
+
+    monkeypatch.setattr(ocr_sync_coordinator, "persist_released_jobs", persist_and_signal)
     item = upload(client).json()["items"][0]
     with client.websocket_connect("/ws/ocr") as ws:
         pair(ws)
@@ -1028,13 +1075,14 @@ def test_worker_disconnect_while_holding_or_stopping_resolves_item(
         ).status_code == 200
         assert ws.receive_json()["type"] == "job_control"
         # worker vanishes before it can send control_ack
-    current = _wait_status(client, item["id"], expected_status)
+    # Leaving the block cancels the server handler mid-cleanup. The DB release
+    # must still run: before it was shielded, that cancel could drop the write
+    # and the item stayed "processing" forever (this test flaked ~1 in 10).
+    assert released.wait(10), "disconnect cleanup never persisted the release"
+    current = client.get(f"/api/ocr-inbox/{item['id']}").json()
     assert current["status"] == expected_status
     expected_job = "held" if action == "hold" else "stopped"
-    for _ in range(100):
-        job_state = client.get(f"/api/sync/result/{job['jobId']}").json()
-        if job_state["status"] == expected_job:
-            break
+    job_state = client.get(f"/api/sync/result/{job['jobId']}").json()
     assert job_state["status"] == expected_job
 
 
@@ -1078,13 +1126,13 @@ def test_page_result_during_hold_is_not_stored(client):
 
 def test_dispatch_lock_is_released_while_streaming(client, monkeypatch):
     seen = []
-    original = sync._stream_job
+    original = ocr_sync_coordinator.stream_job
 
     async def spy(worker, job_id, path, header):
         seen.append(coordinator._dispatch_lock.locked())
         return await original(worker, job_id, path, header)
 
-    monkeypatch.setattr(sync, "_stream_job", spy)
+    monkeypatch.setattr(ocr_sync_coordinator, "stream_job", spy)
     item = upload(client).json()["items"][0]
     with client.websocket_connect("/ws/ocr") as ws:
         pair(ws)
@@ -1097,7 +1145,7 @@ def test_inbox_stream_failure_frees_worker_and_requeues(client, monkeypatch):
     async def broken(*_args, **_kwargs):
         raise ConnectionError("socket gone")
 
-    monkeypatch.setattr(sync, "_stream_job", broken)
+    monkeypatch.setattr(ocr_sync_coordinator, "stream_job", broken)
     item = upload(client).json()["items"][0]
     with client.websocket_connect("/ws/ocr") as ws:
         pair(ws)
@@ -1123,7 +1171,7 @@ def test_relative_storage_path_resolves_against_backend_dir(client, monkeypatch,
     relative = "uploads/ocr-inbox/legacy.pdf"
     (tmp_path / "backend" / "uploads" / "ocr-inbox").mkdir(parents=True)
     (tmp_path / "backend" / relative).write_bytes(PDF_BYTES)
-    session = next(app.dependency_overrides[ocr_inbox.get_db]())
+    session = next(app.dependency_overrides[get_db]())
     row = session.get(ocr_inbox.OCRInboxItem, item["id"])
     row.storage_path = relative
     session.commit()

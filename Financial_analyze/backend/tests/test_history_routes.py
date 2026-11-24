@@ -422,6 +422,21 @@ def test_companies_and_lines_list_only_active(client):
     assert client.get("/api/history/companies").json() == []
 
 
+def test_lines_expose_code_only_when_known(client):
+    from app.services import history_store
+
+    item, review = verified_review(client, BALANCE)
+    assert write(client, review, lines=new_lines()).status_code == 200
+    key = history_store.default_catalog().add_line(
+        "MBB", "consolidated", "balance", "No code line", None, ["label:>no code line"],
+    )
+    _add_fact(item["id"], key, "instant", None, "2026-09-30", 7)
+    lines = client.get("/api/history/MBB/consolidated/lines").json()
+    by_name = {ln["name"]: ln["code"] for ln in lines}
+    assert by_name["Line 2"] == "110" and by_name["Line 3"] == "120"
+    assert by_name["No code line"] is None
+
+
 # --- final review M1 / M3 ------------------------------------------------------
 
 

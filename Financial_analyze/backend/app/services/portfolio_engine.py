@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import json
+import math
 import secrets
 import threading
+import time
+from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 from collections import defaultdict, deque
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -95,6 +99,8 @@ def dec(value) -> Decimal:
 
 
 def _cache_point(db: Session, kind: str, key: str, day: date, value: Decimal) -> None:
+    if value is None or not value.is_finite():
+        return  # never store NaN/inf (value is NOT NULL; NaN breaks valuation)
     row = db.query(MarketDataPoint).filter_by(kind=kind, key=key, date=day).first()
     if row:
         row.value = value
@@ -133,10 +139,12 @@ def fx_rate(
                 eligible = [
                     r for r in rows if str(r.get("date", ""))[:10] <= day.isoformat()
                 ]
-                return dec(eligible[-1]["close"]) if eligible else None
-            return dec(market.get_quote(symbol).get("price"))
+                rate = dec(eligible[-1]["close"]) if eligible else None
+            else:
+                rate = dec(market.get_quote(symbol).get("price"))
         except Exception:
             return None
+        return rate if rate is not None and rate.is_finite() else None
 
     value = direct(source, target)
     if not value:
@@ -187,20 +195,78 @@ def market_symbol(ticker: str, currency: str | None) -> tuple[str, Decimal]:
     return symbol, Decimal("1")
 
 
-def quote(db: Session, ticker: str, currency: str | None = None) -> tuple[dict | None, dict]:
-    """Today's price for a ledger ticker, in the ledger's currency units."""
+# ── Bounded quote prefetch ─────────────────────────────────────────────
+# vnstock calls are serialised ~3s apart by the shared limiter, so fetching a
+# dozen holdings one by one inside a request takes longer than the frontend's
+# 15s timeout. prefetch_quotes() fetches in a background pool and waits only
+# `budget_s`; whatever is not back by then falls back to the stored price and
+# keeps loading (the next poll then finds it in market's 120s cache).
+_QUOTE_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="quote-prefetch")
+_quote_inflight: dict[str, Future] = {}
+_quote_lock = threading.RLock()  # done-callback may run inline under it
+PREFETCH_BUDGET_S = 4.0
+_PENDING = object()  # quote() marker: live result not ready, use the fallback
+
+
+def _quote_future(symbol: str) -> Future:
+    with _quote_lock:
+        fut = _quote_inflight.get(symbol)
+        if fut is None or fut.done():
+            fut = _QUOTE_POOL.submit(market.get_quote, symbol)
+            _quote_inflight[symbol] = fut
+            fut.add_done_callback(lambda f, s=symbol: _forget_quote(s, f))
+        return fut
+
+
+def _forget_quote(symbol: str, fut: Future) -> None:
+    with _quote_lock:
+        if _quote_inflight.get(symbol) is fut:
+            del _quote_inflight[symbol]
+
+
+def prefetch_quotes(
+    pairs: list[tuple[str, str | None]], budget_s: float = PREFETCH_BUDGET_S
+) -> dict[str, object]:
+    """{ticker: live quote dict | Exception | _PENDING} for (ticker, currency)
+    pairs, waiting at most `budget_s` in total."""
+    futures = {t: _quote_future(market_symbol(t, c)[0]) for t, c in pairs}
+    deadline = time.monotonic() + budget_s
+    out: dict[str, object] = {}
+    for ticker, fut in futures.items():
+        try:
+            out[ticker] = fut.result(timeout=max(0.0, deadline - time.monotonic()))
+        except FutureTimeout:
+            out[ticker] = _PENDING
+        except Exception as e:  # noqa: BLE001 - quote() turns it into the fallback
+            out[ticker] = e
+    return out
+
+
+def quote(
+    db: Session, ticker: str, currency: str | None = None, prefetched: object = None
+) -> tuple[dict | None, dict]:
+    """Today's price for a ledger ticker, in the ledger's currency units.
+    `prefetched` is this ticker's entry from prefetch_quotes() (None = fetch now)."""
     symbol, scale = market_symbol(ticker, currency)
     provider = "vnstock" if symbol.startswith(market.VN_PREFIX) else "yfinance"
     today = date.today()
     # Live first: market.get_quote already caches for 120s, and only a live
     # quote carries today's change. The stored point is the offline fallback.
     try:
-        item = dict(market.get_quote(symbol))
-        if item.get("price") is None:
+        if prefetched is _PENDING:
+            raise TimeoutError("quote still loading")
+        if isinstance(prefetched, BaseException):
+            raise prefetched
+        item = dict(prefetched if prefetched is not None else market.get_quote(symbol))
+        price = item.get("price")
+        if price is None or not math.isfinite(float(price)):
             raise ValueError("missing price")
         for field in ("price", "previous_close", "change"):
-            if item.get(field) is not None:
-                item[field] = float(dec(item[field]) * scale)
+            v = item.get(field)
+            if v is not None and math.isfinite(float(v)):
+                item[field] = float(dec(v) * scale)
+            else:
+                item[field] = None
         item["ticker"] = ticker
         _cache_point(db, "quote", ticker, today, dec(item["price"]))
         return item, {

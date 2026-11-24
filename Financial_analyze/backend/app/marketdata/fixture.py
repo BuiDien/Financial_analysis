@@ -1,113 +1,12 @@
-"""Swappable market-data seam for VN data (screener, charts, quotes, backtests).
-
-Ratios are fractions (ROE 0.18 = 18%). Money is VND. Bar prices are FULL VND
-for stocks (an index bar is in index points). Replacing vnstock means writing
-one new class that implements MarketDataProvider and wiring it in get_provider.
-"""
+"""In-memory VN provider + built-in sample data for tests/dev
+(SCREENER_PROVIDER=fixture)."""
 from __future__ import annotations
 
-from datetime import date, datetime, time as dtime, timedelta
-from typing import Literal, Protocol, TypedDict
-from zoneinfo import ZoneInfo
+from datetime import date, datetime
 
-VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
+from .base import (LATEST_KEYS, VN_TZ, Bar, Financials, Priority, UniverseEntry,
+                   trading_days_ending)
 
-LATEST_KEYS = ("pe", "pb", "dividend_yield", "market_cap", "debt_to_equity",
-               "npl", "nim", "cost_to_income", "car")
-YEAR_KEYS = ("roe", "revenue", "net_profit", "operating_cash_flow",
-             "gross_margin", "receivable_days", "inventory_days", "shares")
-# VN market-wide indexes: quoted in points, not lot-traded.
-VN_INDEX_SYMBOLS = frozenset({"VNINDEX", "VN30", "HNXINDEX", "HNX30", "UPCOMINDEX"})
-MARKET_CLOSE = dtime(15, 0)  # ICT: after this the day's bar is final
-# yfinance-style interval tokens a provider must accept in fetch_ohlc.
-INTERVALS = ("1m", "5m", "15m", "30m", "1h", "1d", "1wk", "1mo")
-# Canonical board flags (exchange status). None = trading normally / unknown.
-BOARD_FLAGS = ("warning", "control", "restricted", "suspended")
-
-
-class UniverseEntry(TypedDict):
-    symbol: str
-    exchange: str
-    industry: str | None
-    is_bank: bool
-
-
-class BoardEntry(TypedDict):
-    flag: str | None            # one of BOARD_FLAGS, or None
-    status: str | None          # provider's raw status text, for display/debug
-    foreign_room: float | None  # fraction of the foreign-ownership cap still free
-
-
-class Financials(TypedDict):
-    latest: dict[str, float | None]
-    years: dict[str, dict[str, float | None]]  # completed fiscal years only
-
-
-class Bar(TypedDict):
-    """One OHLCV bar. `date` is "YYYY-MM-DD HH:MM:SS" (or "YYYY-MM-DD"),
-    labelled by the bar's period START (Monday for weekly, the 1st for monthly).
-    Prices in full VND (index points for an index); volume in shares."""
-    date: str
-    open: float
-    high: float
-    low: float
-    close: float
-    volume: float
-
-
-Priority = Literal["interactive", "background"]
-
-
-class ProviderRateLimited(RuntimeError):
-    """The provider is over its quota/cooling down. Retry later."""
-
-
-class MarketDataProvider(Protocol):
-    name: str
-
-    def list_universe(self) -> list[UniverseEntry]: ...
-    def fetch_financials(self, entry: UniverseEntry) -> Financials: ...
-    def fetch_prices(self, symbol: str, days: int = 120) -> list[dict]:
-        """Completed daily bars [{date "YYYY-MM-DD", close (full VND), volume}],
-        oldest first; never includes today's bar before the close."""
-        ...
-    def fetch_ohlc(self, symbol: str, start: date, end: date, interval: str = "1d",
-                   priority: Priority = "background") -> list[Bar]:
-        """Bars with start <= date <= end, oldest first. `interval` is one of
-        INTERVALS. May include today's still-forming bar (charts want it)."""
-        ...
-    def fetch_board(self, symbols: list[str]) -> dict[str, BoardEntry]: ...
-    def list_company_names(self) -> dict[str, str]:
-        """symbol -> official company name (Vietnamese)."""
-        ...
-
-
-def price_unit(symbol: str) -> float:
-    """VCI quotes stocks in nghin dong (x1000 = VND) and indexes in points."""
-    return 1.0 if symbol.upper() in VN_INDEX_SYMBOLS else 1000.0
-
-
-def drop_partial_bar(bars: list[dict], now: datetime | None = None) -> list[dict]:
-    """Drop a bar dated today (Vietnam time) while the session is still open:
-    before 15:00 ICT its close/volume are not final."""
-    n = (now or datetime.now(VN_TZ)).astimezone(VN_TZ)
-    if not bars or n.time() >= MARKET_CLOSE:
-        return bars
-    today = n.date().isoformat()
-    return [b for b in bars if str(b.get("date", ""))[:10] != today]
-
-
-def trading_days_ending(end: date, n: int) -> list[str]:
-    """The n Mon-Fri dates ending on `end` (rolled back to a weekday), oldest first."""
-    d = end
-    while d.weekday() > 4:
-        d -= timedelta(days=1)
-    out: list[str] = []
-    while len(out) < n:
-        if d.weekday() <= 4:
-            out.append(d.isoformat())
-        d -= timedelta(days=1)
-    return out[::-1]
 
 
 def _entry(symbol, exchange, industry, is_bank=False) -> UniverseEntry:
@@ -282,13 +181,3 @@ class FixtureProvider:
         self.calls.append(("board", ""))
         return {s: dict(self.board[s]) for s in symbols if s in self.board}
 
-
-def get_provider() -> MarketDataProvider:
-    from ..config import get_settings
-    name = get_settings().screener_provider
-    if name == "fixture":
-        return FixtureProvider()
-    if name == "vnstock":
-        from .vnstock_provider import VnstockProvider
-        return VnstockProvider()
-    raise ValueError(f"unknown screener_provider: {name!r}")

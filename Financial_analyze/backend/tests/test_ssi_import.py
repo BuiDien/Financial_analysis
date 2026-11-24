@@ -126,3 +126,43 @@ def test_unrecognized_attachment_is_ignored(db, tmp_path):
     db.commit()
     ssi_import.import_pending(db)
     assert db.query(GmailReport).one().status == "ignored"
+
+
+def test_daily_import_replaces_exact_day_manual_row_before_nearer_id(db, fake_reports):
+    """I1: Monday's pasted row stays; Wednesday's email replaces Wednesday's row,
+    even though Monday's has the lower id and is within 3 days."""
+    p = Portfolio(name="Main", display_currency="VND")
+    db.add(p); db.flush()
+    mon = PortfolioTransaction(portfolio_id=p.id, type="BUY", ticker="VCB", quantity=200,
+                               unit_price=53600, currency="VND", source="manual",
+                               effective_at=datetime(2026, 11, 4, 8, 0, 1, tzinfo=timezone.utc))
+    wed = PortfolioTransaction(portfolio_id=p.id, type="BUY", ticker="VCB", quantity=200,
+                               unit_price=53600, currency="VND", source="manual",
+                               effective_at=datetime(2026, 11, 6, 8, 0, 1, tzinfo=timezone.utc))
+    db.add_all([mon, wed]); db.commit()
+    fake_reports(db, "a.pdf", [BUY])  # trade date 06/11/2026
+    assert ssi_import.import_pending(db)["replaced_manual"] == 1
+    assert db.get(PortfolioTransaction, mon.id).status == "active"
+    assert db.get(PortfolioTransaction, wed.id).status == "replaced"
+
+
+def test_daily_import_falls_back_to_nearest_manual_within_3_days(db, fake_reports):
+    p = Portfolio(name="Main", display_currency="VND")
+    db.add(p); db.flush()
+    far = PortfolioTransaction(portfolio_id=p.id, type="BUY", ticker="VCB", quantity=200,
+                               unit_price=53600, currency="VND", source="manual",
+                               effective_at=datetime(2026, 11, 3, 8, 0, tzinfo=timezone.utc))
+    near = PortfolioTransaction(portfolio_id=p.id, type="BUY", ticker="VCB", quantity=200,
+                                unit_price=53600, currency="VND", source="manual",
+                                effective_at=datetime(2026, 11, 7, 8, 0, tzinfo=timezone.utc))
+    db.add_all([far, near]); db.commit()
+    fake_reports(db, "a.pdf", [BUY])
+    ssi_import.import_pending(db)
+    assert db.get(PortfolioTransaction, far.id).status == "active"
+    assert db.get(PortfolioTransaction, near.id).status == "replaced"
+
+
+def test_import_summary_carries_rebuild_job_id(db, fake_reports, monkeypatch):
+    monkeypatch.setattr(ssi_import, "_rebuild_async", lambda db, p: "pf_job")
+    fake_reports(db, "a.pdf", [BUY])
+    assert ssi_import.import_pending(db)["job_id"] == "pf_job"

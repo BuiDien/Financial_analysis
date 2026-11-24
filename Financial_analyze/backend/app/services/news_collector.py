@@ -7,7 +7,7 @@ for a future sentiment workflow, but raw social posts do not enter the daily
 market note.
 
 Run via `Financial_analyze/scripts/collect_daily_news.py` (Task 3), not
-imported by the MCP news server — this module's yfinance/subprocess imports
+imported by the MCP news server — this module's market-data/subprocess imports
 are local to each function specifically so it stays safe to import even in
 contexts that lack those deps (mirrors the constraint already documented in
 `app.services.news`).
@@ -249,9 +249,8 @@ def fetch_stocktwits(ticker: str, limit: int = 20) -> list[dict]:
 def fetch_yfinance_news(ticker: str) -> list[dict]:
     """Fetch news for a specific ticker via yfinance."""
     try:
-        import yfinance as yf
-        stock = yf.Ticker(ticker)
-        news_items = stock.get_news(count=YFINANCE_NEWS_LIMIT)
+        from ..marketdata import get_global_provider
+        news_items = get_global_provider().ticker_news(ticker, YFINANCE_NEWS_LIMIT)
     except Exception:
         return []
 
@@ -281,7 +280,8 @@ def fetch_yfinance_news(ticker: str) -> list[dict]:
 def fetch_yfinance_global_news() -> list[dict]:
     """Fetch global macro news via yfinance Search."""
     try:
-        import yfinance as yf
+        from ..marketdata import get_global_provider
+        provider = get_global_provider()
     except Exception:
         return []
 
@@ -291,10 +291,10 @@ def fetch_yfinance_global_news() -> list[dict]:
 
     for query in queries:
         try:
-            search = yf.Search(query=query, news_count=YFINANCE_GLOBAL_LIMIT)
+            found = provider.search_news(query, YFINANCE_GLOBAL_LIMIT)
         except Exception:
             continue
-        for article in search.news or []:
+        for article in found:
             if "content" in article:
                 content = article["content"]
                 title = content.get("title", "")

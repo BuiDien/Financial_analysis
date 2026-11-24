@@ -3,7 +3,7 @@ import time
 
 import pytest
 
-from app.screener.ratelimit import RateLimited, RateLimiter
+from app.marketdata.ratelimit import RateLimited, RateLimiter
 
 
 class Fake:
@@ -159,7 +159,7 @@ def test_interactive_fails_fast_during_cooldown():
     "Bạn đã gửi quá nhiều request",
 ])
 def test_quota_messages_are_rate_errors(msg):
-    from app.screener.ratelimit import _is_rate_error
+    from app.marketdata.ratelimit import _is_rate_error
     assert _is_rate_error(Exception(msg))
 
 
@@ -168,7 +168,7 @@ def test_quota_messages_are_rate_errors(msg):
     "no data for VNM", "row 429 missing",
 ])
 def test_ordinary_errors_mentioning_limit_are_not_rate_errors(msg):
-    from app.screener.ratelimit import _is_rate_error
+    from app.marketdata.ratelimit import _is_rate_error
     assert not _is_rate_error(ValueError(msg))
 
 

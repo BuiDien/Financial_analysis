@@ -6,13 +6,14 @@ from datetime import datetime, time as dtime, timedelta, timezone
 
 from ..db import SessionLocal
 from ..models.screener import TickerMetrics
+from ..marketdata import VN_TZ, drop_partial_bar, registry
+from ..marketdata.ratelimit import RateLimited
 from . import store
-from .provider import VN_TZ, drop_partial_bar, get_provider
-from .ratelimit import RateLimited
 
 CLOSE = dtime(15, 0)
 FINANCIALS_MAX_AGE = timedelta(days=7)
 CHECK_EVERY_S = 600
+SCHEDULE_NAME = "screener-refresh"  # its loop runs on app.jobs.scheduler
 KINDS = ("prices", "financials")
 # A ticker that aborts the run on a rate limit this many times in a row gets a
 # per-ticker error and is skipped for the rest of that run (else every tick
@@ -63,7 +64,6 @@ class RefreshManager:
         self._total = 0
         self._started_at: str | None = None
         self._last_error: str | None = None
-        self._thread: threading.Thread | None = None
         self._wake = threading.Event()
         self._strikes: dict[tuple[str, str], int] = {}       # (kind, symbol) -> aborts
         self._given_up: dict[tuple[str, str], set[str]] = {}  # (kind, run started) -> symbols
@@ -81,8 +81,14 @@ class RefreshManager:
                     "last_error": self._last_error}
 
     def is_booted(self) -> bool:
-        t = self._thread
-        return t is not None and t.is_alive()
+        from ..jobs import scheduler
+
+        return scheduler.is_running(SCHEDULE_NAME)
+
+    @property
+    def wake_event(self) -> threading.Event:
+        """Set by request() to cut the scheduler's wait short."""
+        return self._wake
 
     def request(self, kind: str) -> bool:
         if kind not in KINDS:
@@ -137,8 +143,9 @@ class RefreshManager:
                     self._running = None
 
     def tick(self) -> None:
-        """One pass of the background loop. Never lets an error kill the thread:
-        vnstock/vnai can raise SystemExit outside the limiter."""
+        """One pass of the background loop (run by app.jobs.scheduler every
+        CHECK_EVERY_S, or sooner on request()). Never lets an error kill the
+        thread: vnstock/vnai can raise SystemExit outside the limiter."""
         try:
             self.check_and_queue()
             self.run_pending()
@@ -147,20 +154,6 @@ class RefreshManager:
         except BaseException as e:  # incl. SystemExit
             with self._lock:
                 self._last_error = f"{type(e).__name__}: {e}"
-
-    def boot(self) -> None:
-        with self._lock:
-            if self._thread and self._thread.is_alive():
-                return
-
-            def loop():
-                while True:
-                    self._wake.clear()
-                    self.tick()
-                    self._wake.wait(CHECK_EVERY_S)
-
-            self._thread = threading.Thread(target=loop, name="screener-refresh", daemon=True)
-            self._thread.start()
 
     # ---- internals ----
     def _refresh_board(self, db, provider, symbols: list[str]) -> None:
@@ -258,4 +251,7 @@ class RefreshManager:
             self._last_error = None
 
 
-manager = RefreshManager(SessionLocal, get_provider, lambda: datetime.now(timezone.utc))
+# get_provider is looked up per run (not bound at import) so patching
+# app.marketdata.registry.get_provider takes effect.
+manager = RefreshManager(SessionLocal, lambda: registry.get_provider(),
+                         lambda: datetime.now(timezone.utc))

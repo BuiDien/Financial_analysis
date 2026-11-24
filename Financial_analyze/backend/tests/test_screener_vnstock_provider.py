@@ -5,9 +5,9 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from app.screener import vnstock_provider as vp
-from app.screener.provider import LATEST_KEYS, VN_TZ
-from app.screener.ratelimit import RateLimited
+from app.marketdata import LATEST_KEYS, VN_TZ
+from app.marketdata import vnstock_provider as vp
+from app.marketdata.ratelimit import RateLimited
 
 FX = Path(__file__).parent / "fixtures" / "screener"
 YEAR = 2026
@@ -346,7 +346,7 @@ def test_provider_propagates_rate_limited(monkeypatch):
 
 
 def test_provider_default_limiter_is_shared(monkeypatch):
-    from app.screener import ratelimit
+    from app.marketdata import ratelimit
     lim = RecordingLimiter()
     monkeypatch.setattr(ratelimit, "vnstock_limiter", lim)
     _stub_vnstock(monkeypatch)
@@ -356,7 +356,7 @@ def test_provider_default_limiter_is_shared(monkeypatch):
 
 def test_get_provider_vnstock(monkeypatch):
     from app.config import get_settings
-    from app.screener.provider import get_provider
+    from app.marketdata import get_provider
     monkeypatch.setattr(get_settings(), "screener_provider", "vnstock")
     assert isinstance(get_provider(), vp.VnstockProvider)
 
@@ -441,7 +441,7 @@ def test_flat_columns_joins_multiindex():
 
 
 def test_fixture_board():
-    from app.screener.provider import FixtureProvider
+    from app.marketdata.fixture import FixtureProvider
     p = FixtureProvider(board={"GOODCO": {"flag": "warning", "status": "s", "foreign_room": 0.1}})
     assert p.fetch_board(["GOODCO"])["GOODCO"]["flag"] == "warning"
     assert FixtureProvider().fetch_board(["GOODCO"]) == {}

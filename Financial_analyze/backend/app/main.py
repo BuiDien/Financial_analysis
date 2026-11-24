@@ -3,11 +3,14 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 
 from .config import get_settings
 from .db import init_db
+from .jobs import lifecycle as jobs_lifecycle
+from .services.errors import ServiceError
 from .routes import (
     market,
     fundamentals,
@@ -22,6 +25,8 @@ from .routes import (
     history,
     gmail,
     backtest,
+    alerts,
+    jobs,
 )
 
 settings = get_settings()
@@ -30,21 +35,12 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     init_db()
-    sync.recover_interrupted_attempts()
-    portfolio.recover_jobs()
-    from .screener import refresh
-
-    if refresh.should_boot_refresh(settings):
-        refresh.manager.boot()
-    if settings.enable_gmail_poller:
-        from .services import gmail_poller
-
-        gmail_poller.start()
+    # Restart recovery (jobs, OCR sync attempts, portfolio jobs) + periodic loops.
+    jobs_lifecycle.startup(settings)
     try:
         yield
     finally:
-        if settings.enable_gmail_poller:
-            gmail_poller.shutdown()
+        jobs_lifecycle.shutdown()
 
 
 app = FastAPI(
@@ -101,6 +97,13 @@ app.add_middleware(
 app.add_middleware(OriginGuardMiddleware, allowed_origins=settings.origins_list)
 
 
+@app.exception_handler(ServiceError)
+async def service_error_handler(request, exc: ServiceError):
+    """Render a domain ServiceError exactly as FastAPI renders HTTPException
+    (same handler: detail body, status, headers; no body for 204/304)."""
+    return await http_exception_handler(request, exc)
+
+
 @app.get("/")
 def root():
     return {"name": "Helix Backend", "version": "0.1.0", "docs": "/docs"}
@@ -126,3 +129,5 @@ app.include_router(notes.router, prefix="/api", tags=["notes"])
 app.include_router(ocr_inbox.router, prefix="/api", tags=["ocr-inbox"])
 app.include_router(gmail.router, prefix="/api", tags=["gmail"])
 app.include_router(backtest.router, prefix="/api", tags=["backtest"])
+app.include_router(alerts.router, prefix="/api", tags=["alerts"])
+app.include_router(jobs.router, prefix="/api", tags=["jobs"])

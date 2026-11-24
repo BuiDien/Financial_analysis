@@ -1,79 +1,16 @@
-"""Market data — yfinance wrapper with optional Redis cache."""
-import json
+"""Market data facade: quotes, history, indices, US news.
+
+Vendor access goes through ``app.marketdata`` (VN exchange provider for
+"VN:<symbol>" tickers, the global/Yahoo provider for everything else); results
+are cached in ``app.marketdata.cache`` (Redis when REDIS_URL is set).
+"""
 import math
-import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta
-from typing import Any
 
-import yfinance as yf
-
-from ..config import get_settings
-
-settings = get_settings()
-
-_redis = None
-if settings.redis_url:
-    try:
-        import redis
-        _redis = redis.from_url(settings.redis_url, decode_responses=True)
-        _redis.ping()
-    except Exception:
-        _redis = None
-
-
-# Fallback when Redis isn't configured (the common case in dev): a plain
-# in-process dict cache. Without ANY cache, every poller (Watch board every
-# 2s, the header ticker tape, multiple browser tabs) hits Yahoo fresh for
-# the same ticker — that's what tripped Yahoo's rate limit under normal use.
-# Request handlers run on a thread pool, so every access holds the lock, and
-# the dict is capped (expired entries are swept first, then soonest-to-expire).
-_LOCAL_CACHE_MAX = 2000
-_local_cache: dict[str, tuple[float, Any]] = {}
-_local_lock = threading.Lock()
-
-
-def _cache_get(key: str):
-    if _redis:
-        try:
-            v = _redis.get(key)
-            return json.loads(v) if v else None
-        except Exception:
-            return None
-    with _local_lock:
-        hit = _local_cache.get(key)
-        if not hit:
-            return None
-        expires_at, value = hit
-        if time.time() >= expires_at:
-            _local_cache.pop(key, None)
-            return None
-        return value
-
-
-def _evict_locked(now: float) -> None:
-    for k in [k for k, (exp, _) in list(_local_cache.items()) if exp <= now]:
-        _local_cache.pop(k, None)
-    over = len(_local_cache) - _LOCAL_CACHE_MAX + 1
-    if over > 0:
-        oldest = sorted(_local_cache.items(), key=lambda kv: kv[1][0])[:over]
-        for k, _ in oldest:
-            _local_cache.pop(k, None)
-
-
-def _cache_set(key: str, value: Any, ttl: int = 60):
-    if _redis:
-        try:
-            _redis.setex(key, ttl, json.dumps(value, default=str))
-        except Exception:
-            pass
-        return
-    now = time.time()
-    with _local_lock:
-        if key not in _local_cache and len(_local_cache) >= _LOCAL_CACHE_MAX:
-            _evict_locked(now)
-        _local_cache[key] = (now + ttl, value)
+from ..marketdata import VN_PREFIX, registry, vn_symbol
+from ..marketdata.cache import get as _cache_get, set as _cache_set
 
 
 def get_market_state(ticker: str) -> str | None:
@@ -87,7 +24,7 @@ def get_market_state(ticker: str) -> str | None:
     if cached:
         return cached.get("state")
     try:
-        state = yf.Ticker(ticker).info.get("marketState")
+        state = registry.get_global_provider().market_state(ticker)
     except Exception:
         state = None
     _cache_set(key, {"state": state}, ttl=600)
@@ -95,12 +32,11 @@ def get_market_state(ticker: str) -> str | None:
 
 
 # "VN:<symbol>" tickers (VNINDEX, VN30, VNM, ...) come from the VN market-data
-# provider (app.screener.provider; vnstock/VCI today) — Yahoo doesn't carry
+# provider (app.marketdata; vnstock/VCI today) — Yahoo doesn't carry
 # HOSE/HNX listings. The provider hands out full VND; this module's public
 # output keeps the legacy VCI unit (nghìn đồng for stocks, points for indexes)
 # that portfolio_engine and the frontend were built on. Daily closes, so change
 # is vs the prior session.
-VN_PREFIX = "VN:"
 
 
 def _vn_market_state() -> str:
@@ -127,9 +63,10 @@ def _vn_bars(symbol: str, start: date, end: date, interval: str = "1d") -> list[
     """Provider bars in the legacy VCI unit. Rate limits surface as
     VnRateLimited (vnstock's quota guard calls sys.exit(); the provider's
     limiter turns that into ProviderRateLimited)."""
-    from ..screener.provider import ProviderRateLimited, get_provider, price_unit
+    from ..marketdata import ProviderRateLimited, price_unit
     try:
-        bars = get_provider().fetch_ohlc(symbol, start, end, interval, priority="interactive")
+        bars = registry.get_provider().fetch_ohlc(symbol, start, end, interval,
+                                                  priority="interactive")
     except ProviderRateLimited as e:
         raise VnRateLimited(str(e)) from None
     unit = price_unit(symbol)
@@ -171,29 +108,28 @@ def _get_quote_vn(symbol: str) -> dict:
     return out
 
 
+def _finite_fields(quote: dict) -> dict:
+    """Non-finite floats (NaN/inf from a vendor with no data) become None, so a
+    quote is always JSON-serialisable and never caches a NaN."""
+    return {k: (None if isinstance(v, float) and not math.isfinite(v) else v)
+            for k, v in quote.items()}
+
+
 def get_quote(ticker: str) -> dict:
     cached = _cache_get(f"quote:{ticker}")
     if cached:
         return cached
-    if ticker.startswith(VN_PREFIX):
-        out = _get_quote_vn(ticker[len(VN_PREFIX):])
+    symbol = vn_symbol(ticker)
+    if symbol is not None:
+        out = _finite_fields(_get_quote_vn(symbol))
         _cache_set(f"quote:{ticker}", out, ttl=120)
         return out
-    info = yf.Ticker(ticker).fast_info
-    out = {
+    out = _finite_fields({
         "ticker": ticker,
-        "price": float(info.last_price) if info.last_price else None,
-        "open": float(info.open) if info.open else None,
-        "previous_close": float(info.previous_close) if info.previous_close else None,
-        "day_high": float(info.day_high) if info.day_high else None,
-        "day_low": float(info.day_low) if info.day_low else None,
-        "year_high": float(info.year_high) if info.year_high else None,
-        "year_low": float(info.year_low) if info.year_low else None,
-        "market_cap": float(info.market_cap) if info.market_cap else None,
-        "currency": info.currency,
+        **registry.get_global_provider().quote(ticker),
         "market_state": get_market_state(ticker),
         "ts": int(time.time()),
-    }
+    })
     if out["price"] and out["previous_close"]:
         out["change"] = out["price"] - out["previous_close"]
         out["change_pct"] = (out["change"] / out["previous_close"]) * 100
@@ -303,25 +239,20 @@ def get_history(ticker: str, period: str = "1mo", interval: str = "1d",
         if out != cached:
             _cache_set(key, out, ttl=300)
         return out
-    if ticker.startswith(VN_PREFIX):
-        out = _get_history_vn(ticker[len(VN_PREFIX):], period, interval, end=end)
+    symbol = vn_symbol(ticker)
+    if symbol is not None:
+        out = _get_history_vn(symbol, period, interval, end=end)
         _cache_set(key, out, ttl=300)
         return out
+    provider = registry.get_global_provider()
     if end is not None:
-        start = _period_start(period, end)
-        df = yf.Ticker(ticker).history(start=start.isoformat(), end=end.isoformat(),
-                                       interval=interval, auto_adjust=adjusted).reset_index()
+        rows = provider.history(ticker, interval=interval, adjusted=adjusted,
+                                start=_period_start(period, end), end=end)
     else:
-        df = yf.Ticker(ticker).history(period=period, interval=interval,
-                                       auto_adjust=adjusted).reset_index()
+        rows = provider.history(ticker, interval=interval, adjusted=adjusted, period=period)
     out = []
-    for _, row in df.iterrows():
-        bar = _history_bar(
-            row,
-            row.iloc[0],
-            {"open": "Open", "high": "High", "low": "Low", "close": "Close"},
-            volume_field="Volume",
-        )
+    for row in rows:
+        bar = _history_bar(row, row["date"], _OHLC)
         if bar is not None:
             out.append(bar)
     _cache_set(key, out, ttl=300)
@@ -340,44 +271,17 @@ def get_indices() -> dict:
         futures = {pool.submit(get_quote, t): name for name, t in tickers.items()}
         for future in as_completed(futures):
             name = futures[future]
+            # One failed symbol is null on its own; it never fails the list.
             try:
-                out[name] = future.result()
+                out[name] = _finite_fields(future.result())
             except Exception:
                 out[name] = None
     return out
 
 
 def get_news(ticker: str | None = None, limit: int = 30) -> list[dict]:
-    """US financial news via yfinance. Newest yfinance nests fields under
-    `content`; there is no per-item ticker list anymore (`tickers` is
-    always []) — that field was removed from the payload upstream.
-    """
+    """US financial news (Yahoo); [] when the vendor call fails."""
     try:
-        items = yf.Ticker(ticker or "SPY").news[:limit]
+        return registry.get_global_provider().news(ticker or "SPY", limit)
     except Exception:
         return []
-
-    out = []
-    for n in items:
-        try:
-            c = n.get("content", {}) or {}
-            pub_date = c.get("pubDate")
-            published = 0
-            if pub_date:
-                try:
-                    published = int(datetime.fromisoformat(pub_date).timestamp())
-                except ValueError:
-                    published = 0
-            canonical = c.get("canonicalUrl") or {}
-            click_through = c.get("clickThroughUrl") or {}
-            url = canonical.get("url") or click_through.get("url")
-            out.append({
-                "title": c.get("title", ""),
-                "publisher": (c.get("provider") or {}).get("displayName", "Yahoo Finance"),
-                "url": url,
-                "published": published,
-                "tickers": [],
-            })
-        except Exception:
-            continue
-    return out

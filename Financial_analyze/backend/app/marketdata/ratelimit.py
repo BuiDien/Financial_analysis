@@ -5,7 +5,7 @@ import re
 import threading
 import time
 
-from .provider import ProviderRateLimited
+from .base import ProviderRateLimited
 
 
 class RateLimited(ProviderRateLimited):

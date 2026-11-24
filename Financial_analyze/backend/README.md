@@ -22,6 +22,41 @@ Swagger is available at `http://localhost:8000/docs`. Run checks with:
 .venv/bin/python -m ruff check app tests
 ```
 
+## Database migrations (Alembic)
+
+The schema is managed by Alembic (`alembic.ini`, `alembic/versions/`). The database URL is never
+in `alembic.ini`: `alembic/env.py` reads `DATABASE_URL` / `.env` through app settings, the same as
+the app. `init_db()` (app startup and `python -m app.db init`) brings any database to head:
+
+- fresh DB, or a DB that already has an `alembic_version` revision -> `alembic upgrade head`;
+- pre-Alembic DB (tables but no revision) -> legacy column bridge in `app/db.py` + `create_all`
+  for missing tables -> `alembic stamp head`. This bridge is frozen: never add schema changes to it.
+
+To change the schema:
+
+1. Edit the model in `app/models/`.
+2. Autogenerate against a **scratch DB at head**, not `helix.db`. A legacy-bridged `helix.db`
+   still differs from the models in harmless ways (old `scan_*` tables, SQLite server defaults,
+   FLOAT vs NUMERIC), and autogenerate would put that noise into your migration.
+
+   ```bash
+   export DATABASE_URL=sqlite:////tmp/helix-migrate.db
+   rm -f /tmp/helix-migrate.db
+   .venv/bin/alembic upgrade head
+   .venv/bin/alembic revision --autogenerate -m "add foo to bar"
+   unset DATABASE_URL
+   ```
+
+3. Read the generated file in `alembic/versions/`. Autogenerate misses some things (renames show up
+   as drop+add; data backfills are yours to write). SQLite migrations use batch mode
+   (`render_as_batch=True`), so `ALTER`s become copy-and-swap: keep them in `with
+   op.batch_alter_table(...)` blocks.
+4. Run `.venv/bin/python -m pytest -q tests/test_alembic_migrations.py`. It fails whenever the
+   models and the migrations disagree. Back up `helix.db` before the first startup on the new code.
+
+Other commands: `.venv/bin/alembic current`, `.venv/bin/alembic history`,
+`.venv/bin/alembic downgrade -1`.
+
 ## Hermes Agent
 
 AI chat defaults to the full Hermes Agent gateway, not a raw Ollama/MLX model endpoint. Configure
@@ -95,7 +130,7 @@ The complete app can be started from `Financial_analyze/` with `./scripts/run.sh
 - Article extraction rejects localhost, private, link-local, and other non-public targets.
 
 The API does not yet have authentication. Keep it on a trusted machine/network; do not expose port
-8000 publicly. Authentication and migration tooling are Phase-0 release blockers.
+8000 publicly. Authentication is a release blocker (migrations are handled by Alembic).
 
 ## Important Boundaries
 

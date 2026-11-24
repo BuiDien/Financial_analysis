@@ -5,7 +5,8 @@ import pytest
 
 from app.screener import store
 from app.screener.metrics import compute_price_metrics
-from app.screener.provider import FixtureProvider, SAMPLE_UNIVERSE, trading_days_ending
+from app.marketdata import trading_days_ending
+from app.marketdata.fixture import SAMPLE_UNIVERSE, FixtureProvider
 
 VN = ZoneInfo("Asia/Ho_Chi_Minh")
 NOW = datetime(2026, 11, 10, 20, 0, tzinfo=VN)

@@ -1,9 +1,9 @@
 """The VN market-data seam: drop_partial_bar, units, fixture fetch_ohlc."""
 from datetime import date, datetime
 
-from app.screener.provider import (VN_TZ, FixtureProvider, ProviderRateLimited,
-                                   drop_partial_bar, price_unit)
-from app.screener.ratelimit import RateLimited
+from app.marketdata import VN_TZ, ProviderRateLimited, drop_partial_bar, price_unit
+from app.marketdata.fixture import FixtureProvider
+from app.marketdata.ratelimit import RateLimited
 
 BARS = [{"date": "2026-11-09", "close": 1.0}, {"date": "2026-11-10", "close": 2.0}]
 

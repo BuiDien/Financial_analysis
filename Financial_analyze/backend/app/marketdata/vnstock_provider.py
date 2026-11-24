@@ -13,8 +13,8 @@ import functools
 import math
 from datetime import date, datetime, timedelta
 
-from .provider import (LATEST_KEYS, VN_TZ, Bar, Financials, Priority, UniverseEntry,
-                       drop_partial_bar, price_unit)
+from .base import (LATEST_KEYS, VN_TZ, Bar, Financials, Priority, UniverseEntry,
+                   drop_partial_bar, price_unit)
 
 EXCHANGES = {"HOSE": "HOSE", "HSX": "HOSE", "HNX": "HNX", "UPCOM": "UPCOM"}
 BANK_WORDS = ("ngân hàng", "bank")

@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.models.newswatch import CompanyName
 from app.newswatch.aliases import Names, refresh_official_names, resolve
-from app.screener.provider import FixtureProvider
+from app.marketdata.fixture import FixtureProvider
 
 
 def _cfg(aliases=None):

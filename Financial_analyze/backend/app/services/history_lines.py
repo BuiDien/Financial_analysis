@@ -60,6 +60,25 @@ def code_alias(code: str) -> str:
     return f"code:{code}"
 
 
+def line_code(line) -> str | None:
+    """TT200 Mã số recorded as a `code:` alias on a catalogue line; never invented."""
+    for alias in (line.aliases if line else []):
+        if alias.startswith("code:") and alias[5:].strip():
+            return alias[5:].strip()
+    return None
+
+
+def line_name(catalog, ticker: str, scope: str, kind: str, key: str, facts) -> str:
+    """Display name: the catalogue name, else the newest fact's row label, else the key."""
+    line = catalog.get(ticker, scope, kind, key)
+    if line is not None:
+        return line.name
+    labelled = [f for f in facts if f.row_label]
+    if labelled:
+        return max(labelled, key=lambda f: (f.period_end, f.id)).row_label
+    return key
+
+
 def label_alias(label: str, parent_label: str | None) -> str:
     return f"label:{normalize_label(parent_label or '')}>{normalize_label(label)}"
 

@@ -14,7 +14,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.db import Base
-from app.models import user, portfolio, filing, ocr, gmail, screener, newswatch  # noqa: F401 — register tables
+from app.models import user, portfolio, filing, ocr, gmail, screener, newswatch, alerts, jobs  # noqa: F401 — register tables
 
 
 @pytest.fixture
@@ -32,7 +32,7 @@ def db():
 @pytest.fixture(autouse=True)
 def _fresh_vnstock_limiter(monkeypatch):
     """Fresh, non-sleeping limiter per test so cooldown/spacing state never leaks."""
-    from app.screener import ratelimit
+    from app.marketdata import ratelimit
     monkeypatch.setattr(ratelimit, "vnstock_limiter",
                         ratelimit.RateLimiter(interval_s=0.0, cooldown_s=0.0))
 
@@ -43,6 +43,6 @@ def _fresh_ocr_dispatch_lock():
     first event loop it is contended on, and every TestClient has its own loop.
     Give every test a fresh, unbound lock."""
     import asyncio
-    from app.routes.sync import coordinator
+    from app.services.ocr_sync_coordinator import coordinator
     coordinator._dispatch_lock = asyncio.Lock()
     yield

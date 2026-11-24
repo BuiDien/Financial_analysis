@@ -115,6 +115,10 @@ class Settings(BaseSettings):
     enable_gmail_poller: bool = True
     max_upload_mb: int = 50
 
+    # Background job runner (app/jobs): worker threads per lane
+    job_workers: int = 2       # default lane: portfolio import/rebuild, SSI
+    job_ocr_workers: int = 1   # "ocr" lane: Ollama label reviews
+
     @field_validator("database_url")
     @classmethod
     def _anchor_database_url(cls, value: str) -> str:

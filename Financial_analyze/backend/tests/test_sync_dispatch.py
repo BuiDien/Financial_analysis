@@ -13,16 +13,23 @@ from sqlalchemy.pool import StaticPool
 from app.main import app
 from app.db import Base, get_db
 from app.models.filing import Filing
-from app.routes import sync
-from app.routes.sync import (
+from app.services import (
+    ocr_sync_attempts,
+    ocr_sync_coordinator,
+    ocr_sync_network,
+    ocr_sync_protocol,
+)
+from app.services.ocr_sync_coordinator import coordinator
+from app.services.ocr_sync_network import lan_ip as _lan_ip
+from app.services.ocr_sync_network import (
+    parse_physical_interface_ips as _parse_physical_interface_ips,
+)
+from app.services.ocr_sync_protocol import (
     CHUNK_SIZE,
     OCR_PROTOCOL_VERSION,
     OCR_RESULT_SCHEMA_VERSION,
-    _lan_ip,
-    _parse_physical_interface_ips,
-    _print_worker_message,
-    coordinator,
 )
+from app.services.ocr_sync_protocol import print_worker_message as _print_worker_message
 
 PDF_BYTES = b"%PDF-1.4 " + bytes(range(256)) * 3000  # ~768 KB → 2 chunks
 
@@ -53,17 +60,17 @@ en5: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
 
 
 def test_lan_ip_uses_detected_physical_interface(monkeypatch):
-    monkeypatch.setattr(sync.settings, "sync_advertised_host", "")
-    monkeypatch.setattr(sync, "_physical_interface_ips", lambda: ["192.168.1.26"])
+    monkeypatch.setattr(ocr_sync_network.settings, "sync_advertised_host", "")
+    monkeypatch.setattr(ocr_sync_network, "physical_interface_ips", lambda: ["192.168.1.26"])
 
     assert _lan_ip() == "192.168.1.26"
 
 
 def test_lan_ip_allows_optional_explicit_override(monkeypatch):
-    monkeypatch.setattr(sync.settings, "sync_advertised_host", "core-mac.local")
+    monkeypatch.setattr(ocr_sync_network.settings, "sync_advertised_host", "core-mac.local")
     monkeypatch.setattr(
-        sync,
-        "_physical_interface_ips",
+        ocr_sync_network,
+        "physical_interface_ips",
         lambda: pytest.fail("automatic detection should not run with an override"),
     )
 
@@ -98,7 +105,7 @@ def client(tmp_path, monkeypatch):
     Session = sessionmaker(bind=engine)
     # WebSocket follow-up dispatches open their own session rather than using
     # FastAPI's request dependency, so keep those sessions inside this fixture.
-    monkeypatch.setattr(sync, "SessionLocal", Session)
+    monkeypatch.setattr(ocr_sync_attempts, "SessionLocal", Session)
 
     def override():
         s = Session()
@@ -267,7 +274,7 @@ def test_legacy_dispatch_send_failure_frees_worker(client, monkeypatch):
 
     with client.websocket_connect("/ws/ocr") as ws:
         pair(ws)
-        monkeypatch.setattr(sync, "_stream_job", broken)
+        monkeypatch.setattr(ocr_sync_coordinator, "stream_job", broken)
         resp = client.post("/api/sync/dispatch/1")
         assert resp.status_code == 500
         assert [w["status"] for w in coordinator.workers.values()] == ["idle"]
@@ -279,16 +286,16 @@ def test_finished_jobs_are_pruned_but_active_ones_kept():
     coordinator.jobs.clear()
     try:
         coordinator.add_job({"id": "active", "status": "parsing", "sentAt": 0})
-        for i in range(sync.MAX_FINISHED_JOBS + 25):
+        for i in range(ocr_sync_protocol.MAX_FINISHED_JOBS + 25):
             coordinator.add_job({
                 "id": f"done{i}", "status": "done", "sentAt": i,
                 "completedAt": i, "rows": [{"code": "1"}] * 10,
             })
         finished = [j for j in coordinator.jobs.values() if j["status"] == "done"]
-        assert len(finished) == sync.MAX_FINISHED_JOBS
+        assert len(finished) == ocr_sync_protocol.MAX_FINISHED_JOBS
         assert "active" in coordinator.jobs
         assert "done0" not in coordinator.jobs
-        assert f"done{sync.MAX_FINISHED_JOBS + 24}" in coordinator.jobs
+        assert f"done{ocr_sync_protocol.MAX_FINISHED_JOBS + 24}" in coordinator.jobs
     finally:
         coordinator.jobs.clear()
         coordinator.jobs.update(saved)
@@ -308,7 +315,7 @@ def test_background_tasks_are_referenced_and_failures_logged(caplog):
         await asyncio.sleep(0)
         return task
 
-    with caplog.at_level(logging.ERROR, logger=sync.logger.name):
+    with caplog.at_level(logging.ERROR, logger=ocr_sync_coordinator.logger.name):
         task = asyncio.run(main())
     assert task not in coordinator.background_tasks
     assert "label review exploded" in caplog.text

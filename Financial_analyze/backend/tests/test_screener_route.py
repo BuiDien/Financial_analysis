@@ -9,7 +9,7 @@ from sqlalchemy.pool import StaticPool
 from app.db import Base, get_db
 from app.main import app
 from app.screener import refresh, store
-from app.screener.provider import FixtureProvider
+from app.marketdata.fixture import FixtureProvider
 from app.screener.refresh import RefreshManager
 
 

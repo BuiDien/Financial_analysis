@@ -4,8 +4,10 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.ocr_page_contract import OCR_PAGE_RESULT_FORMAT
-from app.routes import sync
-from app.routes.sync import OCR_PROTOCOL_VERSION, _is_loopback_peer, coordinator
+from app.services import ocr_sync_attempts, ocr_sync_network
+from app.services.ocr_sync_coordinator import coordinator
+from app.services.ocr_sync_network import is_loopback_peer as _is_loopback_peer
+from app.services.ocr_sync_protocol import OCR_PROTOCOL_VERSION
 
 HELLO = {
     "type": "hello",
@@ -27,7 +29,7 @@ def client(monkeypatch):
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool,
     )
-    monkeypatch.setattr(sync, "SessionLocal", sessionmaker(bind=engine))
+    monkeypatch.setattr(ocr_sync_attempts, "SessionLocal", sessionmaker(bind=engine))
     coordinator.workers.clear()
     yield TestClient(app)
     coordinator.workers.clear()
@@ -44,7 +46,7 @@ def test_other_hosts_are_not_local(host):
 
 
 def test_local_worker_gets_welcome_without_code(client, monkeypatch):
-    monkeypatch.setattr(sync, "_is_loopback_peer", lambda _host: True)
+    monkeypatch.setattr(ocr_sync_network, "is_loopback_peer", lambda _host: True)
     with client.websocket_connect("/ws/ocr") as ws:
         ws.send_json(HELLO)
         welcome = ws.receive_json()

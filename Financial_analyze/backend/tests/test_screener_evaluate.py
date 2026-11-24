@@ -1,5 +1,5 @@
 from app.screener.evaluate import evaluate_universe
-from app.screener.provider import (SAMPLE_FINANCIALS, SAMPLE_UNIVERSE, FixtureProvider)
+from app.marketdata.fixture import (SAMPLE_FINANCIALS, SAMPLE_UNIVERSE, FixtureProvider)
 from app.screener.metrics import compute_price_metrics
 from datetime import date
 

@@ -8,6 +8,7 @@ PyYAML==6.0.3
 
 # Database (local SQLite file, backend/helix.db)
 sqlalchemy==2.0.36
+alembic==1.13.3                   # schema migrations (runs at startup via init_db)
 
 # Optional cache (only used when REDIS_URL is set)
 redis==5.1.1

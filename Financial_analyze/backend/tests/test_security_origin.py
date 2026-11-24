@@ -6,8 +6,9 @@ from starlette.websockets import WebSocketDisconnect
 from app.config import DEFAULT_ALLOWED_ORIGINS, Settings
 from app.main import app
 from app.ocr_page_contract import OCR_PAGE_RESULT_FORMAT
-from app.routes import sync
-from app.routes.sync import OCR_PROTOCOL_VERSION, coordinator
+from app.services import ocr_sync_attempts, ocr_sync_network
+from app.services.ocr_sync_coordinator import coordinator
+from app.services.ocr_sync_protocol import OCR_PROTOCOL_VERSION
 
 HELLO = {
     "type": "hello",
@@ -29,7 +30,7 @@ def client(monkeypatch):
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool,
     )
-    monkeypatch.setattr(sync, "SessionLocal", sessionmaker(bind=engine))
+    monkeypatch.setattr(ocr_sync_attempts, "SessionLocal", sessionmaker(bind=engine))
     coordinator.workers.clear()
     yield TestClient(app)
     coordinator.workers.clear()
@@ -87,7 +88,7 @@ def test_ocr_socket_rejects_foreign_origin(client):
 
 def test_loopback_browser_origin_still_needs_pairing(client, monkeypatch):
     """Even an allowlisted page on this Mac must not skip the pairing code."""
-    monkeypatch.setattr(sync, "_is_loopback_peer", lambda _host: True)
+    monkeypatch.setattr(ocr_sync_network, "is_loopback_peer", lambda _host: True)
     with client.websocket_connect(
         "/ws/ocr", headers={"Origin": "http://localhost:5500"}
     ) as ws:
@@ -97,7 +98,7 @@ def test_loopback_browser_origin_still_needs_pairing(client, monkeypatch):
 
 
 def test_native_loopback_worker_without_origin_skips_pairing(client, monkeypatch):
-    monkeypatch.setattr(sync, "_is_loopback_peer", lambda _host: True)
+    monkeypatch.setattr(ocr_sync_network, "is_loopback_peer", lambda _host: True)
     with client.websocket_connect("/ws/ocr") as ws:
         ws.send_json(HELLO)
         assert ws.receive_json()["type"] == "welcome"

@@ -191,3 +191,111 @@ def test_statement_with_self_check_errors_is_not_imported(db, files):
     assert "running balance" in db.get(GmailReport, rep.id).error
     assert out["failed_reports"][0]["errors"][0].startswith("running balance")
     assert not _rows(db)
+
+
+# ── Fix round 1: statements replace a matching manual (e.g. pasted) row ──
+
+def _manual(db, day, **kw):
+    from app.models.portfolio import Portfolio
+    p = db.query(Portfolio).first() or Portfolio(name="Main", display_currency="VND")
+    db.add(p); db.flush()
+    vals = dict(portfolio_id=p.id, type="BUY", ticker="MBB", quantity=100, unit_price=19300,
+                currency="VND", source="manual",
+                effective_at=datetime(day.year, day.month, day.day, 8, 0, 1, tzinfo=timezone.utc))
+    vals.update(kw)
+    tx = PortfolioTransaction(**vals)
+    db.add(tx); db.commit()
+    return tx
+
+
+def test_statement_replaces_manual_row_of_same_trade(db, files):
+    m = _manual(db, date(2026, 10, 2))
+    files(db, "oct", OCT)
+    s = ssi_import.import_pending(db)["statements"]
+    assert s["replaced_manual"] == 1
+    trades = [t for t in _rows(db, status="active") if t.type in {"BUY", "SELL"}]
+    assert len(trades) == 1 and trades[0].source == "ssi_statement"
+    assert f"replaces manual entry #{m.id}" in trades[0].note
+    assert db.get(PortfolioTransaction, m.id).status == "replaced"
+
+
+def test_statement_keeps_manual_row_on_other_day_or_price(db, files):
+    _manual(db, date(2026, 10, 3))                       # next day: not the same trade
+    _manual(db, date(2026, 10, 2), unit_price=19400)     # other price
+    files(db, "oct", OCT)
+    s = ssi_import.import_pending(db)["statements"]
+    assert s["replaced_manual"] == 0
+    assert len([t for t in _rows(db, status="active") if t.source == "manual"]) == 2
+
+
+# ── Fix round 3: an edited placeholder / inferred deposit is user-owned ──
+
+class _BG:
+    def add_task(self, *a, **k):
+        pass
+
+
+def _edit(db, tx, **changes):
+    """What PATCH /portfolio/transactions/{id} does (the dialog sends source + external_id back)."""
+    from app.services import portfolio_ledger as ledger
+    from app.services.portfolio_schemas import TransactionIn
+    vals = dict(type=tx.type, effective_at=tx.effective_at, ticker=tx.ticker, quantity=tx.quantity,
+                unit_price=tx.unit_price, cash_amount=tx.cash_amount, currency=tx.currency,
+                fees=tx.fees, taxes=tx.taxes, note=tx.note, source=tx.source, external_id=tx.external_id)
+    vals.update(changes)
+    out = ledger.replace_transaction(db, _BG(), tx.id, TransactionIn(**vals))
+    return db.get(PortfolioTransaction, out["transaction"]["id"])
+
+
+def _placeholder_with_user_cost(db, files):
+    files(db, "b", [SELL])  # SELL MBB 100 on 04/01/2024, never bought -> BUY 100 @ 0 placeholder
+    ssi_import.import_pending(db)
+    [adj] = _rows(db, source="ssi_adjust", status="active")
+    assert adj.unit_price == 0 and float(adj.quantity) == 100
+    return _edit(db, adj, unit_price=D(15000), note="bought in 2019 at Vietcombank Securities")
+
+
+def _mbb_shares(db):
+    rows = [t for t in _rows(db, status="active", ticker="MBB")]
+    return sum(D(t.quantity) * (1 if t.type == "BUY" else -1) for t in rows)
+
+
+def test_statement_keeps_users_cost_on_edited_placeholder(db, files):
+    mine = _placeholder_with_user_cost(db, files)
+    files(db, "feb", stmt(date(2024, 2, 1), date(2024, 2, 29), 0, 0))  # no MBB buy in it
+    ssi_import.import_pending(db)
+    [adj] = _rows(db, source="ssi_adjust", status="active")
+    assert adj.id == mine.id
+    assert adj.unit_price == 15000 and adj.note == "bought in 2019 at Vietcombank Securities"
+    assert float(adj.quantity) == 100 and _mbb_shares(db) == 0
+
+
+def test_real_buy_supersedes_edited_placeholder_without_double_shares(db, files):
+    mine = _placeholder_with_user_cost(db, files)
+    jan = stmt(date(2024, 1, 1), date(2024, 1, 31), 0, 0, orders=[
+        Order(1, date(2024, 1, 2), date(2024, 1, 4), "BUY", "MBB", D(100), D(19000),
+              D(1900000), D(2850), D(0), D(1902850)),
+        Order(2, date(2024, 1, 4), date(2024, 1, 8), "SELL", "MBB", D(100), D(20200),
+              D(2020000), D(3030), D(9520), D(2007450))])
+    files(db, "jan", jan)
+    ssi_import.import_pending(db)
+    assert not _rows(db, source="ssi_adjust", status="active")
+    voided = db.get(PortfolioTransaction, mine.id)
+    assert voided.status == "void" and voided.unit_price == 15000
+    assert "superseded" in voided.note
+    assert _mbb_shares(db) == 0
+    assert len(_rows(db, status="active", source="ssi_statement", type="BUY")) == 1
+
+
+def test_edited_inferred_deposit_amount_survives_statement_import(db, files):
+    files(db, "nov", stmt(date(2022, 11, 1), date(2022, 11, 30), 0, 0))
+    files(db, "jan", stmt(date(2023, 1, 1), date(2023, 1, 31), 1_000_000, 1_000_000))
+    ssi_import.import_pending(db)
+    [inf] = _rows(db, status="active", type="DEPOSIT")
+    mine = _edit(db, inf, cash_amount=D(1_200_000), note="my real December deposit")
+    files(db, "feb", stmt(date(2023, 2, 1), date(2023, 2, 28), 1_000_000, 1_000_000))
+    out = ssi_import.import_pending(db)["statements"]
+    [dep] = _rows(db, status="active", type="DEPOSIT")
+    assert dep.id == mine.id and dep.cash_amount == 1_200_000
+    assert dep.note == "my real December deposit"
+    assert any("edited" in n for n in out["notes"])

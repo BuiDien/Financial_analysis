@@ -1,7 +1,7 @@
 """Unreported statement lines must not become real zeros."""
 import pandas as pd
 
-from app.services.fundamentals import _to_records
+from app.marketdata.yfinance_provider import _to_records
 
 
 def test_nan_becomes_none_not_zero():

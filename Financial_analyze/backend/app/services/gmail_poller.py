@@ -1,16 +1,14 @@
-"""Background thread: every minute, run a Gmail check if auto-check is on and due."""
+"""Gmail auto-check: every minute, run a check if auto-check is on and due.
+The loop runs on app.jobs.scheduler (registered in app.jobs.lifecycle)."""
 from __future__ import annotations
 
-import threading
 from datetime import datetime, timezone
 
 from ..db import SessionLocal
 from . import gmail_pull
 
 TICK_SECONDS = 60
-
-_thread: threading.Thread | None = None
-_stop = threading.Event()
+SCHEDULE_NAME = "gmail-poller"
 
 
 def tick() -> dict | None:
@@ -32,24 +30,3 @@ def tick() -> dict | None:
             return None
     finally:
         db.close()
-
-
-def _loop():
-    while not _stop.wait(TICK_SECONDS):
-        try:
-            tick()
-        except Exception as e:  # never let the thread die
-            print(f"  gmail poller error: {e}")
-
-
-def start() -> None:
-    global _thread
-    if _thread and _thread.is_alive():
-        return
-    _stop.clear()
-    _thread = threading.Thread(target=_loop, name="gmail-poller", daemon=True)
-    _thread.start()
-
-
-def shutdown() -> None:
-    _stop.set()

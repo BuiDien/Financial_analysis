@@ -11,6 +11,7 @@ from ..db import get_db
 from ..models.ocr import FactResolution, OCRInboxItem, StatementFact
 from ..services import history_store
 from ..services.history_facts import point_states
+from ..services.history_lines import line_code, line_name
 
 router = APIRouter(prefix="/history")
 
@@ -72,16 +73,6 @@ def list_companies(db: Session = Depends(get_db)):
     ]
 
 
-def _line_name(catalog, ticker: str, scope: str, kind: str, key: str, facts: list[StatementFact]) -> str:
-    line = catalog.get(ticker, scope, kind, key)
-    if line is not None:
-        return line.name
-    labelled = [f for f in facts if f.row_label]
-    if labelled:
-        return max(labelled, key=lambda f: (f.period_end, f.id)).row_label
-    return key
-
-
 def _line_groups(facts: list[StatementFact]) -> dict[tuple[str, str], list[StatementFact]]:
     groups: dict[tuple[str, str], list[StatementFact]] = {}
     for fact in facts:
@@ -110,8 +101,9 @@ def list_lines(ticker: str, scope: str, db: Session = Depends(get_db)):
         line = catalog.get(ticker, scope, kind, key)
         result.append({
             "key": key, "kind": kind,
-            "name": _line_name(catalog, ticker, scope, kind, key, facts),
+            "name": line_name(catalog, ticker, scope, kind, key, facts),
             "parent_key": line.parent_key if line else None,
+            "code": line_code(line),
         })
     return result
 
@@ -197,7 +189,7 @@ def line_series(
         points.sort(key=lambda p: (p["period_end"], p["fact_key"]))
         out.append({
             "key": key, "kind": kind,
-            "name": _line_name(catalog, ticker, scope, kind, key, facts),
+            "name": line_name(catalog, ticker, scope, kind, key, facts),
             "points": points,
         })
     return {"lines": out}

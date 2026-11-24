@@ -1,11 +1,11 @@
-"""Daily OHLCV loader for backtests (VN via the market-data provider, others via
-yfinance). VN bars come out in full VND (index points for an index)."""
+"""Daily OHLCV loader for backtests (VN via the VN market-data provider, others
+via the global/Yahoo provider). VN bars come out in full VND (index points for
+an index)."""
 import math
 from datetime import date, timedelta
 
-import yfinance as yf
-
-from app.screener.provider import ProviderRateLimited, drop_partial_bar, get_provider
+from app.marketdata import (ProviderRateLimited, drop_partial_bar, get_global_provider,
+                            get_provider, vn_symbol)
 from app.services import market
 
 WARMUP_DAYS = 650  # (~440 sessions, covers slow SMA 400)
@@ -35,10 +35,10 @@ def load_daily_bars(ticker: str, start: date, end: date) -> list[dict]:
         return cached
 
     bars: list[dict] = []
-    if ticker.startswith(market.VN_PREFIX):
+    symbol = vn_symbol(ticker)
+    if symbol is not None:
         try:
-            raw = get_provider().fetch_ohlc(ticker[len(market.VN_PREFIX):], start, end, "1d",
-                                            priority="interactive")
+            raw = get_provider().fetch_ohlc(symbol, start, end, "1d", priority="interactive")
         except ProviderRateLimited as e:
             raise market.VnRateLimited(str(e)) from None
         # Today's bar before the close is still forming: never backtest on it.
@@ -47,11 +47,11 @@ def load_daily_bars(ticker: str, start: date, end: date) -> list[dict]:
             if b:
                 bars.append(b)
     else:
-        df = yf.Ticker(ticker).history(start=start.isoformat(),
-                                       end=(end + timedelta(days=1)).isoformat(),
-                                       interval="1d", auto_adjust=True)
-        for idx, row in df.iterrows():
-            b = _bar(idx.strftime("%Y-%m-%d"), {k.lower(): v for k, v in row.items()})
+        # Yahoo's end bound is exclusive: ask for the day after to include `end`.
+        rows = get_global_provider().history(ticker, interval="1d", adjusted=True,
+                                             start=start, end=end + timedelta(days=1))
+        for row in rows:
+            b = _bar(row["date"][:10], row)
             if b:
                 bars.append(b)
 

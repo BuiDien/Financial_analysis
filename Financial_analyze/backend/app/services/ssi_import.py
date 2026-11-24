@@ -20,6 +20,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..config import resolve_backend_path
+from ..jobs.portfolio import submit_portfolio_job
 from ..models.gmail import GmailReport
 from ..models.portfolio import Portfolio, PortfolioTransaction
 from . import portfolio_engine as engine
@@ -115,9 +116,7 @@ def _import_locked(db: Session, reports: list[GmailReport]) -> dict:
             quantity=t.quantity, unit_price=t.price, currency="VND", fees=t.fee,
             taxes=t.taxes, note=_note(account, t), source=SOURCE, external_id=ext,
         )
-        dup = next((m for m in manual if m.ticker == t.ticker and m.type == t.side
-                    and Decimal(m.quantity) == t.quantity and Decimal(m.unit_price) == t.price
-                    and abs((_local_day(m.effective_at) - t.trade_date).days) <= 3), None)
+        dup = _pick_manual(manual, t.trade_date, t.ticker, t.side, t.quantity, t.price, max_days=3)
         if dup is not None:
             manual.remove(dup)
             dup.status, dup.voided_at = "replaced", datetime.now(timezone.utc)
@@ -149,8 +148,35 @@ def _import_locked(db: Session, reports: list[GmailReport]) -> dict:
         "replaced_manual": replaced,
     }
     if new or replaced:
-        _rebuild_async(db, p)
+        summary["job_id"] = _rebuild_async(db, p)
     return summary
+
+
+PASTE_MARKER = "paste:"  # external_id prefix of rows added via Portfolio › Paste orders
+
+
+def is_pasted(tx: PortfolioTransaction) -> bool:
+    return tx.source == "manual" and (tx.external_id or "").startswith(PASTE_MARKER)
+
+
+def _pick_manual(manual: list[PortfolioTransaction], day, ticker, side, qty, price,
+                 max_days: int) -> PortfolioTransaction | None:
+    """The active manual BUY/SELL an imported trade replaces: same ticker, side,
+    qty and price; the exact trade day first, else the nearest within
+    `max_days` (lowest id on a tie). A pasted row (external_id "paste:…")
+    carries the real SSI trade date, so it is only ever replaced on that exact
+    day; the tolerance is for hand-typed rows. The caller removes the pick from
+    `manual` so a row is never chosen twice."""
+    best, best_gap = None, None
+    for m in manual:
+        if not (m.ticker == ticker and m.type == side and Decimal(m.quantity) == Decimal(qty)
+                and Decimal(m.unit_price) == Decimal(price)):
+            continue
+        gap = abs((_local_day(m.effective_at) - day).days)
+        limit = 0 if is_pasted(m) else max_days
+        if gap <= limit and (best_gap is None or gap < best_gap):
+            best, best_gap = m, gap
+    return best
 
 
 def _shortfall_adjustments(txs: list[PortfolioTransaction], portfolio_id: int) -> list[PortfolioTransaction]:
@@ -198,17 +224,30 @@ def _reuse_adjustments(db: Session, p: Portfolio, adjustments: list[PortfolioTra
                 and _naive(old.effective_at) == _naive(a.effective_at))
         old.status, old.voided_at = "active", None
         old.type, old.ticker, old.currency = a.type, a.ticker, a.currency
-        old.quantity, old.unit_price, old.effective_at, old.note = (
-            a.quantity, a.unit_price, a.effective_at, a.note)
+        old.quantity, old.effective_at = a.quantity, a.effective_at
+        if not _user_edited(old):  # an edited placeholder keeps the user's cost and note
+            old.unit_price, old.note = a.unit_price, a.note
         voided_now.discard(old.id)
         changed += 0 if same else 1
     return to_add, changed
 
 
-def _rebuild_async(db: Session, p: Portfolio) -> None:
+def _user_edited(tx: PortfolioTransaction) -> bool:
+    """An edited version (PATCH) is user-owned: importers never overwrite its
+    price, amount or note (the import id moves to it, see replace_transaction)."""
+    return tx.replaces_transaction_id is not None
+
+
+def _supersede_note(tx: PortfolioTransaction, what: str) -> None:
+    mark = f"superseded by {what}"
+    if mark not in (tx.note or ""):
+        tx.note = f"{tx.note} · {mark}" if tx.note else mark
+
+
+def _rebuild_async(db: Session, p: Portfolio) -> str:
     job = engine.new_job(db, p, "rebuild")
-    factory = sessionmaker(bind=db.get_bind())
-    threading.Thread(target=engine.run_job, args=(factory, job.id), daemon=True).start()
+    submit_portfolio_job(sessionmaker(bind=db.get_bind()), job.id, "rebuild")
+    return job.id
 
 
 def import_pending(db: Session) -> dict:
@@ -425,6 +464,11 @@ def _import_statements_locked(db: Session, reports: list[GmailReport]) -> dict:
     new, notes = [], list(notes_failed)
     inferred_changed = 0
     now = datetime.now(timezone.utc)
+    # A hand-entered (or pasted) trade that the statement also lists is replaced
+    # by the statement row, exactly like the daily import does (exact day only:
+    # statements carry the real trade date).
+    manual = _active_manual(db, p)
+    replaced = 0
     for sub, stmts in by_sub.items():
         seen = {}
         for s in stmts:  # same statement may appear twice (new + already imported)
@@ -439,17 +483,32 @@ def _import_statements_locked(db: Session, reports: list[GmailReport]) -> dict:
                 old = existing.get(key)
                 if old is not None and old.status == "active" and (
                         old.type != r["type"] or Decimal(old.cash_amount) != r["cash_amount"]):
-                    old.type, old.cash_amount, old.note = r["type"], r["cash_amount"], r["note"]
-                    inferred_changed += 1
+                    if _user_edited(old):
+                        notes.append(f"inferred {r['type'].lower()} {r['external_id']} would be "
+                                     f"{r['cash_amount']:,.0f}; kept your edited amount "
+                                     f"{Decimal(old.cash_amount):,.0f}")
+                    else:
+                        old.type, old.cash_amount, old.note = r["type"], r["cash_amount"], r["note"]
+                        inferred_changed += 1
             if key in known:
                 continue
             known.add(key)
+            if r["source"] == STMT_SOURCE and r["type"] in {"BUY", "SELL"}:
+                dup = _pick_manual(manual, _local_day(r["effective_at"]), r["ticker"], r["type"],
+                                   r["quantity"], r["unit_price"], max_days=0)
+                if dup is not None:
+                    manual.remove(dup)
+                    dup.status, dup.voided_at = "replaced", now
+                    r = {**r, "note": f"{r['note']} · replaces manual entry #{dup.id}"}
+                    replaced += 1
             new.append(PortfolioTransaction(portfolio_id=p.id, **{k: v for k, v in r.items()}))
         # A missing month's inferred deposit is retired once that month's statement exists.
         for key, tx in existing.items():
             if (tx.source == CASH_SOURCE and tx.status == "active" and key not in inferred_now
                     and tx.external_id.startswith(f"{sub}:") and tx.external_id.endswith(":inferred")):
                 tx.status, tx.voided_at = "void", now
+                if _user_edited(tx):
+                    _supersede_note(tx, "the statement's real deposits")
                 inferred_changed += 1
                 notes.append(f"retired inferred deposit {tx.external_id} (statement now available)")
 
@@ -467,20 +526,31 @@ def _import_statements_locked(db: Session, reports: list[GmailReport]) -> dict:
     engine.validate_ledger_sequence(db, p, events)
     voided_adj = {tx.id for tx in stale_adj}
     new_adj, adj_changed = _reuse_adjustments(db, p, adjustments, voided_adj)
+    for tx in stale_adj:  # real trades now cover the shortfall: the user's cost no longer applies
+        if tx.id in voided_adj and _user_edited(tx):
+            _supersede_note(tx, "the real trades in the statement (your cost no longer applies)")
     new += new_adj
     for tx in new:
         db.add(tx)
-    changed = bool(new or voided_adj or adj_changed or inferred_changed)
+    changed = bool(new or voided_adj or adj_changed or inferred_changed or replaced)
     if changed:
         p.ledger_revision += 1
     db.commit()
     by_type = _Counter(f"{tx.source}:{tx.type}" for tx in new)
+    out = {"statements": len(reports), "failed_reports": failed, "added": dict(by_type),
+           "voided_adjustments": len(voided_adj), "replaced_manual": replaced,
+           "adjustments": [{"ticker": a.ticker, "quantity": float(a.quantity)} for a in adjustments],
+           "notes": notes}
     if changed:
-        _rebuild_async(db, p)
-    return {"statements": len(reports), "failed_reports": failed, "added": dict(by_type),
-            "voided_adjustments": len(voided_adj),
-            "adjustments": [{"ticker": a.ticker, "quantity": float(a.quantity)} for a in adjustments],
-            "notes": notes}
+        out["job_id"] = _rebuild_async(db, p)
+    return out
+
+
+def _active_manual(db: Session, p: Portfolio) -> list[PortfolioTransaction]:
+    return (db.query(PortfolioTransaction)
+            .filter_by(portfolio_id=p.id, status="active", source="manual")
+            .filter(PortfolioTransaction.type.in_(["BUY", "SELL"]))
+            .order_by(PortfolioTransaction.id).all())
 
 
 def _daily_trades(db: Session) -> dict[str, list[Trade]]:

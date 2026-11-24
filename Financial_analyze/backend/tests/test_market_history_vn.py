@@ -7,8 +7,9 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
-from app.screener import provider as provider_mod
-from app.screener.ratelimit import RateLimited
+from app.marketdata import registry as provider_mod
+from app.marketdata import yfinance_provider as yp
+from app.marketdata.ratelimit import RateLimited
 from app.services import market
 
 
@@ -117,7 +118,7 @@ def test_provider_rate_limit_becomes_vn_rate_limited(fake):
 def test_vnstock_sys_exit_becomes_vn_rate_limited_end_to_end(monkeypatch):
     """vnai's quota guard calls sys.exit(); the limiter + provider + market chain
     must turn that into a normal error."""
-    from app.screener import vnstock_provider as vp
+    from app.marketdata import vnstock_provider as vp
 
     class Boom:
         def __init__(self, *a, **k):
@@ -217,7 +218,7 @@ class _FakeYfTicker:
 @pytest.fixture
 def fake_yf(monkeypatch):
     _FakeYfTicker.calls = []
-    monkeypatch.setattr(market.yf, "Ticker", _FakeYfTicker)
+    monkeypatch.setattr(yp.yf, "Ticker", _FakeYfTicker)
     monkeypatch.setattr(market, "_cache_get", lambda k: None)
     monkeypatch.setattr(market, "_cache_set", lambda *a, **kw: None)
     return _FakeYfTicker.calls

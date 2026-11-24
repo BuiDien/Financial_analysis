@@ -174,6 +174,39 @@ def serialize_run(run: OCRLabelReviewRun) -> dict:
     }
 
 
+INTERRUPTED_ERROR = "interrupted by restart"
+
+
+def recover_interrupted_runs(*, bind=None) -> int:
+    """Startup: a run left queued/running by a previous process can never
+    finish, and while it looks active start_label_review_run returns it instead
+    of starting a new one (the UI would poll it forever). Mark it failed, like
+    any failed run, so the user can ask again. Returns the number of rows."""
+    from sqlalchemy import inspect
+
+    from ..db import SessionLocal
+
+    db = Session(bind=bind) if bind is not None else SessionLocal()
+    with db:
+        if not inspect(db.get_bind()).has_table(OCRLabelReviewRun.__tablename__):
+            return 0
+        runs = (
+            db.query(OCRLabelReviewRun)
+            .filter(OCRLabelReviewRun.status.in_(("queued", "running")))
+            .all()
+        )
+        now = datetime.now(timezone.utc)
+        for run in runs:
+            run.status = "failed"
+            run.error = INTERRUPTED_ERROR
+            run.finished_at = now
+            run.current_table_number = None
+            run.current_row_number = None
+        if runs:
+            db.commit()
+        return len(runs)
+
+
 def run_label_review(bind, run_id: int) -> None:
     """Process collected label rows one at a time without changing OCR data."""
     SessionFactory = sessionmaker(bind=bind)

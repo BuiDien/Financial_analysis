@@ -95,6 +95,10 @@ def test_ledger_builds_cash_fifo_position_and_real_performance(portfolio_client)
     )
     assert add(client).status_code == 201
 
+    # Each manual transaction's rebuild ran on the job runner (/api/jobs).
+    jobs = client.get("/api/jobs?kind=portfolio.rebuild").json()["items"]
+    assert [j["status"] for j in jobs] == ["done", "done"]
+    assert all(j["payload"]["portfolio_job_type"] == "rebuild" for j in jobs)
     portfolio = client.get("/api/portfolio").json()
     assert portfolio["cash_value"] == pytest.approx(900)
     assert portfolio["position_value"] == pytest.approx(150)
@@ -396,3 +400,96 @@ def test_ticker_breakdown_counts_orders_and_received_shares(db):
     assert t["dividends"] == 95_000
     assert [e["kind"] for e in t["events"]] == ["SELL", "DIVIDEND", "RIGHTS", "BONUS", "BUY"]
     assert t["events"][0]["shares_after"] == 10
+
+
+def test_all_nan_quote_never_breaks_valuation(portfolio_client, monkeypatch):
+    """Yahoo with no data: a NaN price must fall back (missing quote), never
+    reach the JSON response or the NOT NULL market-data cache."""
+    nan = float("nan")
+    monkeypatch.setattr(portfolio_engine.market, "get_quote", lambda ticker: {
+        "ticker": ticker, "price": nan, "previous_close": nan, "change": nan,
+        "change_pct": nan, "currency": "USD", "ts": 0})
+    assert add(portfolio_client).status_code == 201
+    jobs = portfolio_client.get("/api/jobs?kind=portfolio.rebuild").json()["items"]
+    assert [j["status"] for j in jobs] == ["done"]
+    res = portfolio_client.get("/api/portfolio")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["holdings"], body
+    assert [m for m in body.get("missing", []) if m.get("kind") == "quote"]
+
+
+def test_quote_drops_non_finite_secondary_fields(db, monkeypatch):
+    monkeypatch.setattr(portfolio_engine.market, "get_quote", lambda ticker: {
+        "ticker": ticker, "price": 10.0, "previous_close": float("nan"),
+        "change": float("inf"), "currency": "USD", "ts": 0})
+    item, meta = portfolio_engine.quote(db, "ABC", "USD")
+    assert item["price"] == 10.0
+    assert item["previous_close"] is None and item["change"] is None
+    db.commit()
+
+
+def test_nan_fx_quote_is_treated_as_unavailable(db, monkeypatch):
+    monkeypatch.setattr(portfolio_engine.market, "get_quote",
+                        lambda ticker: {"ticker": ticker, "price": float("nan")})
+    with pytest.raises(ValueError):
+        portfolio_engine.fx_rate(db, "USD", "VND")
+    db.commit()  # nothing NaN was queued for the NOT NULL cache
+
+
+def test_slow_quotes_never_hold_up_portfolio(portfolio_client, monkeypatch):
+    """vnstock calls are serialised ~3s apart, so a dozen holdings fetched one by
+    one blew the frontend's 15s timeout. The view waits a bounded budget, then
+    answers with the stored price and reports the quotes still loading."""
+    import threading
+    release = threading.Event()
+    calls = []
+
+    def slow_quote(ticker):
+        calls.append(ticker)
+        release.wait(5)
+        return {"ticker": ticker, "price": 12.0, "previous_close": 11.0,
+                "change": 1.0, "currency": "USD", "ts": 0}
+
+    monkeypatch.setattr(portfolio_engine, "PREFETCH_BUDGET_S", 0.2)
+    monkeypatch.setattr(portfolio_engine.prefetch_quotes, "__defaults__", (0.2,))
+    assert add(portfolio_client).status_code == 201
+    monkeypatch.setattr(portfolio_engine.market, "get_quote", slow_quote)
+    started = time.monotonic()
+    body = portfolio_client.get("/api/portfolio").json()
+    assert time.monotonic() - started < 3
+    assert body["quotes_pending"] == 1
+    # A second load while the first fetch is in flight reuses it (no pile-up).
+    portfolio_client.get("/api/portfolio")
+    assert len(calls) == 1
+    release.set()
+    time.sleep(0.2)
+    done = portfolio_client.get("/api/portfolio").json()
+    assert done["quotes_pending"] == 0
+    assert done["holdings"][0]["price"] == pytest.approx(12.0)
+
+
+def test_editing_an_imported_row_moves_its_external_id(db):
+    """Replacing a row that carries (source, external_id) must not hit
+    uq_portfolio_import_external: the id moves to the new version."""
+    from decimal import Decimal
+    from app.services import portfolio_ledger as ledger
+    from app.services.portfolio_schemas import TransactionIn
+
+    class BG:
+        def add_task(self, *a, **k):
+            pass
+    p = Portfolio(name="Main", display_currency="VND")
+    db.add(p); db.commit()
+    tx = PortfolioTransaction(portfolio_id=p.id, type="BUY", ticker="VCB", quantity=200,
+                              unit_price=53600, currency="VND", source="ssi_email",
+                              external_id="acc:2026-11-06:1",
+                              effective_at=datetime(2026, 11, 6, 8, tzinfo=timezone.utc))
+    db.add(tx); db.commit()
+    payload = TransactionIn(type="BUY", effective_at=tx.effective_at, ticker="VCB",
+                            quantity=Decimal(200), unit_price=Decimal(53700), currency="VND",
+                            source="ssi_email", external_id="acc:2026-11-06:1")
+    out = ledger.replace_transaction(db, BG(), tx.id, payload)
+    assert out["transaction"]["external_id"] == "acc:2026-11-06:1"
+    assert db.get(PortfolioTransaction, tx.id).status == "replaced"
+    assert db.get(PortfolioTransaction, tx.id).external_id is None
