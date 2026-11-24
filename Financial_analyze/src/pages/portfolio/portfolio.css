@@ -1,0 +1,139 @@
+/* Portfolio page. Prefix: .pf-  — tokens only, both themes. */
+
+.pf-page > * + * { margin-top: 20px; }
+.pf-page > .page-header { margin-bottom: 0; }
+.pf-title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+.pf-title-row .page-title { margin: 0; }
+.pf-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.pf-ccy-select { width: 96px; }
+.pf-tabs { max-width: 100%; overflow-x: auto; }
+.pf-sub { display: block; font-size: 11px; color: var(--text-subtle); }
+.pf-strong { font-weight: 600; }
+.pf-error { margin: 12px 0 0; font-size: 12px; color: var(--neg); }
+
+/* Banners (errors, stale / incomplete valuation notes). */
+.pf-banner { padding: 10px 14px; font-size: 13px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-elev); }
+.pf-banner.is-neg { color: var(--neg); border-color: var(--neg-soft, var(--border)); background: var(--neg-bg, var(--bg-elev)); }
+.pf-banner.is-muted { color: var(--text-muted); }
+
+/* KPI row (always 4 tiles): 2 × 2 in a narrow page, one row of 4 once the page is ≥ 640px wide.
+   Sized by the page's own width (container query), so the AI panel being open is accounted for
+   and a short last row (grey hairline gap) can never occur. */
+.pf-page { container-type: inline-size; }
+.stat-grid.pf-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@container (min-width: 640px) { .stat-grid.pf-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+
+/* Performance */
+.pf-perf .card-header { flex-wrap: wrap; }
+.pf-perf-chart { height: 200px; display: grid; }
+.pf-perf-chart > .empty-state { align-self: center; }
+.pf-perf-foot { font-size: 11px; color: var(--text-subtle); }
+.pf-perf-foot b { color: var(--text-muted); font-weight: 600; }
+
+/* Allocation + cash */
+.pf-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 16px; align-items: start; }
+.pf-alloc { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; justify-content: center; }
+.pf-legend { list-style: none; margin: 0; padding: 0; flex: 1 1 140px; min-width: 0; }
+.pf-legend li { display: grid; grid-template-columns: 12px 1fr auto; gap: 8px; align-items: center; margin-bottom: 7px; font-size: 12px; }
+.pf-legend i { width: 10px; height: 10px; border-radius: 2px; }
+.pf-cash { list-style: none; margin: 0; padding: 0; }
+.pf-cash li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; }
+.pf-cash li + li { border-top: 1px solid var(--border); }
+.pf-cash-warn { margin-left: 8px; }
+.pf-cash-amt { text-align: right; }
+
+/* Tables */
+.pf-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.pf-table { min-width: 720px; }
+.pf-table tbody tr { cursor: default; }
+.pf-table tbody tr.is-click { cursor: pointer; }
+.pf-table tbody tr.is-click:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.pf-table tbody tr.is-closed { opacity: .75; }
+.pf-table td.right, .pf-table th.right { white-space: nowrap; }
+.pf-th-sub { display: block; font-weight: 400; font-size: 10px; text-transform: none; letter-spacing: 0; }
+.pf-ccy { margin-left: 6px; font-size: 10px; color: var(--text-subtle); }
+.pf-total td { font-weight: 600; border-top: 1px solid var(--border); height: var(--density-row-h); padding: 0 12px; }
+.pf-expand > td { padding: 0; background: var(--bg-sunken); }
+.pf-gain { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 2px; padding: 4px 0; }
+
+/* Ticker events (By ticker expansion + holdings popup) */
+.pf-ev-summary { margin: 0; padding: 10px 16px; font-size: 12px; color: var(--text-muted); }
+.pf-ev-summary strong { color: var(--text); }
+.pf-ev-table { font-size: 12px; }
+.pf-ev-kind { font-weight: 600; }
+.pf-ev-kind.is-sell { color: var(--accent); }
+.pf-ev-kind.is-recv { color: var(--pos); }
+.pf-ev-src { font-weight: 400; color: var(--text-subtle); }
+.pf-ev-lot td { font-size: 11px; color: var(--text-muted); }
+.pf-net { display: inline-flex; align-items: center; gap: 6px; margin-right: auto; font-size: 12px; }
+.u436-d.pf-dialog-xl { width: min(960px, 100%); }
+.pf-dialog-xl .pf-ev-summary { padding: 0 0 10px; }
+
+/* Transactions */
+.pf-tx .card-header { flex-wrap: wrap; }
+.pf-tx-filters { display: flex; gap: 8px; flex-wrap: wrap; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.pf-tx-filters > :first-child { flex: 1 1 200px; max-width: 320px; }
+.pf-tx-type { width: 160px; }
+.pf-row-actions { display: inline-flex; gap: 2px; justify-content: flex-end; }
+.pf-void { color: var(--neg); }
+.pf-pager { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 11px; color: var(--text-muted); }
+
+/* Transaction + import dialogs */
+.pf-form { display: flex; flex-direction: column; gap: 12px; }
+.pf-form-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: end; }
+.pf-form-row.is-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pf-form-field { display: flex; flex-direction: column; min-width: 0; }
+.pf-form-label { margin: 0 0 5px 1px; font-size: 11.5px; font-weight: 600; color: var(--ux-ink-2, var(--text-muted)); }
+.pf-form-hint { margin: 0; font-size: 12px; color: var(--text-muted); }
+.pf-textarea {
+  width: 100%; box-sizing: border-box; min-height: 70px; resize: vertical; padding: 8px 10px;
+  font: inherit; font-size: 13px; color: var(--text); background: var(--bg-sunken);
+  border: 1px solid var(--border); border-radius: var(--radius);
+}
+.pf-textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (max-width: 560px) {
+  .pf-form-row, .pf-form-row.is-3 { grid-template-columns: 1fr; }
+}
+.pf-drop {
+  display: flex; flex-direction: column; align-items: center; gap: 6px; margin-top: 14px; padding: 28px 16px;
+  text-align: center; border: 1.5px dashed var(--border-strong, var(--border)); border-radius: var(--radius-lg);
+  background: var(--bg-sunken); cursor: pointer;
+}
+.pf-drop:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pf-drop input { max-width: 100%; font-size: 12px; }
+.pf-drop-title { font-weight: 600; color: var(--text); }
+.pf-drop-sub { font-size: 12px; color: var(--text-muted); }
+.pf-import-count { margin: 14px 0 8px; font-size: 12px; color: var(--text-muted); }
+.pf-map { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
+.pf-map-row { display: grid; grid-template-columns: minmax(0, 1fr) 130px; gap: 8px; align-items: center; }
+.pf-map-src { font-size: 12px; overflow-wrap: anywhere; }
+.pf-validate { margin-top: 14px; padding: 12px; border-radius: var(--radius); background: var(--bg-sunken); font-size: 13px; }
+.pf-validate.is-ok { color: var(--pos); }
+.pf-validate.is-bad { color: var(--neg); }
+.pf-validate-row { font-size: 11px; }
+.pf-validate-dl { margin-top: 8px; display: inline-flex; }
+
+/* Paste SSI orders dialog */
+/* Width only (via the Dialog's className): 10 numeric columns + the status badge fit without a sideways scroll at desktop width. */
+.pf-paste.is-xl { width: min(980px, 100%); }
+.pf-paste-field { display: grid; gap: 6px; }
+.pf-paste-label { font-size: 11.5px; font-weight: 600; color: var(--text-muted); }
+.pf-paste-text {
+  width: 100%; min-height: 180px; resize: vertical; box-sizing: border-box; padding: 10px 12px;
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.5; white-space: pre; overflow-x: auto;
+  color: var(--text); background: var(--bg-sunken); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.pf-paste-text:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+.pf-paste-text::placeholder { color: var(--text-subtle); }
+.pf-paste-hint { margin: 0; font-size: 11.5px; color: var(--text-subtle); }
+.pf-paste-preview { display: grid; gap: 12px; min-width: 0; }
+.pf-paste-preview .pf-validate { margin-top: 0; }
+.pf-paste-errors strong { display: block; margin-bottom: 4px; font-size: 12px; }
+.pf-paste-err { font-family: var(--font-mono); overflow-wrap: anywhere; }
+.pf-paste-status { display: grid; gap: 2px; justify-items: start; }
+.pf-paste-sim { font-size: 11px; color: var(--text-muted); white-space: normal; max-width: 220px; }
+
+@media (max-width: 760px) {
+  .pf-actions { justify-content: flex-start; }
+  .pf-alloc { justify-content: flex-start; }
+}

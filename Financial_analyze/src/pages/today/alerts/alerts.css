@@ -1,0 +1,21 @@
+/* Alerts page — .al-* */
+.al-page { display: flex; flex-direction: column; gap: 16px; }
+.al-page > .page-header { margin-bottom: 4px; }
+.al-banner { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-sunken); color: var(--text-muted); font-size: 13px; }
+
+.stat-grid.al-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.al-page .card-header { flex-wrap: wrap; }
+.al-hot .u098-num { color: var(--accent); }
+
+.al-ico { width: 28px; height: 28px; border-radius: 6px; display: grid; place-items: center; background: var(--bg-sunken); color: var(--text-muted); }
+.al-ico.is-hot { background: var(--accent-bg); color: var(--accent); }
+.al-tk { padding: 2px 4px; margin: 0 -4px; background: none; border: 0; border-radius: 4px; cursor: pointer; color: var(--text); }
+.al-tk:hover { color: var(--accent); }
+.al-tk:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.al-note { color: var(--text-muted); font-size: 12px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.al-muted { color: var(--text-subtle); font-size: 12px; }
+.al-actions { display: inline-flex; align-items: center; gap: 6px; }
+.al-actions .u433 { gap: 0; }
+.al-row-hot td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
+
+.al-form { display: flex; flex-direction: column; gap: 12px; text-align: left; }

@@ -1,0 +1,49 @@
+/* Legacy stat grid classes (owned here so <StatGrid>/<StatTile> and old markup agree). */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.stat-grid.is-auto { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+@media (max-width: 760px) { .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.stat { background: var(--bg-elev); padding: 16px; min-width: 0; }
+[data-theme="dark"] .stat { background: #15140F; }
+.stat-label { font-size: 11px; color: var(--text-subtle); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; margin-bottom: 6px; }
+.stat-value { font-family: var(--font-mono); font-size: 22px; font-weight: 600; color: var(--text); letter-spacing: -0.01em; }
+.stat-delta { font-size: 12px; font-family: var(--font-mono); margin-top: 4px; }
+
+/* Lucian UX/UI Prompt #098 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#098
+   Ported: the per-digit rolling number (only digits that change spin, .9s spring, 45ms stagger), the
+   up/down delta badge and the area sparkline with its head dot. The 340×410 demo card, the live ticker,
+   the pause button and the metric switcher are dropped; values come from props. The digit roller is
+   sized in em so it follows the tile's font size (50px demo → 22px tile). */
+.u098{position:relative;display:flex;flex-direction:column;min-width:0;padding:14px 16px;background:var(--ux-surface);color:var(--ux-ink);container-type:inline-size;--fs:22px}
+.u098.is-card{border-radius:var(--radius-lg);box-shadow:0 0 0 1px var(--ux-line)}
+.u098-h{display:flex;align-items:center;gap:6px;min-width:0;font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--ux-ink-3)}
+.u098-h>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.u098-live{width:6px;height:6px;flex:none;border-radius:50%;background:var(--ux-mint);box-shadow:0 0 0 0 color-mix(in srgb,var(--ux-mint) 50%,transparent);animation:u098-live 1.6s ease-out infinite}
+@keyframes u098-live{to{box-shadow:0 0 0 8px color-mix(in srgb,var(--ux-mint) 0%,transparent)}}
+.u098-num{display:flex;align-items:flex-start;height:1.16em;margin-top:6px;overflow:hidden;-webkit-mask-image:linear-gradient(transparent,#000 14%,#000 86%,transparent);mask-image:linear-gradient(transparent,#000 14%,#000 86%,transparent);font-family:var(--font-mono);font-size:min(var(--fs),calc(100cqi / (var(--n,8) * .62)));font-weight:600;letter-spacing:-.02em;line-height:1.16em;font-variant-numeric:tabular-nums;white-space:nowrap}
+.u098.is-lg{--fs:30px}
+.u098.is-sm{--fs:17px}
+/* Long values shrink to fit the tile (mono digits are ~0.6em wide; --n = character count). */
+.u098-col{display:inline-flex;flex-direction:column;transform:translateY(calc(var(--d) * -1.16em));transition:transform .9s cubic-bezier(.3,1.25,.5,1);transition-delay:calc(var(--i) * 45ms)}
+.u098-col span{height:1.16em}
+.u098-sym{display:inline-block;white-space:pre}
+.u098-sym.sm{font-size:.62em;margin-left:2px;align-self:flex-end;line-height:1.6em}
+.u098-dl{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:6px;font-size:11.5px;font-weight:500;color:var(--ux-ink-3)}
+.u098-bd{display:inline-flex;align-items:center;gap:3px;height:20px;padding:0 7px;border-radius:999px;background:color-mix(in srgb,var(--c) 15%,transparent);color:var(--c);font-family:var(--font-mono);font-weight:700;transition:color .3s,background-color .3s}
+.u098-bd svg{width:8px;height:8px;fill:currentColor;transition:transform .4s var(--ux-spring)}
+.u098-bd.dn svg{transform:rotate(180deg)}
+.u098-bd.flat svg{display:none}
+.u098-sp{position:relative;height:40px;margin:10px -16px -14px;overflow:hidden}
+.u098-sp svg{display:block;width:calc(100% - 8px);height:100%;overflow:visible}
+.u098-ln{fill:none;stroke:var(--c,var(--ux-accent));stroke-width:2;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}
+.u098-gd stop{stop-color:var(--c,var(--ux-accent))}
+.u098-hd{position:absolute;width:8px;height:8px;border-radius:50%;background:var(--c,var(--ux-accent));box-shadow:0 0 0 2px var(--ux-surface);transform:translate(-50%,-50%);pointer-events:none}
+.stat-grid>.u098{border-radius:0;box-shadow:none}
+@media (prefers-reduced-motion:reduce){.u098-col{transition:none}.u098-live{animation:none}}

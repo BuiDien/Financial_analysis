@@ -1,9 +1,16 @@
-// Top header with ticker tape and actions
+// Top header with the index ticker tape — VN indices first, then the global
+// ones (S&P, NASDAQ, DOW, RUSSELL, VIX, 10Y, BTC, GOLD, OIL); live data or nothing.
+
+import React from 'react';
+import { ApiStatusChip } from './api-client.jsx';
+import { IconButton, openCommandPalette } from './ui/index.js';
+import { formatNumber, formatPct, isNum } from './lib/format.js';
+import { useGlobalIndices, useVnIndices } from './lib/data.js';
 
 const TickerTape = ({ indices }) => {
   // Only items with a real value — a failed index is left out, never invented.
   const items = (indices || []).filter(it => isNum(it.val));
-  if (!items.length) return <div className="ticker-tape" style={{ flex: 1 }}></div>;
+  if (!items.length) return <div className="ticker-tape"></div>;
   // Duplicate the list so the marquee loops seamlessly (track translates -50%)
   const loop = [...items, ...items];
   return (
@@ -12,10 +19,10 @@ const TickerTape = ({ indices }) => {
         {loop.map((it, i) => (
           <div key={i} className="tape-item" aria-hidden={i >= items.length ? 'true' : undefined}>
             <span className="sym">{it.sym}</span>
-            <span className="num">{fmtNum(it.val, it.val < 1000 ? 2 : 0)}</span>
+            <span className="num">{formatNumber(it.val, it.val < 1000 ? 2 : 0)}</span>
             {isNum(it.chg) && (
               <span className={it.chg >= 0 ? 'pos num' : 'neg num'}>
-                {it.chg >= 0 ? '+' : ''}{Number(it.chg).toFixed(2)}%
+                {formatPct(it.chg)}
               </span>
             )}
           </div>
@@ -25,7 +32,10 @@ const TickerTape = ({ indices }) => {
   );
 };
 
-const Header = ({ indices, theme, setTheme, aiOpen, setAiOpen, setPage }) => {
+const Header = ({ theme, setTheme, aiOpen, setAiOpen, setPage }) => {
+  const vn = useVnIndices().data;
+  const global = useGlobalIndices().data;
+  const indices = [...(vn || []), ...(global || [])];
   const readCfg = () => { try { return JSON.parse(localStorage.getItem('helix_settings_v1') || '{}'); } catch { return {}; } };
   const [cfg, setCfg] = React.useState(readCfg);
   React.useEffect(() => {
@@ -35,30 +45,23 @@ const Header = ({ indices, theme, setTheme, aiOpen, setAiOpen, setPage }) => {
   }, []);
   return (
     <header className="header">
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', fontSize: 11, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-        <ApiStatusChip />
-      </div>
+      <div className="header-status"><ApiStatusChip /></div>
 
-      {cfg.tickerTape !== false ? <TickerTape indices={indices} /> : <div style={{ flex: 1 }}></div>}
+      {cfg.tickerTape !== false ? <TickerTape indices={indices} /> : <div className="header-spacer"></div>}
 
       <div className="header-actions">
-        <button className="search" onClick={() => window.dispatchEvent(new Event('open-command-palette'))}
-          style={{ textAlign: 'left', color: 'var(--text-subtle)', cursor: 'text', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <button type="button" className="search header-search" onClick={openCommandPalette}
+          aria-label="Search tickers and pages" data-tip="Search" data-tip-kbd="⌘ K">
           <span>Search ticker, page…</span>
-          <kbd style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 600, padding: '1px 5px', background: 'var(--bg-sunken)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-muted)' }}>⌘K</kbd>
+          <kbd className="kbd">⌘K</kbd>
         </button>
-        <button className="icon-btn" title="Alerts" onClick={() => setPage && setPage('alerts')}>
-          <Icon name="bell" size={14} />
-        </button>
-        <button className="icon-btn" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} title="Toggle theme">
-          <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={14} />
-        </button>
-        <button className="icon-btn" data-active={aiOpen} onClick={() => setAiOpen(!aiOpen)} title="AI assistant">
-          <Icon name="sparkle" size={14} />
-        </button>
+        <IconButton icon="bell" label="Alerts" onClick={() => setPage && setPage('#/today/alerts')} />
+        <IconButton icon={theme === 'dark' ? 'sun' : 'moon'} label={theme === 'dark' ? 'Light theme' : 'Dark theme'}
+          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} />
+        <IconButton icon="sparkle" label="AI assistant" active={!!aiOpen} onClick={() => setAiOpen(!aiOpen)} />
       </div>
     </header>
   );
 };
 
-window.Header = Header;
+export { Header };

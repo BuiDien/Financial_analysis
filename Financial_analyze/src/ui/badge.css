@@ -1,0 +1,33 @@
+/* Badge / Tag — no Lucian match (#029 chips are for input), built from tokens. Owns the legacy .pill
+   classes (.pill-pos / .pill-neg / .pill-neutral) and adds warn / info / accent tones. */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  line-height: 1.5;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.pill.is-sans { font-family: var(--font-sans); }
+.pill-pos { background: var(--pos-bg); color: var(--pos); }
+.pill-neg { background: var(--neg-bg); color: var(--neg); }
+.pill-neutral { background: var(--bg-sunken); color: var(--text-muted); }
+.pill-warn { background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn); }
+.pill-info { background: color-mix(in srgb, var(--info) 12%, transparent); color: var(--info); }
+[data-theme="dark"] .pill-info { color: color-mix(in srgb, var(--info) 55%, #fff); background: color-mix(in srgb, var(--info) 26%, transparent); }
+[data-theme="dark"] .pill-warn { color: color-mix(in srgb, var(--warn) 60%, #fff); background: color-mix(in srgb, var(--warn) 26%, transparent); }
+.pill-accent { background: var(--accent-bg); color: var(--accent); }
+.pill-dot::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.pill-outline { background: transparent; box-shadow: inset 0 0 0 1px currentColor; }
+.tag { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 4px 0 8px; border-radius: 6px; background: var(--bg-sunken); border: 1px solid var(--border); font-size: 12px; font-weight: 500; color: var(--text); white-space: nowrap; }
+.tag.is-static { padding-right: 8px; }
+.tag-x { width: 16px; height: 16px; padding: 0; border: 0; border-radius: 4px; display: grid; place-items: center; background: none; color: var(--text-subtle); }
+.tag-x:hover { background: var(--bg-hover); color: var(--text); }
+.tag-x:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.tag-x svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; }
+.spark { display: inline-block; vertical-align: middle; }

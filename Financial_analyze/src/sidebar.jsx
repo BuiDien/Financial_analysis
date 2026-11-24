@@ -1,93 +1,53 @@
-// Sidebar with nav
+// Sidebar: the six route sections (SideNav, Lucian #417) plus the user's watchlists.
 
+import React from 'react';
+import { SideNav, askPrompt, toast } from './ui/index.js';
+import { useWatchlists } from './watchlist-store.jsx';
+import { useAlerts } from './lib/data.js';
+
+// Six sections; each maps to a route (lib/router.js).
 const NAV = [
-  { id: 'home', label: 'Home', icon: 'home' },
-  { id: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
-  { id: 'detail', label: 'Asset Detail', icon: 'chart' },
-  { id: 'portfolio', label: 'Portfolio', icon: 'portfolio' },
-  { id: 'screener', label: 'Screener', icon: 'screener' },
-  { id: 'backtest', label: 'Backtest', icon: 'trending' },
-  { id: 'statements', label: 'Financial Statements', icon: 'portfolio' },
-  { id: 'sync', label: 'Sync', icon: 'sync' },
-  { id: 'ocr-inbox', label: 'OCR Inbox', icon: 'search' },
-  { id: 'news', label: 'News & Insights', icon: 'news' },
+  { id: 'today', label: 'Today', icon: 'home', href: '#/today' },
+  { id: 'scan', label: 'Scan', icon: 'screener', href: '#/scan' },
+  { id: 'company', label: 'Company', icon: 'chart', href: null },   // last ticker
+  { id: 'portfolio', label: 'Portfolio', icon: 'portfolio', href: '#/portfolio' },
+  { id: 'inbox', label: 'Inbox', icon: 'search', href: '#/inbox/ocr' },
+  { id: 'settings', label: 'Settings', icon: 'settings', href: '#/settings' },
 ];
 
-const WATCHLIST_NAV = [
-  { id: 'wl1', label: 'AI & Semis', count: 8 },
-  { id: 'wl2', label: 'Dividend Aristocrats', count: 12 },
-  { id: 'wl3', label: 'Macro Hedges', count: 6 },
-];
-
-const Sidebar = ({ page, setPage }) => {
+const Sidebar = ({ route, setPage, rail, forced, onToggleRail }) => {
   const store = useWatchlists();
   const lists = store.getLists();
   const activeId = store.getState().activeId;
-  const [, forceTick] = React.useReducer(x => x + 1, 0);
-  React.useEffect(() => {
-    const on = () => forceTick();
-    window.addEventListener('helix-alerts-updated', on);
-    return () => window.removeEventListener('helix-alerts-updated', on);
-  }, []);
-  const triggeredAlerts = (() => { try { return JSON.parse(localStorage.getItem('helix_alerts_v1') || '[]').filter(a => a.triggered).length; } catch { return 0; } })();
+  const alertsQ = useAlerts();
+  const triggered = (alertsQ.data || []).filter(a => a.triggered).length;
+  const section = route?.section;
 
-  const openList = (id) => { store.setActive(id); setPage('dashboard'); };
   const newList = async () => {
-    const name = await window.askPrompt({ title: 'New watchlist', label: 'Name', placeholder: 'e.g. AI & Semis', confirmText: 'Create' });
-    if (name) { store.create(name); setPage('dashboard'); window.toast && window.toast(`Created "${name}"`, { type: 'success' }); }
+    const name = await askPrompt({ title: 'New watchlist', label: 'Name', placeholder: 'e.g. Banks', confirmText: 'Create' });
+    if (name) { store.create(name); setPage('#/today'); toast(`Created "${name}"`, { type: 'success' }); }
+  };
+
+  const items = NAV.map(n => (n.id === 'today' && triggered > 0
+    ? { ...n, badge: triggered, badgeTitle: `${triggered} triggered alert${triggered === 1 ? '' : 's'}` }
+    : n));
+  const watchlists = {
+    id: 'watchlists',
+    label: 'Watchlists',
+    items: [
+      ...lists.map(wl => ({
+        id: wl.id, label: wl.name, icon: wl.id === activeId ? 'starFill' : 'star', mark: wl.id === activeId,
+        meta: wl.symbols.length, current: section === 'today' && wl.id === activeId,
+        onSelect: () => { store.setActive(wl.id); setPage('#/today'); },
+      })),
+      { id: '__new', label: 'New watchlist', icon: 'plus', muted: true, onSelect: newList },
+    ],
   };
 
   return (
-    <aside className="sidebar">
-      <div style={{ height: 8 }}></div>
-
-      <div className="nav-section">
-        <div className="nav-section-label">Workspace</div>
-        {NAV.map(item => (
-          <button key={item.id}
-            className="nav-item"
-            aria-current={page === item.id ? 'page' : undefined}
-            onClick={() => setPage(item.id)}>
-            <Icon name={item.icon} className="icon" />
-            <span>{item.label}</span>
-          </button>
-        ))}
-      </div>
-
-      <div className="nav-section">
-        <div className="nav-section-label">Watchlists</div>
-        {lists.map(wl => (
-          <button key={wl.id} className="nav-item"
-            aria-current={(page === 'dashboard' && wl.id === activeId) ? 'page' : undefined}
-            onClick={() => openList(wl.id)}>
-            <Icon name={wl.id === activeId ? 'starFill' : 'star'} className="icon"
-              style={wl.id === activeId ? { color: 'var(--accent)' } : undefined} />
-            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{wl.name}</span>
-            <span style={{ fontSize: 11, color: 'var(--text-subtle)', fontFamily: 'var(--font-mono)' }}>{wl.symbols.length}</span>
-          </button>
-        ))}
-        <button className="nav-item" style={{ color: 'var(--text-subtle)' }} onClick={newList}>
-          <Icon name="plus" className="icon" />
-          <span>New watchlist</span>
-        </button>
-      </div>
-
-      <div className="nav-section">
-        <div className="nav-section-label">Account</div>
-        <button className="nav-item" aria-current={page === 'alerts' ? 'page' : undefined} onClick={() => setPage('alerts')}>
-          <Icon name="alerts" className="icon" />
-          <span style={{ flex: 1 }}>Alerts</span>
-          {triggeredAlerts > 0 && (
-            <span style={{ fontSize: 10, fontWeight: 600, padding: '1px 6px', background: 'var(--accent-bg)', color: 'var(--accent)', borderRadius: 999 }}>{triggeredAlerts}</span>
-          )}
-        </button>
-        <button className="nav-item" aria-current={page === 'settings' ? 'page' : undefined} onClick={() => setPage('settings')}>
-          <Icon name="settings" className="icon" />
-          <span>Settings</span>
-        </button>
-      </div>
-    </aside>
+    <SideNav items={items} activeId={section} onSelect={it => setPage(it.href || it.id)}
+      sections={[watchlists]} rail={rail} forced={forced} onToggleRail={onToggleRail} />
   );
 };
 
-window.Sidebar = Sidebar;
+export { Sidebar };

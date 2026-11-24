@@ -1,0 +1,49 @@
+/* Lucian UX/UI Prompt #436 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#436
+   Ported: the dialog card (spring in .55s cubic-bezier(.3,1.45,.5,1), drop out .32s), the danger
+   icon tile with the trash can, the Cancel / destructive button pair and the Tab loop. Made a real
+   modal: portal, dimmed backdrop, focus trap over every focusable, Esc, focus restored on close.
+   The lid-flip / document-drop sequence is dropped: the action runs at once instead of after 1.35s. */
+.u436-ov{position:fixed;inset:0;z-index:2147483200;display:grid;place-items:center;padding:16px;background:rgba(10,9,8,.45);opacity:1;transition:opacity .25s var(--ux-ease)}
+.u436-ov.is-pre,.u436-ov.is-gone{opacity:0}
+.u436-d{position:relative;width:min(400px,100%);max-height:calc(100dvh - 32px);overflow:auto;padding:20px 20px 18px;border-radius:16px;background:var(--ux-surface);background:light-dark(var(--ux-surface),var(--ux-surface-2));box-shadow:0 0 0 1px var(--ux-line-2),0 28px 56px -24px var(--ux-shadow-strong),0 4px 12px -4px var(--ux-shadow);outline:none;color:var(--ux-ink);transition:transform .55s cubic-bezier(.3,1.45,.5,1),opacity .3s var(--ux-ease)}
+.u436-d.is-lg{width:min(560px,100%)}
+.u436-ov.is-gone .u436-d{transform:translateY(10px) scale(.92);opacity:0;transition:transform .32s cubic-bezier(.5,0,.75,0),opacity .26s var(--ux-ease)}
+.u436-ov.is-pre .u436-d{transform:translateY(14px) scale(.9);opacity:0;transition:none}
+.u436-ic{width:44px;height:44px;margin-bottom:14px;border-radius:13px;display:grid;place-items:center;background:color-mix(in srgb,var(--ux-danger) 12%,transparent);color:var(--ux-danger)}
+.u436-ic.is-accent{background:var(--ux-accent-soft);color:var(--ux-accent)}
+.u436-ic svg{width:28px;height:28px;overflow:visible;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.u436-x{position:absolute;right:10px;top:10px;width:28px;height:28px;padding:0;border:0;border-radius:8px;display:grid;place-items:center;background:none;color:var(--ux-ink-3)}
+.u436-x:hover{background:var(--ux-surface-2);color:var(--ux-ink)}
+.u436-x svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:round}
+.u436-d h3{margin:0;padding-right:28px;font-size:16px;font-weight:700;letter-spacing:-.02em}
+.u436-ds{margin:6px 0 0;font-size:13px;line-height:1.55;color:var(--ux-ink-2)}
+.u436-body{margin-top:14px}
+.u436-bs{display:flex;gap:8px;margin-top:20px}
+.u436-bs .u436-no,.u436-bs .u436-ok{flex:1;height:38px;border:0;border-radius:10px;font-size:13.5px;font-weight:650;transform:scale(var(--k,1));transition:transform .45s cubic-bezier(.34,1.7,.5,1),background-color .15s,opacity .2s}
+.u436-bs :is(.u436-no,.u436-ok):active:not(:disabled){--k:.94;transition:transform .1s var(--ux-ease)}
+.u436-bs :is(.u436-no,.u436-ok):disabled{opacity:.5;cursor:not-allowed}
+.u436-no{background:transparent;box-shadow:inset 0 0 0 1px var(--ux-line-2);color:var(--ux-ink)}
+.u436-no:hover{background:color-mix(in srgb,var(--ux-ink) 6%,transparent)}
+.u436-ok{background:var(--ux-ink);color:var(--ux-page)}
+.u436-ok:hover{opacity:.9}
+.u436-ok.is-danger{background:#D9304A;background:light-dark(#D9304A,#E5484D);color:#fff;box-shadow:inset 0 1px 0 rgba(255,255,255,.16)}
+.u436-ok.is-danger:hover{opacity:1;background:#C2253E;background:light-dark(#C2253E,#EC5D61)}
+[data-theme="dark"] .u436-ok.is-danger{background:#E5484D}
+[data-theme="dark"] .u436-ok.is-danger:hover{background:#EC5D61}
+.u436 .u436-no:focus-visible,.u436 .u436-ok:focus-visible{outline:2px solid var(--ux-accent);outline-offset:2px}
+.u436 .u436-ok.is-danger:focus-visible{outline-color:#D9304A}
+/* Adaptation: custom `actions` (src/ui <Button>s) keep their own look — the element's pill-pair styling
+   above only applies to its own Cancel / confirm buttons. The row is right-aligned and wraps on narrow
+   screens; a leading non-button item (a total, a note) can take margin-right:auto. */
+.u436-bs.is-custom{flex-wrap:wrap;align-items:center;justify-content:flex-end}
+/* Adaptation: sizes. sm 320 · md 400 (default) · lg 560 · xl 840 · full (viewport less 16px each side).
+   xl / full are a column: title and actions fixed, the body scrolls. */
+.u436-d.is-sm{width:min(320px,100%)}
+.u436-d.is-xl{width:min(840px,100%)}
+.u436-d.is-full{width:100%;height:calc(100dvh - 32px)}
+.u436-d.is-xl,.u436-d.is-full{display:flex;flex-direction:column;overflow:hidden}
+.u436-d.is-xl>*,.u436-d.is-full>*{flex:none}
+.u436-d.is-xl>.u436-body,.u436-d.is-full>.u436-body{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain}
+.u436-body.is-flush{margin:14px -20px 0;padding:0}
+.u436-d.is-xl>.u436-body.is-flush,.u436-d.is-full>.u436-body.is-flush{border-top:1px solid var(--ux-line);border-bottom:1px solid var(--ux-line)}
+@media (max-width:480px){.u436-bs.is-custom>.btn{flex:1 1 auto;justify-content:center}}

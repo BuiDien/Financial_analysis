@@ -1,0 +1,20 @@
+/* Lucian UX/UI Prompt #038 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#038
+   Ported: only the menu itself (bloom from the cursor / corner with the spring, edge flip, items with
+   icon + label + shortcut, the separator and the danger item). The file-card grid, the Share submenu
+   track, the long-press demo and the delete-with-undo card are dropped. Made a real app menu: portaled
+   and position:fixed in viewport coordinates, anchored to an element or placed at x/y, width follows
+   the content (200px minimum as in the element), a non-interactive group label row added. */
+.u038-menu{position:fixed;z-index:2147483300;min-width:200px;max-width:min(320px,calc(100vw - 16px));padding:6px;border-radius:16px;background:var(--ux-surface);background:light-dark(var(--ux-surface),var(--ux-surface-2));box-shadow:0 0 0 1px var(--ux-line-2),0 24px 48px -20px var(--ux-shadow-strong);overflow:hidden;outline:none;
+  opacity:0;transform:scale(.85);transition:opacity .15s var(--ux-ease),transform .35s var(--ux-spring)}
+.u038-menu.is-open{opacity:1;transform:none;transition:opacity .15s var(--ux-ease),transform .4s var(--ux-spring)}
+.u038-p{margin:0;padding:0;list-style:none}
+.u038-mi{display:flex;align-items:center;gap:10px;width:100%;height:38px;padding:0 10px;border:0;border-radius:10px;background:none;color:var(--ux-ink);font-size:13.5px;font-weight:620;text-align:left;white-space:nowrap}
+.u038-mi:hover:not(:disabled),.u038-mi:focus-visible,.u038-mi:focus{background:var(--ux-surface-2);background:light-dark(var(--ux-surface-2),var(--ux-surface-3));outline:none}
+.u038-mi:disabled{opacity:.45;cursor:not-allowed}
+.u038-mi svg{width:17px;height:17px;flex:none;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;color:var(--ux-ink-2)}
+.u038-t{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.u038-mi kbd{margin-left:auto;padding-left:12px;font-family:inherit;font-size:11.5px;color:var(--ux-ink-3)}
+.u038-mi.danger,.u038-mi.danger svg{color:var(--ux-danger)}
+.u038-sep{height:1px;margin:5px 8px;background:var(--ux-line)}
+/* Adaptation: group label row (not focusable), in the element's muted ink. */
+.u038-lab{padding:6px 10px 4px;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ux-ink-3)}

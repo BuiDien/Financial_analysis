@@ -1,0 +1,41 @@
+/* Lucian UX/UI Prompt #046 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#046
+   Ported: the pill that unfolds into the palette (clip-path .6s), live filtering with highlighted
+   matches, grouped results, the gliding highlight bar and the fold back into a pill when a command
+   runs or Esc is pressed. Made app-wide: portal + dimmed backdrop, opened by the app's rebindable
+   ⌘K shortcut / header search (no second global key listener), width min(560px, screen), height
+   up to 460px. Commands run at once (the demo waited 650ms). */
+.u046-ov{position:fixed;inset:0;z-index:2147483100;display:flex;justify-content:center;align-items:flex-start;padding:12vh 16px 16px;background:rgba(10,9,8,.4);transition:opacity .35s var(--ux-ease)}
+.u046-ov.is-closed{opacity:0}
+.u046{position:relative;width:min(560px,100%);height:min(460px,calc(100dvh - 12vh - 16px))}
+.u046-pal{position:absolute;left:0;right:0;top:0;height:100%;display:flex;flex-direction:column;border-radius:20px;background:var(--ux-surface);box-shadow:0 0 0 1px var(--ux-line),0 34px 60px -34px var(--ux-shadow-strong);clip-path:inset(0 0 0 0 round 20px);transition:clip-path .6s var(--ux-ease),box-shadow .5s}
+.u046.is-closed .u046-pal{clip-path:inset(0 0 calc(100% - 52px) 0 round 26px);box-shadow:0 0 0 1px var(--ux-line-2),0 14px 26px -18px var(--ux-shadow-strong);transition:clip-path .5s var(--ux-ease),box-shadow .5s}
+.u046-field{position:relative;display:flex;align-items:center;gap:10px;height:52px;flex:none;padding:0 14px 0 18px;border-bottom:1px solid var(--ux-line);cursor:text;transition:border-color .3s}
+.u046.is-closed .u046-field{border-color:transparent}
+.u046-field svg{width:18px;height:18px;flex:none;fill:none;stroke:var(--ux-ink-3);stroke-width:2;stroke-linecap:round}
+.u046-in{flex:1;min-width:0;height:100%;border:0;padding:0;background:none;font:inherit;font-size:15px;font-weight:500;color:var(--ux-ink);outline:none}
+.u046-in:focus-visible{outline:none}
+.u046-in::placeholder{color:var(--ux-ink-3)}
+.u046-kbd{display:inline-flex;align-items:center;height:22px;padding:0 7px;border-radius:7px;background:var(--ux-surface-2);box-shadow:inset 0 -1px 0 var(--ux-line-2);font-size:11px;font-weight:700;color:var(--ux-ink-3);font-family:inherit;white-space:nowrap}
+.u046-field:has(.u046-in:focus-visible){box-shadow:inset 0 -2px 0 var(--ux-accent)}
+.u046-body{position:relative;flex:1;min-height:0;overflow-y:auto;scrollbar-width:none;overscroll-behavior:contain;padding:6px 8px;transition:opacity .3s}
+.u046-body::-webkit-scrollbar{display:none}
+.u046.is-closed .u046-body,.u046.is-closed .u046-foot{opacity:0}
+.u046-hl{position:absolute;left:8px;right:8px;top:0;height:44px;border-radius:12px;background:var(--ux-accent-soft);box-shadow:inset 3px 0 0 var(--ux-accent);transform:translateY(var(--y,0));transition:transform .4s var(--ux-spring),opacity .2s;pointer-events:none}
+.u046-list{position:relative;margin:0;padding:0;list-style:none}
+.u046-g{padding:10px 10px 6px;font-size:10.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--ux-ink-3)}
+.u046-op{display:flex;align-items:center;gap:12px;height:44px;padding:0 10px;border-radius:12px;font-size:13.5px;font-weight:600;color:var(--ux-ink-2);cursor:pointer;animation:u046-in .45s var(--ux-spring) backwards;animation-delay:calc(min(var(--i),12) * 28ms)}
+.u046-op[aria-selected="true"]{color:var(--ux-ink)}
+.u046-op mark{background:none;color:var(--ux-accent);font-weight:800}
+.u046-op .u046-tx{flex:1;min-width:0;display:flex;flex-direction:column}
+.u046-op .u046-tx>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.u046-op .u046-tx small{font-size:11px;font-weight:500;color:var(--ux-ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.u046-ic{width:28px;height:28px;flex:none;border-radius:9px;display:grid;place-items:center;background:var(--c,var(--ux-surface-2));color:var(--ux-ink-2)}
+.u046-op[aria-selected="true"] .u046-ic{color:var(--ux-accent)}
+.u046-ic svg{width:14px;height:14px}
+.u046-op .u046-kbd{margin-left:auto}
+.u046-empty{padding:40px 0;text-align:center;font-size:13.5px;color:var(--ux-ink-3)}
+.u046-empty b{display:block;margin-bottom:4px;font-size:14.5px;color:var(--ux-ink)}
+@keyframes u046-in{from{opacity:0;transform:translateY(8px)}}
+.u046-foot{display:flex;align-items:center;gap:14px;height:40px;flex:none;padding:0 16px;border-top:1px solid var(--ux-line);font-size:11.5px;font-weight:600;color:var(--ux-ink-3);transition:opacity .3s}
+.u046-foot .u046-kbd{height:20px;padding:0 5px;margin-right:4px;font-size:10.5px}
+.u046-foot .u046-end{margin-left:auto}

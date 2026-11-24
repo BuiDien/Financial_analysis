@@ -5,14 +5,15 @@
 //   2. On load, HelixAPI pings GET {base}/health (1.5s timeout, 3 tries).
 //   3. If reachable → HelixAPI.live = true and pages/AI use real endpoints.
 //      Live sections that fail show an empty/error state — never mock numbers.
-//   4. If not → offline demo mode (labelled sample data). /health is re-checked
+//   4. If not → offline: pages show honest empty/error states. /health is re-checked
 //      every 10s, and repeated connection failures flip a live session offline;
 //      onStatusChange subscribers re-hydrate on every transition.
 //
 // To point at your local FastAPI server:
 //   localStorage.setItem('helix_api_url', 'http://localhost:8000'); location.reload();
-// To force mock mode:
-//   localStorage.removeItem('helix_api_url'); location.reload();
+
+import React from 'react';
+import { Badge } from './ui/Badge.jsx';
 
 const HELIX_DEFAULT_API = 'http://localhost:8000';
 
@@ -35,6 +36,20 @@ const HELIX_LONG_MS = 5 * 60 * 1000;     // AI chat, uploads, OCR/Hermes runs
 const HELIX_REDETECT_MS = 10000;          // re-check /health while offline
 const HELIX_HEARTBEAT_MS = 30000;         // /health heartbeat while live
 const HELIX_FAIL_LIMIT = 3;               // consecutive network failures → offline
+
+const abortError = () => Object.assign(new Error('Request cancelled'), { name: 'AbortError' });
+const aiFailure = (display, retryable) => Object.assign(new Error(display), { display, retryable });
+
+// Reject with an AbortError as soon as `signal` aborts (for promises that can't be cancelled).
+const untilAborted = (promise, signal) => {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(abortError());
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(abortError());
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+  });
+};
 
 const HelixAPI = {
   base: localStorage.getItem('helix_api_url') || HELIX_DEFAULT_API,
@@ -100,15 +115,24 @@ const HelixAPI = {
 
   // fetch with a timeout; tracks connection failures so a backend that dies
   // mid-session flips the app to offline instead of failing call by call.
+  // init.signal (optional) is the caller's cancel: it is combined with the
+  // timeout, and a caller abort rethrows as an AbortError (not a timeout).
   async _fetch(path, init = {}, timeout = HELIX_TIMEOUT_MS) {
+    const { signal: callerSignal, ...rest } = init;
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeout);
+    const onCallerAbort = () => ctrl.abort();
+    if (callerSignal) {
+      if (callerSignal.aborted) ctrl.abort();
+      else callerSignal.addEventListener('abort', onCallerAbort, { once: true });
+    }
     try {
-      const res = await fetch(`${this.base}${path}`, { ...init, signal: ctrl.signal });
+      const res = await fetch(`${this.base}${path}`, { ...rest, signal: ctrl.signal });
       this._netFails = 0;
       return res;
     } catch (e) {
       if (e && e.name === 'AbortError') {
+        if (callerSignal?.aborted) throw abortError();
         const err = new Error(`Request timed out after ${Math.round(timeout / 1000)}s: ${path}`);
         err.timeout = true;
         throw err;
@@ -118,6 +142,7 @@ const HelixAPI = {
       throw e;
     } finally {
       clearTimeout(timer);
+      callerSignal?.removeEventListener('abort', onCallerAbort);
     }
   },
 
@@ -133,11 +158,12 @@ const HelixAPI = {
     return res.json();
   },
 
-  async _send(method, path, body, { timeout } = {}) {
+  async _send(method, path, body, { timeout, signal } = {}) {
     const res = await this._fetch(path, {
       method,
       headers: { 'Content-Type': 'application/json' },
       body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal,
     }, timeout);
     if (!res.ok) {
       let detail = `${res.status} ${path}`;
@@ -183,12 +209,37 @@ const HelixAPI = {
   async portfolioImportPreview(file) {
     const fd = new FormData(); fd.append('file', file);
     const res = await this._fetch('/api/portfolio/imports/preview', { method: 'POST', body: fd }, HELIX_LONG_MS);
-    if (!res.ok) throw new Error((await res.json()).detail || 'Import preview failed');
+    if (!res.ok) {
+      let detail = 'Import preview failed';
+      try { detail = apiErrorDetail(await res.json()) || detail; } catch {}
+      const err = new Error(detail);
+      err.status = res.status;
+      throw err;
+    }
     return res.json();
   },
   portfolioImportValidate(id, mapping) { return this._send('POST', `/api/portfolio/imports/${id}/validate`, { mapping }); },
   portfolioImportCommit(id)        { return this._send('POST', `/api/portfolio/imports/${id}/commit`, undefined, { timeout: HELIX_LONG_MS }); },
   portfolioImportErrorsUrl(id)     { return `${this.base}/api/portfolio/imports/${id}/errors`; },
+  // Pasted SSI order rows: preview flags rows already in the ledger; commit re-parses server-side.
+  portfolioPastePreview(text)      { return this._send('POST', '/api/portfolio/paste/preview', { text }); },
+  portfolioPasteCommit(text, keys) { return this._send('POST', '/api/portfolio/paste/commit', { text, keys }, { timeout: HELIX_LONG_MS }); },
+
+  // ── Alerts (backend-stored; same camelCase shape as the old localStorage list) ──
+  alerts()                         { return this._get('/api/alerts'); },
+  createAlert(alert)               { return this._send('POST', '/api/alerts', alert); },
+  updateAlert(id, patch)           { return this._send('PATCH', `/api/alerts/${encodeURIComponent(id)}`, patch); },
+  deleteAlert(id)                  { return this._send('DELETE', `/api/alerts/${encodeURIComponent(id)}`); },
+  clearAlerts()                    { return this._send('DELETE', '/api/alerts'); },
+  importAlerts(list)               { return this._send('POST', '/api/alerts/import', list); },
+
+  // ── Background jobs (unified runner) ──────────────────────
+  jobs(params = {}) {
+    const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== ''));
+    return this._get('/api/jobs' + (String(q) ? `?${q}` : ''));
+  },
+  job(id)                          { return this._get(`/api/jobs/${encodeURIComponent(id)}`); },
+  cancelJob(id)                    { return this._send('POST', `/api/jobs/${encodeURIComponent(id)}/cancel`); },
 
   // ── Filing tracker (written by the Sync page's OCR results) ───────
   saveTracker(id, tracker)         { return this._send('PUT', `/api/filings/${id}/tracker`, { tracker }); },
@@ -312,8 +363,9 @@ const HelixAPI = {
 
   // ── AI chat (sidebar) ─────────────────────────────────────
   // messages: [{role, content}], page: 'dashboard' | ... , pageContext: {}
-  async aiChat(page, pageContext, messages, provider = 'hermes') {
-    const out = await this._send('POST', '/api/ai/chat', { provider, page, page_context: pageContext, messages }, { timeout: HELIX_LONG_MS });
+  // signal (optional) cancels the HTTP request itself (combined with the timeout).
+  async aiChat(page, pageContext, messages, provider = 'hermes', { signal } = {}) {
+    const out = await this._send('POST', '/api/ai/chat', { provider, page, page_context: pageContext, messages }, { timeout: HELIX_LONG_MS, signal });
     const answer = out?.answer;
     return typeof answer === 'string' ? answer : answer == null ? '' : JSON.stringify(answer);
   },
@@ -334,25 +386,40 @@ const HelixAPI = {
     catch { return {}; }
   },
 
-  // Unified completion helper. Hermes always flows through the Python backend,
-  // which owns the API key and talks to the full agent (skills + MCP), not raw Ollama.
-  async complete(prompt, { page = 'dashboard', context = {}, messages = null } = {}) {
-    const settings = this._aiSettings();
-    const provider = settings.aiProvider === 'claude' ? 'cloud' : 'hermes';
+  // One AI round-trip. Hermes always flows through the Python backend, which owns
+  // the API key and talks to the full agent (skills + MCP), not raw Ollama; the
+  // window.claude stub only answers offline with the cloud provider.
+  // Failures THROW an Error carrying `display` (the user-facing notice) and
+  // `retryable` (false while the backend is offline); a `signal` abort throws an
+  // AbortError and also cancels the HTTP request.
+  async ask(prompt, { page = 'dashboard', context = {}, messages = null, signal } = {}) {
+    const provider = this._aiSettings().aiProvider === 'claude' ? 'cloud' : 'hermes';
     const chatMessages = messages || [{ role: 'user', content: prompt }];
+    if (signal?.aborted) throw abortError();
     if (this.live) {
       try {
-        return await this.aiChat(page, context, chatMessages, provider);
+        return await this.aiChat(page, context, chatMessages, provider, { signal });
       } catch (e) {
-        return provider === 'hermes'
-          ? `Hermes Agent is unavailable. ${e.message || e}`
-          : `The AI request failed. ${e.message || e}`;
+        if (e?.name === 'AbortError') throw e;
+        const msg = e?.message || e;
+        throw aiFailure(provider === 'hermes' ? `Hermes Agent is unavailable. ${msg}` : `The AI request failed. ${msg}`, true);
       }
     }
     if (provider === 'hermes') {
-      return 'Hermes Agent requires the Helix backend. Start FastAPI, then start Hermes with `hermes gateway run`.';
+      throw aiFailure('Hermes Agent requires the Helix backend. Start FastAPI, then start Hermes with `hermes gateway run`.', false);
     }
-    return window.claude.complete(prompt);
+    return untilAborted(window.claude.complete(prompt), signal);
+  },
+
+  // Unified completion helper: same as ask(), but a failure comes back as the
+  // notice text instead of throwing.
+  async complete(prompt, opts = {}) {
+    try {
+      return await this.ask(prompt, opts);
+    } catch (e) {
+      if (e?.display) return e.display;
+      throw e;
+    }
   },
 };
 
@@ -375,19 +442,10 @@ const ApiStatusChip = () => {
   const { live, checked } = useApiLive();
   if (!checked) return null;
   return (
-    <span title={live ? `Connected to ${HelixAPI.base}` : `Backend not reachable at ${HelixAPI.base} — showing labelled demo data. Retrying every 10s. Run: ./scripts/run.sh`}
-      style={{
-        display: 'inline-flex', alignItems: 'center', gap: 5,
-        fontSize: 10, fontWeight: 600, fontFamily: 'var(--font-mono)',
-        padding: '2px 8px', borderRadius: 999, cursor: 'default',
-        background: live ? 'var(--pos-bg)' : 'var(--bg-sunken)',
-        color: live ? 'var(--pos)' : 'var(--text-subtle)',
-        border: `1px solid ${live ? 'var(--pos-soft)' : 'var(--border)'}`,
-        textTransform: 'uppercase', letterSpacing: '0.05em',
-      }}>
-      <span style={{ width: 5, height: 5, borderRadius: '50%', background: live ? 'var(--pos)' : 'var(--text-subtle)' }}></span>
-      {live ? 'API Live' : 'Offline · demo data'}
-    </span>
+    <Badge tone={live ? 'pos' : 'neutral'} dot className="api-chip"
+      title={live ? `Connected to ${HelixAPI.base}` : `Backend not reachable at ${HelixAPI.base} — retrying every 10s. Start it with scripts/run.sh`}>
+      {live ? 'API Live' : 'Backend offline'}
+    </Badge>
   );
 };
 
@@ -407,6 +465,4 @@ if (!window.claude || typeof window.claude.complete !== 'function') {
   };
 }
 
-window.HelixAPI = HelixAPI;
-window.ApiStatusChip = ApiStatusChip;
-window.useApiLive = useApiLive;
+export { ApiStatusChip, HelixAPI, useApiLive };

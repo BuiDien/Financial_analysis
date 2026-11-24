@@ -1,6 +1,12 @@
 // Shared watchlist store — multiple named lists, persisted to localStorage,
 // with a tiny pub/sub so the sidebar, dashboard, and detail page stay in sync.
-// (All babel scripts share one global scope, so this is exposed on window.)
+// (Exported from this module.)
+
+import React from 'react';
+import { HelixAPI } from './api-client.jsx';
+import { useQuery } from './lib/query.js';
+import { formatCompact, isNum } from './lib/format.js';
+import { LIVE_TICKER as HOME_LIVE_TICKER } from './pages/today/watch-board/instruments.js';
 
 const WATCHLIST_KEY = 'helix_watchlists_v2';
 
@@ -48,29 +54,10 @@ const SYMBOL_CATALOG = {
   T:    { name: 'AT&T', sector: 'Communication' },
 };
 
-// Default lists seeded on first run.
+// First run starts with one empty list — no sample symbols.
 const DEFAULT_WATCHLISTS = () => ([
-  { id: 'wl_ai',  name: 'AI & Semis',        symbols: ['NVDA', 'AVGO', 'AMD', 'TSM', 'MU', 'ASML', 'ARM', 'MSFT'] },
-  { id: 'wl_div', name: 'Dividend Leaders',  symbols: ['JNJ', 'PG', 'KO', 'PEP', 'XOM', 'CVX', 'JPM', 'V', 'WMT', 'HD', 'MA', 'T'] },
-  { id: 'wl_meg', name: 'Mega Cap',          symbols: ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'NVDA'] },
+  { id: 'wl_main', name: 'Watchlist', symbols: [] },
 ]);
-
-// Deterministic pseudo-quote for any symbol — OFFLINE DEMO MODE ONLY.
-const _seededQuote = (sym) => {
-  let s = 0;
-  for (let i = 0; i < sym.length; i++) s = (s * 31 + sym.charCodeAt(i)) % 100000;
-  const rnd = () => { s = (s * 9301 + 49297) % 233280; return s / 233280; };
-  const price = 40 + rnd() * 540;
-  const chg = (rnd() - 0.45) * 6;
-  const spark = [];
-  let p = price * (1 - chg / 100);
-  for (let i = 0; i < 7; i++) { p += (rnd() - 0.5) * price * 0.012; spark.push(Number(p.toFixed(2))); }
-  spark[6] = Number(price.toFixed(2));
-  const capN = price * (rnd() * 9 + 1);
-  const mcap = capN > 1000 ? (capN / 1000).toFixed(2) + 'T' : capN.toFixed(0) + 'B';
-  const vol = (rnd() * 90 + 5).toFixed(1) + 'M';
-  return { price: Number(price.toFixed(2)), chg: Number(chg.toFixed(2)), spark, mcap, vol };
-};
 
 // ── Market symbol routing ──────────────────────────────────────────────
 // App ticker → backend market symbol + price scale. Vietnamese listings go to
@@ -79,7 +66,7 @@ const _seededQuote = (sym) => {
 const HELIX_VN_INDEXES = new Set(['VNINDEX', 'VN30', 'HNXINDEX', 'HNX30', 'UPCOMINDEX']);
 const helixMarketFor = (sym, currency) => {
   const s = String(sym || '').toUpperCase();
-  const mapped = (window.HOME_LIVE_TICKER || {})[s];
+  const mapped = (HOME_LIVE_TICKER || {})[s];
   const vnHolding = String(currency || '').toUpperCase() === 'VND' && !/[.=^-]/.test(s);
   const market = s.startsWith('VN:') ? s : mapped || (vnHolding ? `VN:${s}` : s);
   const vn = market.startsWith('VN:');
@@ -115,11 +102,11 @@ const QuoteStore = {
   },
 
   fetch(market) {
-    if (!market || !window.HelixAPI?.live) return Promise.resolve(this.peek(market)?.q || null);
+    if (!market || !HelixAPI?.live) return Promise.resolve(this.peek(market)?.q || null);
     if (this._inflight[market]) return this._inflight[market];
     const p = new Promise(resolve => {
-      this._queue.push(() => window.HelixAPI.quote(market)
-        .then(q => { this._cache[market] = { q: q && Number.isFinite(Number(q.price)) ? q : null, at: Date.now(), error: null }; })
+      this._queue.push(() => HelixAPI.quote(market)
+        .then(q => { this._cache[market] = { q: q && isNum(q.price) ? q : null, at: Date.now(), error: null }; })
         .catch(e => { this._cache[market] = { q: null, at: Date.now(), error: e.message || String(e) }; })
         .finally(() => { delete this._inflight[market]; this._emit(); resolve(this._cache[market]?.q || null); }));
       this._pump();
@@ -158,40 +145,38 @@ const liveQuoteFor = (sym, currency) => {
   };
 };
 
-// Resolve a table row for a symbol. Live: real quote fields or null ("—"),
-// never invented — volume and sparklines have no live source here. Offline
-// demo mode: the labelled mock snapshot, or a seeded pseudo-quote.
-const quoteFor = (sym, data) => {
+// Resolve a table row for a symbol: real quote fields or null ("—"), never
+// invented — volume and sparklines have no live source here.
+const quoteFor = (sym) => {
   const bare = String(sym).toUpperCase().replace(/^VN:/, '');
   const meta = SYMBOL_CATALOG[bare] || {};
-  if (data && data.demo) {
-    const fromData = data.watchlist ? data.watchlist.find(w => w.sym === sym) : null;
-    if (fromData) return { ...fromData, name: fromData.name || meta.name || sym, demo: true };
-    return { sym, name: meta.name || sym, ..._seededQuote(sym), demo: true };
-  }
   const q = liveQuoteFor(sym);
   return {
     sym, name: meta.name || bare, status: q.status, currency: q.currency,
     price: q.price, chg: q.chg, vol: null,
-    mcap: q.marketCap == null ? null : `${fmtBig(q.marketCap)}${q.currency === 'USD' ? '' : q.currency === 'VND' ? ' ₫' : ` ${q.currency}`}`,
+    mcap: q.marketCap == null ? null : `${formatCompact(q.marketCap)}${q.currency === 'USD' ? '' : q.currency === 'VND' ? ' ₫' : ` ${q.currency}`}`,
     spark: null,
   };
 };
 
 // React hook: keep quotes for `symbols` fresh while live (fetch now + every
-// 5 minutes) and re-render when any lands.
+// 5 minutes through the shared query cache) and re-render when any lands.
 const useQuotes = (symbols, live) => {
   const [, force] = React.useReducer(x => x + 1, 0);
   React.useEffect(() => QuoteStore.subscribe(force), []);
   const key = (symbols || []).join(',');
-  React.useEffect(() => {
-    if (!live || !key) return undefined;
-    const run = () => { if (document.visibilityState === 'visible') QuoteStore.ensure(key.split(',').map(s => helixMarketFor(s).market)); };
-    QuoteStore.ensure(key.split(',').map(s => helixMarketFor(s).market));
-    const iv = setInterval(run, 5 * 60 * 1000);
-    return () => clearInterval(iv);
-  }, [key, live]);
+  useQuery(['quotes', key], () => QuoteStore.ensure(key.split(',').map(s => helixMarketFor(s).market)),
+    { refreshMs: 5 * 60 * 1000, enabled: !!live && !!key });
 };
+
+// Sample lists seeded by the pre-v2 app. Removed on load if the user never edited them.
+const LEGACY_SEED_LISTS = {
+  wl_ai:  'NVDA,AVGO,AMD,TSM,MU,ASML,ARM,MSFT',
+  wl_div: 'JNJ,PG,KO,PEP,XOM,CVX,JPM,V,WMT,HD,MA,T',
+  wl_meg: 'AAPL,MSFT,GOOGL,AMZN,META,NVDA',
+};
+const isLegacySeed = (l) =>
+  !!l && LEGACY_SEED_LISTS[l.id] === (Array.isArray(l.symbols) ? l.symbols.join(',') : null);
 
 const WatchlistStore = {
   _subs: [],
@@ -201,9 +186,19 @@ const WatchlistStore = {
     if (this._state) return this._state;
     try {
       const raw = JSON.parse(localStorage.getItem(WATCHLIST_KEY) || 'null');
-      if (raw && raw.lists && raw.lists.length) { this._state = raw; return raw; }
+      if (raw && Array.isArray(raw.lists)) {
+        // Drop the US sample lists the old version seeded — only when untouched.
+        const lists = raw.lists.filter(l => !isLegacySeed(l));
+        if (lists.length) {
+          const pruned = lists.length !== raw.lists.length;
+          const activeId = lists.some(l => l.id === raw.activeId) ? raw.activeId : lists[0].id;
+          this._state = { ...raw, lists, activeId };
+          if (pruned) this._persist();
+          return this._state;
+        }
+      }
     } catch {}
-    this._state = { lists: DEFAULT_WATCHLISTS(), activeId: 'wl_ai' };
+    this._state = { lists: DEFAULT_WATCHLISTS(), activeId: 'wl_main' };
     this._persist();
     return this._state;
   },
@@ -275,11 +270,4 @@ const useWatchlists = () => {
   return WatchlistStore;
 };
 
-window.SYMBOL_CATALOG = SYMBOL_CATALOG;
-window.quoteFor = quoteFor;
-window.liveQuoteFor = liveQuoteFor;
-window.helixMarketFor = helixMarketFor;
-window.QuoteStore = QuoteStore;
-window.useQuotes = useQuotes;
-window.WatchlistStore = WatchlistStore;
-window.useWatchlists = useWatchlists;
+export { HELIX_VN_INDEXES, QuoteStore, SYMBOL_CATALOG, WatchlistStore, helixMarketFor, liveQuoteFor, quoteFor, useQuotes, useWatchlists };

@@ -1,0 +1,65 @@
+/* Lucian UX/UI Prompt #400 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#400
+   Ported: width follows the container (measured) and the height grows with the number of series;
+   the demo Compare switch and event flags are dropped. Points mark origin (solid printed, hollow
+   calculated) and open conflicts (danger ring). The fixed #6366F1 focus colour uses the accent. */
+.u400{position:relative;width:100%;border-radius:32px;overflow:hidden;background:var(--ux-surface);color:var(--ux-ink);box-shadow:0 0 0 1px var(--ux-line),0 30px 60px -36px var(--ux-shadow-strong)}
+.u400-hd{position:absolute;left:18px;right:16px;top:16px;display:flex;justify-content:space-between;align-items:center}
+.u400-hd b{font-size:14px;font-weight:900}
+.u400-dt{position:absolute;left:18px;top:42px;font-size:11px;font-weight:850;color:var(--ux-ink-2);font-variant-numeric:tabular-nums}
+.u400-sv{position:absolute;left:0;top:0;pointer-events:none}
+.u400-nm{font-size:10.5px;font-weight:800;fill:var(--ux-ink-2)}
+.u400-v{font-size:14px;font-weight:900;fill:var(--ux-ink);text-anchor:end;font-variant-numeric:tabular-nums}
+.u400-dl{font-size:10px;font-weight:850;font-variant-numeric:tabular-nums;transition:opacity .25s}
+.u400-xh{stroke:var(--ux-ink);stroke-width:1;opacity:0;transition:opacity .15s}
+.u400-dot{stroke:var(--ux-surface);stroke-width:2;opacity:0;transition:opacity .15s}
+.u400.is-hov .u400-xh{opacity:.5}
+.u400.is-hov .u400-dot{opacity:1}
+.u400-pt{stroke-width:1.6}
+.u400-pt.calc{fill:var(--ux-surface)}
+.u400-cf{fill:none;stroke:var(--ux-danger);stroke-width:2}
+.u400-cfl{font-size:9.5px;font-weight:800;fill:var(--ux-danger)}
+.u400-tk{font-size:8.5px;font-weight:700;fill:var(--ux-ink-3);text-anchor:middle;font-variant-numeric:tabular-nums}
+.u400-ov{position:absolute;left:12px;right:12px;top:70px;cursor:crosshair;touch-action:pan-y;border-radius:12px}
+.u400-ov:focus-visible{outline:2px solid var(--ux-accent);outline-offset:2px}
+.u400-band{position:absolute;left:0;right:0;border-radius:10px;box-shadow:inset 0 0 0 1.5px var(--ux-accent);pointer-events:none}
+
+/* Growth chart (start = 100) — no Lucian match (spec §6.7a); built from #400's tokens and marks
+   (Lucian UX/UI Prompt #400 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#400).
+   Same card, title, date readout, crosshair and draw-in as .u400; one axis; legend + direct labels. */
+.lxg{position:relative;width:100%;padding:16px 16px 10px;border-radius:32px;background:var(--ux-surface);color:var(--ux-ink);box-shadow:0 0 0 1px var(--ux-line),0 30px 60px -36px var(--ux-shadow-strong)}
+.lxg-hd{padding:0 2px}
+.lxg-hd b{font-size:14px;font-weight:900}
+.lxg-dt{margin:4px 2px 0;font-size:11px;font-weight:850;color:var(--ux-ink-2);font-variant-numeric:tabular-nums}
+.lxg-lg{display:flex;flex-wrap:wrap;gap:6px 16px;margin:10px 2px 6px;padding:0;list-style:none}
+.lxg-lg li{display:inline-flex;align-items:center;gap:7px;min-width:0;font-size:11.5px;font-weight:700;color:var(--ux-ink-2)}
+.lxg-lg li i{flex:none;width:14px;height:2px;border-radius:1px}
+.lxg-lg li.off{color:var(--ux-ink-3)}
+.lxg-lg li.off i{opacity:.4}
+.lxg-lg small{font-weight:600;color:var(--ux-ink-3)}
+.lxg-plot{position:relative;margin-top:6px}
+.lxg-sv{display:block;overflow:visible}
+.lxg-grid{stroke:var(--ux-line);stroke-width:1}
+.lxg-base{stroke:var(--ux-line-2);stroke-width:1}
+.lxg-yt,.lxg-tk{font-size:8.5px;font-weight:700;fill:var(--ux-ink-3);font-variant-numeric:tabular-nums}
+.lxg-yt{text-anchor:end}
+.lxg-tk{text-anchor:middle}
+.lxg-pt{stroke:var(--ux-surface);stroke-width:2}
+.lxg-pt.calc{fill:var(--ux-surface);stroke-width:2}
+.lxg-cf{fill:none;stroke:var(--ux-danger);stroke-width:2}
+.lxg-cfl{font-size:9.5px;font-weight:800;fill:var(--ux-danger)}
+.lxg-dl{font-size:10.5px;font-weight:750;fill:var(--ux-ink-2)}
+.lxg-dim{opacity:.3;transition:opacity .2s}
+.lxg-xh{stroke:var(--ux-ink);stroke-width:1;opacity:0;transition:opacity .15s}
+.lxg-dot{stroke:var(--ux-surface);stroke-width:2;opacity:0;transition:opacity .15s}
+.lxg.is-hov .lxg-xh{opacity:.5}
+.lxg.is-hov .lxg-dot{opacity:1}
+.lxg-ov{position:absolute;cursor:crosshair;touch-action:pan-y;border-radius:8px}
+.lxg-ov:focus-visible{outline:2px solid var(--ux-accent);outline-offset:4px}
+.lxg-tip{position:absolute;top:4px;z-index:2;min-width:160px;max-width:min(280px,calc(100% - 24px));padding:8px 10px 9px;border-radius:12px;background:var(--ux-surface);box-shadow:0 0 0 1px var(--ux-line-2),0 14px 30px -14px var(--ux-shadow-strong);pointer-events:none}
+.lxg-tip-h{margin-bottom:5px;font-size:10.5px;font-weight:850;color:var(--ux-ink-3)}
+.lxg-row{display:grid;grid-template-columns:12px max-content 1fr;column-gap:6px;align-items:baseline;margin-top:3px}
+.lxg-row i{width:12px;height:2px;border-radius:1px;align-self:center}
+.lxg-row b{font-size:12.5px;font-weight:900;font-variant-numeric:tabular-nums}
+.lxg-row span{font-size:11px;font-weight:700;color:var(--ux-ink-2);font-variant-numeric:tabular-nums;white-space:nowrap}
+.lxg-row small{grid-column:2 / -1;font-size:10px;font-weight:650;color:var(--ux-ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lxg-row.on b{color:var(--ux-accent)}

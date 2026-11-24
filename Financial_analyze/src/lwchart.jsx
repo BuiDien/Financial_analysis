@@ -1,5 +1,5 @@
 // LWChart — React wrapper around TradingView Lightweight Charts (Apache-2.0).
-// Loaded global: window.LightweightCharts (see CDN script in the HTML head).
+// lightweight-charts@4.2.3 is bundled from npm (imported below).
 //
 // Props:
 //   data     : [{ time?, open, high, low, close, volume }]  (ascending; time = unix seconds)
@@ -10,13 +10,18 @@
 //   markers  : [{ time (unix s), kind: 'BUY'|'SELL'|'BONUS'|'RIGHTS'|'DIVIDEND', quantity }]
 //              snapped to the bar that contains them; same-bar events are merged
 //   onReachStart : called when the user scrolls near the oldest bar (load older data)
+//   currency : optional listing currency. 'VND' → whole numbers from 1,000 up; any other
+//              currency → always 2 decimals (gold, BRK). Omitted → decided by magnitude.
 //   lines    : [{ data: [{ time, value }], color, title }] | null — extra line series on
 //              the main price scale (color may be a CSS var(--x)). When given, `data` may be [].
 //
 // Reads our CSS custom properties so the canvas matches the active theme, and
 // re-themes automatically when the html[data-theme] attribute flips.
 
-const LW_CDN_READY = () => typeof window.LightweightCharts !== 'undefined';
+import React from 'react';
+import * as LightweightCharts from 'lightweight-charts';
+import { formatCompact, formatNumber, formatPct } from './lib/format.js';
+import './styles/charts.css';
 
 // Resolve a CSS variable to a concrete color string (canvas can't use var()).
 const cssVar = (name, fallback) => {
@@ -43,7 +48,8 @@ const resolveColor = (c, fallback) => {
   return c || fallback;
 };
 
-const LWChart = ({ data, type = 'candle', height = 360, volume = true, range = '1M', markers = null, onReachStart = null, lines = null }) => {
+const LWChart = ({ data, type = 'candle', height = 360, volume = true, range = '1M', markers = null, onReachStart = null, lines = null, currency = null }) => {
+  const fmtPx = React.useCallback((v) => priceNum(v, currency), [currency]);
   const containerRef = React.useRef(null);
   const chartRef = React.useRef(null);
   const mainSeriesRef = React.useRef(null);
@@ -53,18 +59,12 @@ const LWChart = ({ data, type = 'candle', height = 360, volume = true, range = '
   const prevTimesRef = React.useRef(null);   // times last pushed — detects prepends
   const reachStartRef = React.useRef(onReachStart);
   reachStartRef.current = onReachStart;
-  const [ready, setReady] = React.useState(LW_CDN_READY());
+  const ready = true;  // library is bundled — no async load to wait for
   const [themeTick, setThemeTick] = React.useState(0);
   const [legend, setLegend] = React.useState(null);  // { o,h,l,c,chg } for the hovered/last bar
   // Structural identity of the overlay lines — a change rebuilds the chart; data-only changes don't.
   const linesSig = lines ? lines.map(l => `${l.color}|${l.title}`).join(',') : '';
 
-  // Poll until the CDN library is available (it loads async alongside React).
-  React.useEffect(() => {
-    if (ready) return;
-    const iv = setInterval(() => { if (LW_CDN_READY()) { setReady(true); clearInterval(iv); } }, 120);
-    return () => clearInterval(iv);
-  }, [ready]);
 
   // Re-theme when the app theme attribute changes.
   React.useEffect(() => {
@@ -76,7 +76,7 @@ const LWChart = ({ data, type = 'candle', height = 360, volume = true, range = '
   // Build (or rebuild) the chart when ready / type / theme changes.
   React.useEffect(() => {
     if (!ready || !containerRef.current) return;
-    const LWC = window.LightweightCharts;
+    const LWC = LightweightCharts;
 
     const text = cssVar('--text-muted', '#6B6862');
     const grid = cssVar('--border', '#E5E3DA');
@@ -99,12 +99,13 @@ const LWChart = ({ data, type = 'candle', height = 360, volume = true, range = '
       handleScroll: true,
       handleScale: true,
       // Overlay-line charts (equity curves) get compact axis labels: 105M, 1.2B, 950,000.
-      ...(lines && lines.length ? { localization: { priceFormatter: (v) => {
+      // Price charts: whole numbers once prices reach 1,000 (VND đồng, most indices), else 2 dp.
+      localization: { priceFormatter: (lines && lines.length) ? (v) => {
         const a = Math.abs(v);
         if (a >= 1e9) return (v / 1e9).toFixed(2).replace(/\.?0+$/, '') + 'B';
         if (a >= 1e6) return (v / 1e6).toFixed(2).replace(/\.?0+$/, '') + 'M';
-        return Math.round(v).toLocaleString('en-US');
-      } } } : {}),
+        return formatNumber(v, 0);
+      } : fmtPx },
     });
     chartRef.current = chart;
 
@@ -120,7 +121,7 @@ const LWChart = ({ data, type = 'candle', height = 360, volume = true, range = '
     mainSeriesRef.current = main;
 
     if (volume) {
-      const vOpts = { priceFormat: { type: 'volume' }, priceScaleId: 'vol' };
+      const vOpts = { priceFormat: { type: 'custom', formatter: (v) => formatCompact(v), minMove: 1 }, priceScaleId: 'vol' };
       const vol = chart.addHistogramSeries ? chart.addHistogramSeries(vOpts) : chart.addSeries(LWC.HistogramSeries, vOpts);
       chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.78, bottom: 0 } });
       volSeriesRef.current = vol;
@@ -163,7 +164,7 @@ const LWChart = ({ data, type = 'candle', height = 360, volume = true, range = '
     ro.observe(containerRef.current);
 
     return () => { ro.disconnect(); chart.remove(); chartRef.current = null; lineSeriesRef.current = []; };
-  }, [ready, type, height, volume, themeTick, range, linesSig]);
+  }, [ready, type, height, volume, themeTick, range, linesSig, fmtPx]);
 
   // Push data whenever it (or the chart) changes.
   React.useEffect(() => {
@@ -226,37 +227,24 @@ const LWChart = ({ data, type = 'candle', height = 360, volume = true, range = '
   }, [data, type, range, ready, themeTick, markers, lines, linesSig]);
 
   return (
-    <div style={{ position: 'relative', width: '100%', height }}>
+    <div className="lwc" style={{ height }}>
       {legend && (
-        <div style={{
-          position: 'absolute', top: 10, left: 12, zIndex: 3,
-          display: 'flex', gap: 14, alignItems: 'baseline',
-          fontFamily: 'var(--font-mono)', fontSize: 12,
-          background: 'var(--bg-elev)', border: '1px solid var(--border)',
-          borderRadius: 6, padding: '6px 12px', pointerEvents: 'none',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
-        }}>
+        <div className="lwc-legend">
           {legend.value !== undefined ? (
-            <LegendItem label="PRICE" value={legend.value} />
+            <LegendItem label="PRICE" value={legend.value} fmt={fmtPx} />
           ) : (
             <>
-              <LegendItem label="O" value={legend.o} />
-              <LegendItem label="H" value={legend.h} />
-              <LegendItem label="L" value={legend.l} />
-              <LegendItem label="C" value={legend.c} accent />
-              <span style={{ fontWeight: 600, color: legend.chg >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
-                {legend.chg >= 0 ? '+' : ''}{legend.chg.toFixed(2)}%
-              </span>
+              <LegendItem label="O" value={legend.o} fmt={fmtPx} />
+              <LegendItem label="H" value={legend.h} fmt={fmtPx} />
+              <LegendItem label="L" value={legend.l} fmt={fmtPx} />
+              <LegendItem label="C" value={legend.c} fmt={fmtPx} accent />
+              <span className={legend.chg >= 0 ? 'lwc-chg is-pos' : 'lwc-chg is-neg'}>{formatPct(legend.chg)}</span>
             </>
           )}
         </div>
       )}
-      <div ref={containerRef} style={{ width: '100%', height }} />
-      {!ready && (
-        <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: 'var(--text-subtle)', fontSize: 12 }}>
-          Loading chart…
-        </div>
-      )}
+      <div ref={containerRef} className="lwc-canvas" style={{ height }} />
+      {!ready && <div className="lwc-loading">Loading chart…</div>}
     </div>
   );
 };
@@ -285,18 +273,23 @@ const buildMarkers = (events, times) => {
   };
   return [...buckets.values()].sort((a, b) => a.time - b.time).map(b => {
     const st = style[b.side];
-    const text = b.side === 'D' ? st.label : `${st.label} ${b.qty.toLocaleString()}${b.n > 1 ? ` (${b.n})` : ''}`;
+    const text = b.side === 'D' ? st.label : `${st.label} ${formatNumber(b.qty)}${b.n > 1 ? ` (${b.n})` : ''}`;
     return { time: b.time, position: st.position, shape: st.shape, color: st.color, text };
   });
 };
 
-const LegendItem = ({ label, value, accent }) => (
-  <span style={{ display: 'inline-flex', gap: 4, alignItems: 'baseline' }}>
-    <span style={{ color: 'var(--text-subtle)', fontSize: 10, fontWeight: 600 }}>{label}</span>
-    <span style={{ color: accent ? 'var(--accent)' : 'var(--text)', fontWeight: 600 }}>
-      {value != null ? value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}
-    </span>
+// VND prices are whole đồng from 1,000 up; other currencies always keep two decimals; with no
+// currency given, magnitude decides (≥ 1,000 → whole numbers, e.g. index points).
+const priceNum = (v, currency) => {
+  const c = currency ? String(currency).toUpperCase() : null;
+  const whole = c ? c === 'VND' && Math.abs(v) >= 1000 : Math.abs(v) >= 1000;
+  return formatNumber(v, whole ? 0 : 2);
+};
+const LegendItem = ({ label, value, accent, fmt }) => (
+  <span className="lwc-item">
+    <span className="lwc-item-k">{label}</span>
+    <span className={accent ? 'lwc-item-v is-accent' : 'lwc-item-v'}>{value != null ? fmt(value) : '—'}</span>
   </span>
 );
 
-window.LWChart = LWChart;
+export { LWChart };

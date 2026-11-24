@@ -37,4 +37,4 @@ const Icon = ({ name, size = 16, ...props }) => {
   return <svg viewBox="0 0 24 24" {...s} {...props}>{paths[name]}</svg>;
 };
 
-window.Icon = Icon;
+export { Icon };

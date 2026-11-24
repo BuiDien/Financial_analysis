@@ -1,0 +1,35 @@
+/* Lucian UX/UI Prompt #271 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#271
+   Ported: the vertical timeline with coloured dots (blinking ring on the newest), the meta row with
+   tag, and the chip filter whose pill slides over while non-matching entries fold away. The fixed
+   300×480 phone card, its fade header and the sample screenshots are dropped: it flows in its slot
+   (optional max height scrolls). Chip and text sizes nudged up for legibility (9.5–11px → 11–12.5px). */
+.u271{position:relative;min-width:0;color:var(--ux-ink)}
+.u271-cs{position:relative;display:flex;gap:2px;margin-bottom:10px;padding:3px;border-radius:999px;background:var(--ux-surface-2);box-shadow:inset 0 0 0 1px var(--ux-line);max-width:100%;overflow-x:auto;scrollbar-width:none}
+.u271-cs::-webkit-scrollbar{display:none}
+.u271-pl{position:absolute;top:3px;bottom:3px;left:3px;width:calc((100% - 6px - var(--gaps)) / var(--n));border-radius:999px;background:var(--ux-surface);box-shadow:0 2px 6px -2px var(--ux-shadow-strong),0 0 0 1px var(--ux-line);transform:translateX(calc(var(--k) * 100% + var(--k) * 2px));transition:transform .4s cubic-bezier(.3,1.3,.5,1)}
+.u271-ch{position:relative;flex:1;min-width:64px;height:26px;padding:0 8px;border:0;border-radius:999px;background:none;color:var(--ux-ink-3);font:inherit;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;transition:color .25s;display:inline-flex;align-items:center;justify-content:center;gap:4px}
+.u271-ch.is-on{color:var(--ux-ink)}
+.u271-ch:focus-visible{outline:2px solid var(--ux-accent);outline-offset:1px}
+.u271-ch i{font-style:normal;font-size:10.5px;font-weight:700;color:var(--ux-ink-3);font-variant-numeric:tabular-nums}
+.u271-sc{overflow-y:auto;overscroll-behavior:contain}
+.u271-sc:focus-visible{outline:2px solid var(--ux-accent);outline-offset:2px;border-radius:8px}
+.u271-tl{position:relative;margin:0;padding:0;list-style:none}
+.u271-tl::before{content:"";position:absolute;left:5px;top:12px;bottom:6px;width:2px;border-radius:1px;background:var(--ux-line)}
+.u271-en{display:grid;grid-template-rows:1fr;opacity:1;transition:grid-template-rows .45s cubic-bezier(.3,.8,.3,1),opacity .3s,transform .45s cubic-bezier(.3,.8,.3,1)}
+.u271-en.is-off{grid-template-rows:0fr;opacity:0;transform:translateX(10px)}
+.u271-en>div{min-height:0;overflow:hidden}
+.u271-in{position:relative;padding:6px 0 12px 24px}
+.u271-dt{position:absolute;left:0;top:10px;width:12px;height:12px;border-radius:50%;background:var(--ux-surface);box-shadow:inset 0 0 0 2px var(--c)}
+.u271-dt.is-new{background:var(--c)}
+.u271-dt.is-new::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:2px solid var(--c);animation:u271-p 1.8s ease-out infinite}
+@keyframes u271-p{from{transform:scale(.6);opacity:.9}to{transform:scale(1.5);opacity:0}}
+.u271-mt{display:flex;align-items:center;flex-wrap:wrap;gap:6px;font-size:11.5px;font-weight:600;color:var(--ux-ink-3)}
+.u271-mt b{font-family:var(--font-mono);font-size:11px;color:var(--ux-ink-2)}
+.u271-tg{padding:1px 7px;border-radius:999px;background:color-mix(in srgb,var(--c) 14%,transparent);color:var(--c);font-size:10.5px;font-weight:700}
+.u271-nw{margin-left:auto;padding:1px 6px;border-radius:5px;background:var(--ux-ink);color:var(--ux-surface);font-size:10px;font-weight:700}
+.u271-in h4{margin:4px 0 0;font-size:13.5px;font-weight:650;letter-spacing:-.01em;line-height:1.35}
+.u271-in h4 a{color:inherit;text-decoration:none}
+.u271-in h4 a:hover{text-decoration:underline;text-underline-offset:2px}
+.u271-in p{margin:3px 0 0;font-size:12.5px;line-height:1.5;color:var(--ux-ink-2)}
+.u271-empty{padding:16px 0 8px 24px;font-size:12.5px;color:var(--ux-ink-3)}
+@media (prefers-reduced-motion: reduce){.u271-en,.u271-pl{transition:none}.u271-dt.is-new::after{animation:none}}

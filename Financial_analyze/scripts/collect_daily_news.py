@@ -43,7 +43,7 @@ def _build_holdings() -> dict[str, list[str]]:
     from app.db import SessionLocal, init_db
     from app.newswatch import aliases, holdings as holdings_mod
     from app.newswatch.watch_config import load_watch_config
-    from app.screener.provider import get_provider
+    from app.marketdata import get_provider
 
     init_db()
     cfg = load_watch_config()

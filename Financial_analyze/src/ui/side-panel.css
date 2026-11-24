@@ -1,0 +1,30 @@
+/* Lucian UX/UI Prompt #273 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#273
+   Ported: only the overlay and the sliding detail panel; the demo customer list is dropped (the
+   caller's chart/list is the "row"). The panel is fixed to the viewport's right edge and is
+   min(380px, viewport − 16px) wide instead of 208px inside a 340px card. z-index sits just below the
+   app's toast host (2147483000) so toasts stay visible while the panel is open. */
+.u273{position:fixed;inset:0;z-index:2147482000;overflow:hidden;pointer-events:none;color:var(--ux-ink)}
+.u273.is-open{pointer-events:auto}
+.u273-ov{position:absolute;inset:0;background:rgba(10,10,20,.12);opacity:0;pointer-events:none;transition:opacity .3s}
+.u273.is-open .u273-ov{opacity:1;pointer-events:auto}
+.u273-pn{position:absolute;top:8px;right:8px;bottom:8px;width:min(380px,calc(100vw - 16px));display:flex;flex-direction:column;border-radius:22px;background:var(--ux-surface);box-shadow:0 0 0 1px var(--ux-line),-16px 0 40px -18px rgba(0,0,0,.35);transform:translateX(calc(100% + 16px));transition:transform .45s cubic-bezier(.3,1.1,.4,1),visibility 0s .45s;overflow:hidden;visibility:hidden}
+.u273.is-open .u273-pn{transform:none;visibility:visible;transition:transform .45s cubic-bezier(.3,1.1,.4,1),visibility 0s}
+.u273-tb{display:flex;align-items:center;gap:3px;padding:10px 10px 6px}
+.u273-tb button{width:28px;height:28px;border:0;border-radius:8px;background:var(--ux-surface-2);color:var(--ux-ink-2);display:grid;place-items:center;cursor:pointer}
+.u273-tb button:disabled{opacity:.35;cursor:default}
+.u273-tb svg{width:11px;height:11px}
+.u273-tb span{margin-right:auto;margin-left:6px;font-size:10px;font-weight:800;color:var(--ux-ink-3);font-variant-numeric:tabular-nums}
+.u273-bd{position:relative;flex:1;overflow:hidden}
+.u273-pg{position:absolute;inset:0;padding:6px 14px 14px;overflow-y:auto;transition:transform .4s cubic-bezier(.3,1.1,.4,1),opacity .3s}
+.u273-pg.is-in{transition:none}
+.u273-pg h4{margin:10px 0 0;font-size:15px;font-weight:900}
+.u273-pg>small{display:block;margin-top:1px;font-size:10.5px;font-weight:650;color:var(--ux-ink-3)}
+.u273-kv{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:12px}
+.u273-kv div{padding:8px 9px;border-radius:10px;background:var(--ux-surface-2)}
+.u273-kv small{display:block;font-size:9px;font-weight:800;color:var(--ux-ink-3)}
+.u273-kv b{display:block;margin-top:2px;font-size:12px;font-weight:900;font-variant-numeric:tabular-nums}
+.u273-pg h5{margin:14px 0 6px;font-size:10px;font-weight:850;color:var(--ux-ink-3)}
+.u273-ac{display:flex;align-items:center;gap:7px;margin-top:5px;font-size:10.5px;font-weight:700;color:var(--ux-ink-2)}
+.u273-ac::before{content:"";flex:none;width:6px;height:6px;border-radius:50%;background:var(--ux-accent)}
+.u273 button:focus-visible{outline:2px solid var(--ux-accent);outline-offset:2px}
+@media (prefers-reduced-motion: reduce){.u273-pn,.u273-pg,.u273-ov{transition:none}}

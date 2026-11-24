@@ -1,0 +1,361 @@
+/* App theme tokens (light + [data-theme="dark"]) and base styles —
+   moved verbatim from the inline <style> in the old Financial Analyze.html.
+   [data-theme="light"] repeats the light values so a light island can sit inside the dark app. */
+:root, [data-theme="light"] {
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --font-serif: 'Source Serif 4', Georgia, serif;
+
+  /* Light theme (default) */
+  --bg: #FAFAF7;
+  --bg-elev: #FFFFFF;
+  --bg-sunken: #F4F3EE;
+  --bg-hover: #EFEEE8;
+  --border: #E5E3DA;
+  --border-strong: #D4D1C5;
+  --text: #1A1815;
+  --text-muted: #6B6862;
+  --text-subtle: #9A968B;
+
+  --accent: #C2410C;          /* burnt orange */
+  --accent-soft: #FED7AA;
+  --accent-bg: #FFF7ED;
+
+  --pos: #15803D;
+  --pos-soft: #BBF7D0;
+  --pos-bg: #F0FDF4;
+  --neg: #B91C1C;
+  --neg-soft: #FECACA;
+  --neg-bg: #FEF2F2;
+
+  --warn: #A16207;
+  --info: #1D4ED8;
+
+  --radius: 4px;
+  --radius-lg: 8px;
+
+  --density-row-h: 36px;
+  --density-pad: 10px;
+}
+
+[data-theme="dark"] {
+  --bg: #0E0E0C;
+  --bg-elev: #16161330;
+  --bg-sunken: #0A0A09;
+  --bg-hover: #1F1E1A;
+  --border: #26241F;
+  --border-strong: #38352E;
+  --text: #F2EFE6;
+  --text-muted: #9A968B;
+  --text-subtle: #6B6862;
+
+  --accent: #FB923C;
+  --accent-soft: #7C2D12;
+  --accent-bg: #1C0F07;
+
+  --pos: #4ADE80;
+  --pos-soft: #14532D;
+  --pos-bg: #052E16;
+  --neg: #F87171;
+  --neg-soft: #7F1D1D;
+  --neg-bg: #1C0606;
+}
+
+[data-density="compact"] {
+  --density-row-h: 28px;
+  --density-pad: 6px;
+}
+[data-density="comfortable"] {
+  --density-row-h: 44px;
+  --density-pad: 14px;
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body { min-height: 100vh; }
+
+button { font-family: inherit; cursor: pointer; }
+input, select, textarea { font-family: inherit; }
+
+/* Number formatting helper */
+.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.ticker { font-family: var(--font-mono); font-weight: 600; letter-spacing: 0.02em; }
+.pos { color: var(--pos); }
+.neg { color: var(--neg); }
+
+/* Editorial serif */
+.serif { font-family: var(--font-serif); font-weight: 500; letter-spacing: -0.01em; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-subtle); }
+
+/* App layout */
+.app {
+  display: grid;
+  /* minmax(0, …): a plain 1fr never shrinks below its content's min width, so the
+     scrolling header ticker stretched the page past the screen when the AI panel closed. */
+  --sb-w: 220px;
+  grid-template-columns: var(--sb-w) minmax(0, 1fr);
+  grid-template-rows: 56px minmax(0, 1fr);
+  grid-template-areas:
+    "sidebar header"
+    "sidebar main";
+  height: 100vh;
+  height: 100dvh;
+  width: 100%;
+  overflow: hidden;
+  /* The sidebar rail (#417) animates the column with the element's spring. */
+  transition: grid-template-columns .6s cubic-bezier(.3,1.3,.45,1);
+}
+.app[data-rail="true"] { --sb-w: 56px; }
+@media (prefers-reduced-motion: reduce) { .app { transition: none; } }
+
+.app[data-ai="open"] {
+  grid-template-columns: var(--sb-w) minmax(0, 1fr) 360px;
+  grid-template-areas:
+    "sidebar header header"
+    "sidebar main ai";
+}
+
+.app[data-focus="ocr-review"] {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: "main";
+  height: 100dvh;
+}
+
+/* Sidebar (contents: src/ui/SideNav.jsx) */
+.sidebar {
+  grid-area: sidebar;
+  min-width: 0;
+  overflow-x: hidden;
+  background: var(--bg-sunken);
+  border-right: 1px solid var(--border);
+  padding: 16px 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+/* Header */
+.header {
+  grid-area: header;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  gap: 16px;
+}
+
+.ticker-tape {
+  flex: 1;
+  overflow: hidden;
+  mask-image: linear-gradient(to right, transparent, black 5%, black 95%, transparent);
+}
+.tape-track {
+  display: inline-flex;
+  gap: 24px;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: nowrap;
+  animation: tape-scroll 40s linear infinite;
+  will-change: transform;
+}
+.ticker-tape:hover .tape-track { animation-play-state: paused; }
+@keyframes tape-scroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tape-track { animation: none; }
+}
+.tape-item { display: inline-flex; gap: 6px; align-items: center; white-space: nowrap; }
+.tape-item .sym { color: var(--text-muted); font-weight: 600; }
+
+.header-actions { display: flex; gap: 8px; align-items: center; }
+
+.search {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 10px 6px 30px;
+  font-size: 12px;
+  color: var(--text);
+  width: 200px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%239A968B' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.3-4.3'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: 10px center;
+}
+.search:focus { outline: none; border-color: var(--accent); }
+
+/* Main */
+.main {
+  grid-area: main;
+  overflow-y: auto;
+  background: var(--bg);
+}
+
+.page { padding: 24px 28px 64px; max-width: 100%; }
+
+.page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-bottom: 24px;
+  gap: 16px;
+}
+.page-title {
+  font-family: var(--font-serif);
+  font-size: 32px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 0 0 4px;
+  color: var(--text);
+}
+.page-sub {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin: 0;
+}
+
+/* Tabs */
+.tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+.tab {
+  padding: 8px 14px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.tab[aria-selected="true"] {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+/* AI Sidebar */
+.ai {
+  grid-area: ai;
+  background: var(--bg-sunken);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* News */
+.news-time { font-family: var(--font-mono); font-size: 11px; color: var(--text-subtle); padding-top: 2px; }
+.news-title { font-family: var(--font-serif); font-size: 15px; font-weight: 500; line-height: 1.35; margin: 0 0 4px; }
+.news-meta { font-size: 12px; color: var(--text-muted); }
+
+/* Utility */
+.row { display: flex; align-items: center; gap: 8px; }
+.between { justify-content: space-between; }
+.stack { display: flex; flex-direction: column; gap: 16px; }
+
+/* Connector dot */
+.live-dot {
+  width: 6px; height: 6px;
+  background: var(--pos);
+  border-radius: 50%;
+  display: inline-block;
+  animation: pulse 2s infinite;
+  margin-right: 6px;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* Routed section tabs (Company / Scan / Inbox / Today) */
+.route-tabs { display: flex; align-items: flex-end; gap: 16px; padding: 14px 28px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.route-tabs-title { font-family: var(--font-mono); font-size: 12px; font-weight: 700; color: var(--text); padding: 0 0 10px; letter-spacing: 0.02em; }
+.route-tabs-list { display: flex; gap: 18px; flex-wrap: wrap; }
+.route-tab { display: inline-flex; align-items: center; gap: 6px; padding: 0 2px 9px; font-size: 13px; font-weight: 600; color: var(--text-muted); text-decoration: none; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.route-tab:hover { color: var(--text); }
+.route-tab[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+.route-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+.route-tab-badge { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 999px; background: var(--accent-bg); color: var(--accent); }
+
+/* ── Responsive shell ─────────────────────────────────────────────
+   ≤ 1100px: the AI panel floats over the page instead of taking a column.
+   ≤ 760px:  the sidebar is forced to its rail (SideNav), the header drops the ticker tape and the
+             search label, pages get a 16px gutter. */
+@media (max-width: 1100px) {
+  .app[data-ai="open"] {
+    grid-template-columns: var(--sb-w) minmax(0, 1fr);
+    grid-template-areas:
+      "sidebar header"
+      "sidebar main";
+  }
+  .app[data-ai="open"] .ai {
+    position: fixed; top: 56px; right: 0; bottom: 0; z-index: 60;
+    width: min(360px, 100vw);
+    box-shadow: -18px 0 40px -24px rgba(0,0,0,.35);
+  }
+}
+/* ≤ 900px: the AI panel is a modal drawer (app.jsx renders .ai-backdrop; AIPanel traps focus, Esc closes). */
+.ai-backdrop { display: none; }
+@media (max-width: 900px) {
+  .ai-backdrop { display: block; position: fixed; inset: 0; z-index: 59; background: rgba(0,0,0,.38); animation: ai-fade .2s ease-out; }
+  .app[data-ai="open"] .ai.is-drawer:not(.is-full) {
+    top: 0; width: min(360px, calc(100vw - 40px));
+    box-shadow: -18px 0 48px -16px rgba(0,0,0,.45);
+    animation: ai-drawer-in .28s cubic-bezier(.2,.8,.2,1);
+  }
+  .ai.is-drawer:focus { outline: none; }
+}
+@keyframes ai-fade { from { opacity: 0; } }
+@keyframes ai-drawer-in { from { transform: translateX(100%); } }
+@media (prefers-reduced-motion: reduce) {
+  .ai-backdrop, .app[data-ai="open"] .ai.is-drawer:not(.is-full) { animation: none; }
+}
+@media (max-width: 760px) {
+  .header { padding: 0 10px; gap: 8px; }
+  .header .ticker-tape { display: none; }
+  .header .search { width: 32px; height: 32px; padding: 0; flex: none; background-position: center; }
+  .header .search > span, .header .search > kbd { display: none; }
+  .header-actions { gap: 6px; margin-left: auto; }
+  .page { padding: 16px 16px 48px; }
+  .page-header { flex-wrap: wrap; }
+  .route-tabs { padding: 10px 16px 0; gap: 10px; }
+  .route-tabs-list { gap: 12px; overflow-x: auto; flex-wrap: nowrap; max-width: 100%; }
+}
+
+/* Header pieces (src/header.jsx) */
+.header-status { display: flex; align-items: center; gap: 8px; flex: none; }
+.header-spacer { flex: 1; }
+.header-search { display: flex; align-items: center; justify-content: space-between; gap: 8px; text-align: left; color: var(--text-subtle); cursor: text; }
+.header-search:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.kbd { font-family: var(--font-mono); font-size: 10px; font-weight: 600; padding: 1px 5px; background: var(--bg-sunken); border: 1px solid var(--border); border-radius: 4px; color: var(--text-muted); }
+.api-chip { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; cursor: default; box-shadow: inset 0 0 0 1px currentColor; box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 30%, transparent); }
+
+/* Boot screen + page crash (src/app.jsx) */
+.app-boot { height: 100vh; height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; }
+.app-boot-spin { width: 28px; height: 28px; border-radius: 50%; border: 3px solid var(--border); border-top-color: var(--accent); animation: helix-spin .8s linear infinite; }
+.app-boot-text { font-size: 12px; color: var(--text-muted); }
+@keyframes helix-spin { to { transform: rotate(360deg); } }
+.page-crash { padding: 48px 16px; display: grid; place-items: center; }

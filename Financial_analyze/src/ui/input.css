@@ -1,0 +1,84 @@
+/* Lucian UX/UI Prompt #429 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#429
+   Ported: the search field (⌘K hint), the suggestion dropdown with bold matches and the springing
+   selection bar. The fixed 340×300 demo frame is dropped: width follows the slot and the dropdown
+   floats over content. Field 48px → 36px (sm 30px), rows 40px → 34px; radii scaled, motion unchanged. */
+.u429{position:relative;width:100%}
+.u429-f{position:relative;z-index:2;display:flex;align-items:center;gap:8px;height:36px;padding:0 6px 0 11px;border-radius:10px;background:var(--ux-surface);background:light-dark(var(--ux-surface),var(--ux-surface-2));box-shadow:0 0 0 1px var(--ux-line-2),0 10px 24px -18px var(--ux-shadow-strong);cursor:text;transition:box-shadow .2s var(--ux-ease)}
+.u429.is-sm .u429-f{height:30px;padding:0 5px 0 9px;border-radius:8px;gap:6px}
+.u429-f:focus-within,.u429.is-open .u429-f{box-shadow:0 0 0 1.5px var(--ux-accent),0 0 0 4px var(--ux-accent-soft),0 10px 24px -18px var(--ux-shadow-strong)}
+.u429-f>svg{flex:none;width:15px;height:15px;fill:none;stroke:var(--ux-ink-3);stroke-width:2;stroke-linecap:round}
+.u429-in{flex:1;min-width:0;height:100%;padding:0;border:0;background:none;outline:none;font-size:13px;font-weight:500;color:var(--ux-ink)}
+.u429-in::placeholder{color:var(--ux-ink-3);opacity:1}
+.u429-in::-webkit-search-cancel-button{display:none}
+.u429 .u429-in:focus-visible{outline:none}
+.u429-kb{flex:none;height:20px;padding:0 6px;border-radius:6px;display:grid;place-items:center;background:var(--ux-surface-2);background:light-dark(var(--ux-surface-2),var(--ux-surface-3));box-shadow:inset 0 0 0 1px var(--ux-line);font:inherit;font-size:10.5px;font-weight:600;color:var(--ux-ink-3)}
+.u429-x{flex:none;width:22px;height:22px;padding:0;border:0;border-radius:6px;display:grid;place-items:center;background:none;color:var(--ux-ink-3)}
+.u429-x:hover{background:var(--ux-surface-2);color:var(--ux-ink)}
+.u429-x svg{width:11px;height:11px;fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:round}
+.u429-dd{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:30;padding:5px;border-radius:12px;background:var(--ux-surface);background:light-dark(var(--ux-surface),var(--ux-surface-2));box-shadow:0 0 0 1px var(--ux-line-2),0 22px 44px -18px var(--ux-shadow-strong);transform-origin:50% 0;opacity:0;transform:translateY(-8px) scale(.96);visibility:hidden;transition:opacity .16s var(--ux-ease),transform .2s var(--ux-ease),visibility 0s linear .2s}
+.u429.is-open .u429-dd{opacity:1;transform:none;visibility:visible;transition:opacity .18s var(--ux-ease),transform .5s cubic-bezier(.3,1.4,.5,1),visibility 0s}
+.u429-pill{position:absolute;left:5px;right:5px;top:5px;height:34px;border-radius:8px;background:color-mix(in srgb,var(--ux-ink) 7%,transparent);transform:translateY(var(--py,0px));opacity:var(--po,0);transition:transform .45s cubic-bezier(.3,1.5,.5,1),opacity .15s}
+.u429-lb{position:relative}
+.u429-o{position:relative;display:flex;align-items:center;gap:9px;height:34px;padding:0 8px;border-radius:8px;cursor:pointer;color:var(--ux-ink-2)}
+.u429.is-open .u429-o{animation:u429-row .45s cubic-bezier(.3,1.4,.5,1) both;animation-delay:calc(var(--i) * 35ms)}
+@keyframes u429-row{from{opacity:0;transform:translateY(-6px)}}
+.u429-o[aria-selected="true"]{color:var(--ux-ink)}
+.u429-ic{flex:none;width:22px;height:22px;border-radius:7px;display:grid;place-items:center;background:var(--ux-surface-2);background:light-dark(var(--ux-surface-2),var(--ux-surface-3));color:var(--ux-ink-2);font-size:10px;font-weight:700}
+.u429-ic svg{width:12px;height:12px}
+.u429-t{flex:1;min-width:0;font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.u429-t mark{background:none;color:var(--ux-ink);font-weight:700}
+.u429-m{flex:none;max-width:45%;font-size:11.5px;color:var(--ux-ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.u429-en{flex:none;width:18px;height:18px;border-radius:5px;display:grid;place-items:center;box-shadow:inset 0 0 0 1px var(--ux-line-2);font-size:10px;color:var(--ux-ink-3);opacity:0;transform:scale(.6);transition:opacity .15s,transform .35s cubic-bezier(.34,1.7,.5,1)}
+.u429-o[aria-selected="true"] .u429-en{opacity:1;transform:none}
+.u429-no{padding:9px 8px;font-size:12.5px;color:var(--ux-ink-3)}
+.u429-live{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+
+/* Lucian UX/UI Prompt #434 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#434
+   Ported: the field with focus glow, error shake + red hint, success check + green hint. State comes
+   from props (error / success) instead of the demo's email check. Field 52px → 36px (sm 30px), radius
+   14px → 10px; the hint row only takes space when there is a hint. Prefix/suffix slots added. */
+.u434{position:relative;width:100%}
+.u434-lb{display:block;margin:0 0 5px 1px;font-size:11.5px;font-weight:600;color:var(--ux-ink-2)}
+.u434-f{position:relative;display:flex;align-items:center;gap:6px;height:36px;padding:0 8px 0 11px;border-radius:10px;background:var(--ux-surface);background:light-dark(var(--ux-surface),var(--ux-surface-2));box-shadow:0 0 0 1px var(--ux-line-2),0 8px 20px -16px var(--ux-shadow-strong);transition:box-shadow .3s var(--ux-ease)}
+.u434.is-sm .u434-f{height:30px;padding:0 6px 0 9px;border-radius:8px}
+.u434-f.is-focus{box-shadow:0 0 0 1.5px var(--ux-accent),0 0 0 4px var(--ux-accent-soft),0 8px 20px -16px var(--ux-shadow-strong)}
+.u434-f.is-err{box-shadow:0 0 0 1.5px var(--ux-danger),0 0 0 4px color-mix(in srgb,var(--ux-danger) 14%,transparent)}
+.u434-f.is-shake{animation:u434-shake .45s cubic-bezier(.36,.07,.19,.97)}
+.u434-f.is-ok{box-shadow:0 0 0 1.5px var(--ux-mint),0 0 0 4px color-mix(in srgb,var(--ux-mint) 14%,transparent)}
+.u434-f.is-disabled{opacity:.55}
+@keyframes u434-shake{15%,85%{transform:translateX(-2px)}30%,70%{transform:translateX(5px)}45%,55%{transform:translateX(-7px)}}
+.u434-in{flex:1;min-width:0;height:100%;padding:0;border:0;background:none;outline:none;font-size:13px;font-weight:500;color:var(--ux-ink)}
+.u434-in::placeholder{color:var(--ux-ink-3)}
+.u434-in.is-num{font-family:var(--font-mono);font-variant-numeric:tabular-nums;text-align:right}
+.u434 .u434-in:focus-visible{outline:none}
+.u434-ax{flex:none;font-size:12px;color:var(--ux-ink-3);white-space:nowrap}
+.u434-ic{position:relative;flex:none;width:20px;height:20px}
+.u434-ic span{position:absolute;inset:0;border-radius:50%;display:grid;place-items:center;opacity:0;transform:scale(.2) rotate(-40deg);transition:opacity .15s,transform .25s var(--ux-ease)}
+.u434-ic svg{width:11px;height:11px;fill:none;stroke:currentColor;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
+.u434-ic .ok{background:var(--ux-mint);color:var(--ux-surface)}
+.u434-ic .no{background:var(--ux-danger);color:var(--ux-surface)}
+.u434-f.is-ok .u434-ic .ok,.u434-f.is-err .u434-ic .no{opacity:1;transform:none;transition:opacity .15s,transform .6s cubic-bezier(.3,1.9,.5,1)}
+.u434-ok path{stroke-dasharray:20;stroke-dashoffset:20}
+.u434-f.is-ok .u434-ic .ok path{stroke-dashoffset:0;transition:stroke-dashoffset .35s var(--ux-ease) .12s}
+.u434-ok path{transition:none}
+.u434-msg{display:grid;margin:5px 0 0 1px;font-size:11.5px;line-height:1.4}
+.u434-msg span{grid-area:1/1;opacity:0;transform:translateY(-6px);transition:opacity .2s var(--ux-ease),transform .45s cubic-bezier(.3,1.5,.5,1)}
+.u434-msg .h{color:var(--ux-ink-3)}
+.u434-msg .e{color:var(--ux-danger)}
+.u434-msg .s{color:var(--ux-mint)}
+.u434[data-s="idle"] .u434-msg .h,.u434[data-s="err"] .u434-msg .e,.u434[data-s="ok"] .u434-msg .s{opacity:1;transform:none}
+/* Adaptation: size="compact" for table cells and dense toolbars — the same field and ring at 26px. */
+.u434.is-compact .u434-lb{margin-bottom:3px;font-size:11px}
+.u434.is-compact .u434-f{height:26px;padding:0 5px 0 7px;border-radius:7px;gap:4px}
+.u434.is-compact .u434-in{font-size:12px}
+.u434.is-compact .u434-ax{font-size:11px}
+.u434.is-compact .u434-ic{width:16px;height:16px}
+.u434.is-compact .u434-msg{margin-top:3px;font-size:11px}
+/* Adaptation: NativeSelect — a real <select> inside the #434 field; the OS arrow is replaced by the
+   #031 caret so it reads as the same control family. */
+.u434.is-select .u434-f{padding-right:8px}
+.u434-sel{appearance:none;-webkit-appearance:none;cursor:pointer;padding-right:18px;margin-right:-18px;text-overflow:ellipsis;white-space:nowrap;overflow:hidden}
+.u434-sel:disabled{cursor:default}
+.u434-sel option{color:var(--ux-ink);background:var(--ux-surface)}
+.u434-car{flex:none;width:14px;height:14px;fill:none;stroke:var(--ux-ink-3);stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
+.u434.is-compact .u434-car{width:12px;height:12px}

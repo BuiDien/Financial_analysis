@@ -1,0 +1,44 @@
+/* Lucian UX/UI Prompt #417 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#417
+   Ported: icon + label nav whose highlight springs to the active item (.55s cubic-bezier(.3,1.45,.5,1)),
+   the badge pop, and the collapse to an icon-only rail with labels melting away. It fills the app's
+   sidebar column instead of a floating 224px card (the column width animates with the element's
+   .6s cubic-bezier(.3,1.3,.45,1)); items 40px → 34px; the round toggle sits in the sidebar footer
+   (the edge position would be clipped by the scrolling column). Highlight follows the route; the
+   collapsed state persists. Secondary sections (watchlists) use the same item look. */
+.u417{color:var(--ux-ink)}
+.u417-sec{position:relative;padding:4px 10px}
+.u417-sec+.u417-sec{margin-top:8px}
+.u417-sh{display:flex;align-items:center;justify-content:space-between;height:26px;padding:0 8px;font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ux-ink-3);white-space:nowrap;overflow:hidden}
+.u417-nav{position:relative;margin:0;padding:0;list-style:none}
+.u417-pl{position:absolute;left:0;right:0;top:0;height:34px;border-radius:9px;background:var(--ux-surface);box-shadow:inset 0 0 0 1px var(--ux-line),0 1px 2px var(--ux-shadow);transform:translateY(var(--py,0px));transition:transform .55s cubic-bezier(.3,1.45,.5,1),opacity .2s}
+.u417-it{position:relative;display:flex;align-items:center;gap:10px;width:100%;height:34px;padding:0 10px 0 11px;border:0;border-radius:9px;background:none;color:var(--ux-ink-2);text-decoration:none;text-align:left;font:inherit;font-size:13px;font-weight:500;cursor:pointer;transition:color .2s,background-color .2s}
+.u417-it:hover{color:var(--ux-ink)}
+.u417-sec.is-plain .u417-it:hover{background:var(--ux-surface-2)}
+.u417-it[aria-current="page"],.u417-it[aria-current="true"]{color:var(--ux-ink)}
+.u417-sec.is-plain .u417-it[aria-current="true"]{background:var(--ux-surface);box-shadow:inset 0 0 0 1px var(--ux-line)}
+.u417-it>svg{width:16px;height:16px;flex:none;transition:transform .45s var(--ux-spring),color .2s}
+.u417-it[aria-current="page"]>svg{color:var(--ux-accent)}
+.u417-it.is-mark>svg{color:var(--ux-accent)}
+.u417-it:active>svg{transform:scale(.85)}
+.u417-it.is-muted{color:var(--ux-ink-3)}
+.u417-lb{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:opacity .3s var(--ux-ease) .12s,transform .45s var(--ux-ease) .1s}
+.u417-mt{flex:none;font-family:var(--font-mono);font-size:11px;color:var(--ux-ink-3);transition:opacity .2s}
+.u417-bd{flex:none;min-width:18px;height:18px;padding:0 5px;border-radius:99px;background:var(--ux-accent);color:var(--ux-accent-ink);font-size:10px;font-weight:800;line-height:18px;text-align:center;box-shadow:0 0 0 2px var(--bg-sunken);animation:u417-pop .5s cubic-bezier(.3,1.8,.5,1)}
+@keyframes u417-pop{from{transform:scale(.3);opacity:0}to{transform:none;opacity:1}}
+@keyframes u417-pop2{from{transform:scale(.3);opacity:0}to{transform:none;opacity:1}}
+.u417-it:focus-visible{outline:2px solid var(--ux-accent);outline-offset:-2px}
+.u417-ft{display:flex;justify-content:flex-end;margin-top:auto;padding:10px 14px 2px}
+.u417-tg{display:grid;place-items:center;width:24px;height:24px;flex:none;padding:0;border:0;border-radius:50%;background:var(--ux-surface);box-shadow:0 0 0 1px var(--ux-line-2),0 2px 6px -2px var(--ux-shadow-strong);color:var(--ux-ink-2);transition:transform .5s cubic-bezier(.3,1.6,.5,1),color .2s}
+.u417-tg:hover{color:var(--ux-ink);transform:scale(1.12)}
+.u417-tg svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;transition:transform .55s cubic-bezier(.3,1.6,.5,1)}
+.u417.is-rail .u417-tg svg{transform:rotate(180deg)}
+.u417-tg:focus-visible{outline:2px solid var(--ux-accent);outline-offset:2px}
+/* Rail: labels melt away, badges move onto the icon. */
+.u417.is-rail .u417-sec{padding:4px 8px}
+.u417.is-rail .u417-lb,.u417.is-rail .u417-mt{opacity:0;transform:translateX(-8px);transition:opacity .15s,transform .25s}
+.u417.is-rail .u417-sh{opacity:0}
+.u417.is-rail .u417-it{gap:0;padding:0 0 0 12px}
+.u417.is-rail .u417-bd{position:absolute;left:22px;top:3px;min-width:15px;height:15px;padding:0 4px;font-size:9px;line-height:15px;animation:u417-pop2 .5s cubic-bezier(.3,1.8,.5,1)}
+.u417.is-rail .u417-ft{justify-content:center;padding:10px 0 2px}
+.u417.is-forced .u417-ft{display:none}
+@media (prefers-reduced-motion:reduce){.u417-pl,.u417-lb,.u417-tg svg{transition:none!important}}

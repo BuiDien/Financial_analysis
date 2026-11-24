@@ -1,6 +1,6 @@
-// node scripts/test-ocr-inbox-utils.js — pure OCR Inbox helpers (src/ocr-inbox-utils.js).
+// node scripts/test-ocr-inbox-utils.js — pure OCR Inbox helpers (src/pages/inbox-ocr/ocr-inbox-utils.js).
 const assert = require('assert');
-const U = require('../src/ocr-inbox-utils.js');
+const U = require('../src/pages/inbox-ocr/ocr-inbox-utils.js');
 
 // Markdown table rows
 assert.deepStrictEqual(U.splitMarkdownTableRow('| a | b \\| c | 1,0 |'), ['a', 'b | c', '1,0']);

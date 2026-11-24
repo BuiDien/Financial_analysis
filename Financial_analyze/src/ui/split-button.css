@@ -1,0 +1,62 @@
+/* Lucian UX/UI Prompt #010 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#010
+   Ported: the split control, its unfolding menu, the rolling label and the in-button progress bar.
+   Adapted to the app's density: the 62px demo group is 34px (sm 28px) with radii scaled (19px → 10px),
+   it flows inline instead of sitting at a fixed spot, and the menu opens under the button (the demo
+   lifted the whole group by 96px). Colours, curves and durations are unchanged. */
+.u010{position:relative;display:inline-block;vertical-align:middle}
+.u010-grp{position:relative;display:flex;height:34px;border-radius:10px;background:var(--ux-ink);color:var(--ux-page);box-shadow:0 12px 22px -16px var(--ux-shadow-strong);transition:background-color .5s var(--ux-ease),transform .6s var(--ux-spring)}
+.u010.is-sm .u010-grp{height:28px;border-radius:8px}
+.u010-main{position:relative;display:flex;align-items:center;gap:8px;min-width:0;height:100%;padding:0 12px 0 6px;border:0;border-radius:10px 0 0 10px;background:none;color:inherit;overflow:hidden;transition:transform .45s var(--ux-spring)}
+.u010.is-sm .u010-main{gap:6px;padding:0 10px 0 4px;border-radius:8px 0 0 8px}
+.u010-main:active{transform:scale(.97)}
+.u010-main:focus-visible,.u010-caret:focus-visible{outline:2px solid var(--ux-accent);outline-offset:3px}
+.u010-main:disabled,.u010-caret:disabled{cursor:not-allowed;opacity:.55}
+.u010-ic{position:relative;width:22px;height:22px;flex:none;border-radius:7px;display:grid;place-items:center;background:var(--ux-grad);color:#fff}
+.u010.is-sm .u010-ic{width:20px;height:20px;border-radius:6px}
+.u010-ic svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;transition:opacity .3s var(--ux-ease),transform .5s var(--ux-spring)}
+.u010-ic .u010-spin,.u010-ic .u010-ok{position:absolute;opacity:0;transform:scale(.4)}
+.u010-spin{animation:u010-rot .9s linear infinite}
+@keyframes u010-rot{to{rotate:360deg}}
+.u010-labs{position:relative;height:18px;overflow:hidden;flex:1;text-align:left}
+.u010-labs span{display:block;font-size:12.5px;font-weight:650;line-height:18px;letter-spacing:-.01em;white-space:nowrap}
+.u010.is-sm .u010-labs span{font-size:12px}
+.u010-labs .is-in{animation:u010-in .5s var(--ux-spring)}
+.u010-labs .is-out{position:absolute;left:0;top:0;animation:u010-out .5s var(--ux-spring) forwards}
+@keyframes u010-in{from{transform:translateY(100%);opacity:0}}
+@keyframes u010-out{to{transform:translateY(-100%);opacity:0}}
+.u010-bar{position:absolute;left:0;bottom:0;height:2px;width:100%;background:var(--ux-grad);transform-origin:0 50%;transform:scaleX(0);opacity:0}
+.u010[data-state="busy"] .u010-bar{opacity:1;animation:u010-fill 1.5s cubic-bezier(.4,.1,.3,1) forwards}
+@keyframes u010-fill{to{transform:scaleX(1)}}
+.u010[data-state="busy"] .u010-main{cursor:progress}
+.u010[data-state="busy"] .u010-ic .u010-go{opacity:0;transform:translate(6px,-6px) scale(.6)}
+.u010[data-state="busy"] .u010-ic .u010-spin{opacity:1;transform:none}
+.u010[data-state="done"] .u010-grp{background:var(--ux-mint)}
+.u010[data-state="done"] .u010-main{color:var(--ux-accent-ink)}
+[data-theme="dark"] .u010[data-state="done"] .u010-main,[data-theme="dark"] .u010[data-state="done"] .u010-caret{color:#0E0E0C}
+.u010[data-state="done"] .u010-ic{background:color-mix(in srgb,var(--ux-accent-ink) 16%,transparent);color:inherit}
+.u010[data-state="done"] .u010-ic .u010-go{opacity:0}
+.u010[data-state="done"] .u010-ic .u010-ok{opacity:1;transform:none}
+.u010-div{width:1px;margin:8px 0;background:color-mix(in srgb,var(--ux-page) 22%,transparent)}
+.u010-caret{width:32px;height:100%;border:0;border-radius:0 10px 10px 0;background:none;color:inherit;display:grid;place-items:center;transition:background-color .3s var(--ux-ease)}
+.u010.is-sm .u010-caret{width:26px;border-radius:0 8px 8px 0}
+.u010-caret:hover{background:color-mix(in srgb,var(--ux-page) 9%,transparent)}
+.u010-caret svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;transition:transform .5s var(--ux-spring)}
+.u010[data-open="1"] .u010-caret svg{transform:rotate(180deg)}
+.u010-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:40;width:max-content;min-width:100%;max-width:min(320px,calc(100vw - 32px));margin:0;padding:6px;list-style:none;border-radius:14px;background:var(--ux-surface);box-shadow:0 0 0 1px var(--ux-line),0 30px 60px -28px var(--ux-shadow-strong);
+  transform-origin:88% 0;opacity:0;transform:translateY(-10px) scale(.92);pointer-events:none;visibility:hidden;transition:opacity .2s var(--ux-ease),transform .45s var(--ux-spring),visibility 0s linear .45s}
+.u010.is-left .u010-menu{right:auto;left:0;transform-origin:12% 0}
+.u010[data-open="1"] .u010-menu{opacity:1;transform:none;pointer-events:auto;visibility:visible;transition:opacity .3s var(--ux-ease) .06s,transform .6s var(--ux-spring)}
+.u010-opt{display:flex;align-items:center;gap:10px;width:100%;padding:8px;border:0;border-radius:10px;background:none;text-align:left;color:var(--ux-ink);opacity:0;transform:translateY(-6px);transition:background-color .25s var(--ux-ease),opacity .3s var(--ux-ease),transform .45s var(--ux-spring)}
+.u010[data-open="1"] .u010-opt{opacity:1;transform:none}
+.u010[data-open="1"] li:nth-child(2) .u010-opt{transition-delay:.04s}
+.u010[data-open="1"] li:nth-child(3) .u010-opt{transition-delay:.08s}
+.u010[data-open="1"] li:nth-child(n+4) .u010-opt{transition-delay:.12s}
+.u010-opt:hover,.u010-opt:focus-visible{background:var(--ux-surface-2);outline:none}
+.u010-oi{width:30px;height:30px;flex:none;border-radius:9px;display:grid;place-items:center;color:#fff;background:var(--ux-grad)}
+.u010-oi svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.u010-opt b{display:block;font-size:13px;font-weight:650}
+.u010-opt small{display:block;margin-top:1px;font-size:11.5px;color:var(--ux-ink-3)}
+.u010-chk{margin-left:auto;width:18px;height:18px;flex:none;border-radius:50%;display:grid;place-items:center;background:var(--ux-accent);color:var(--ux-accent-ink);transform:scale(0);transition:transform .45s var(--ux-spring)}
+.u010-chk svg{width:10px;height:10px;fill:none;stroke:currentColor;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
+.u010-opt[aria-checked="true"] .u010-chk{transform:none}
+.u010-live{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}

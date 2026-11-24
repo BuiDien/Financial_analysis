@@ -1,0 +1,72 @@
+/* Lucian UX/UI Prompt theme tokens · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/
+   Ported for Helix: every --ux-* token the ported elements read is pointed at the app's own theme
+   variables (defined in src/styles/app.css), for the light :root and [data-theme="dark"].
+   Declared on every [data-theme] element too, so a nested light/dark island (the dev gallery)
+   re-resolves the tokens against its own theme variables. */
+:root,[data-theme]{
+  /* Chart series slots (dataviz reference palette, fixed order; validated light on #FFFFFF, dark on
+     #15140F). Used in pick order and kept per line, never cycled. */
+  --lx-series-1:#2a78d6;--lx-series-2:#eb6834;--lx-series-3:#1baf7a;--lx-series-4:#eda100;
+  --lx-series-5:#e87ba4;--lx-series-6:#008300;--lx-series-7:#6250d6;--lx-series-8:#e34948;
+  --ux-page:var(--bg);
+  --ux-surface:var(--bg-elev);
+  --ux-surface-2:var(--bg-sunken);
+  --ux-surface-3:var(--border);
+  --ux-ink:var(--text);
+  --ux-ink-2:var(--text-muted);
+  --ux-ink-3:var(--text-subtle);
+  --ux-line:var(--border);
+  --ux-line-2:var(--border-strong);
+  --ux-accent:var(--accent);
+  --ux-accent-2:var(--info);
+  --ux-accent-soft:color-mix(in srgb,var(--accent) 16%,transparent);
+  --ux-accent-ink:#FFFFFF;
+  --ux-mint:var(--pos);
+  --ux-warn:var(--warn);
+  --ux-danger:var(--neg);
+  --ux-shadow:rgba(26,24,21,.14);
+  --ux-shadow-strong:rgba(26,24,21,.3);
+  --ux-grad:linear-gradient(120deg,var(--accent),color-mix(in srgb,var(--accent) 45%,var(--pos)));
+  --ux-ease:cubic-bezier(.2,.8,.2,1);
+  --ux-spring:cubic-bezier(.34,1.45,.64,1);
+}
+/* Dark: the app's --bg-elev is translucent (#16161330), so popovers and panels use the opaque
+   dark card colour from the app's own `.card` rule instead. */
+[data-theme="dark"]{
+  --lx-series-1:#3987e5;--lx-series-2:#d95926;--lx-series-3:#199e70;--lx-series-4:#c98500;
+  --lx-series-5:#d55181;--lx-series-6:#008300;--lx-series-7:#9085e9;--lx-series-8:#e66767;
+  --ux-surface:#15140F;
+  --ux-surface-2:var(--bg-hover);
+  --ux-surface-3:var(--border-strong);
+  --ux-accent-soft:color-mix(in srgb,var(--accent) 24%,transparent);
+  --ux-accent-ink:#FFFFFF;
+  --ux-shadow:rgba(0,0,0,.45);
+  --ux-shadow-strong:rgba(0,0,0,.72);
+}
+
+.ux,.ux *,.ux *::before,.ux *::after{box-sizing:border-box}
+.ux{
+  font-family:inherit; /* the app's Inter stack instead of Pretendard */
+  color:var(--ux-ink);-webkit-font-smoothing:antialiased;letter-spacing:-.01em;
+  -webkit-tap-highlight-color:transparent;
+  word-break:keep-all;overflow-wrap:break-word;
+}
+:where(.ux) :is(button,input,textarea,select){font:inherit;color:inherit}
+:where(.ux) button{cursor:pointer}
+.ux :focus-visible{outline:2px solid var(--ux-accent);outline-offset:3px}
+.ux [hidden]{display:none!important}
+@media (prefers-reduced-motion:reduce){
+  .ux,.ux *,.ux *::before,.ux *::after{
+    animation-duration:.001ms!important;animation-iteration-count:1!important;
+    transition-duration:.001ms!important;scroll-behavior:auto!important;
+  }
+}
+
+/* Visually hidden, still read by screen readers. */
+.sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+
+/* color-scheme drives light-dark() in the element CSS. It is required: the production CSS minifier
+   (Lightning CSS) rewrites light-dark() into --lightningcss-light/dark variables that only a
+   color-scheme declaration sets; without it those backgrounds compile to nothing (transparent). */
+:root,[data-theme="light"]{color-scheme:light}
+[data-theme="dark"]{color-scheme:dark}

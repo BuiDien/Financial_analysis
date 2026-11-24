@@ -1,0 +1,65 @@
+/* Inbox pages (Activity, Gmail import, Sync shared bits). Prefix: .ibx-  */
+
+.ibx-page { min-width: 0; }
+.ibx-actions { flex-wrap: wrap; }
+.ibx-filter { min-width: 170px; }
+.ibx-wrap { flex-wrap: wrap; }
+.ibx-table { min-width: 0; max-width: 100%; overflow-x: auto; }
+.ibx-table .u227 { min-width: 720px; }
+.ibx-table .u227 td { padding-top: 8px; padding-bottom: 8px; height: auto; }
+
+.ibx-muted { color: var(--text-muted); font-size: 12px; }
+.ibx-subtle { color: var(--text-subtle); font-size: 12px; }
+.ibx-kind { font-family: var(--font-mono); font-size: 11px; font-weight: 600; color: var(--text); }
+.ibx-when { font-family: var(--font-mono); font-size: 12px; color: var(--text-subtle); white-space: nowrap; }
+.ibx-when-cell { display: flex; flex-direction: column; gap: 1px; }
+.ibx-msg { display: block; max-width: 280px; font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ibx-msg.is-error { color: var(--neg); }
+
+/* Job detail side panel */
+.ibx-detail { display: flex; flex-direction: column; gap: 16px; margin-top: 14px; }
+.ibx-detail-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ibx-detail-head .btn { margin-left: auto; }
+.ibx-detail-block { display: flex; flex-direction: column; gap: 6px; }
+.ibx-detail-label { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-subtle); }
+.ibx-detail-text { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text); }
+.ibx-json {
+  margin: 0; padding: 10px 12px; max-height: 240px; overflow: auto;
+  font-family: var(--font-mono); font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+  background: var(--bg-sunken); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text);
+}
+.ibx-json.is-error { color: var(--neg); border-color: var(--neg-soft); background: var(--neg-bg); }
+
+/* Gmail import */
+.ibx-gmail { display: flex; flex-direction: column; gap: 16px; }
+.ibx-gmail-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; align-items: start; }
+.ibx-form { display: flex; flex-direction: column; gap: 16px; }
+.ibx-pw-row { display: flex; gap: 8px; align-items: flex-start; }
+.ibx-pw-row > .u434 { flex: 1; min-width: 0; }
+.ibx-pw-row > .btn { margin-top: 22px; }
+.ibx-pw-saved { display: flex; flex-direction: column; gap: 8px; }
+.ibx-pw-saved .ibx-pw-row { align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.ibx-pw-label { font-size: 13px; font-weight: 500; color: var(--text); }
+.ibx-pw-btns { display: inline-flex; gap: 8px; }
+.ibx-mono input { font-family: var(--font-mono); font-size: 12px; }
+.ibx-reset { margin-top: 6px; }
+.ibx-note { margin: 0; padding: 12px; font-size: 12px; line-height: 1.5; color: var(--text-muted); background: var(--bg-sunken); border-radius: var(--radius); }
+.ibx-result { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; padding: 10px 12px; font-size: 12px; line-height: 1.5; border: 1px solid var(--pos-soft); background: var(--pos-bg); border-radius: var(--radius); }
+.ibx-result.is-error { border-color: var(--neg-soft); background: var(--neg-bg); }
+.ibx-result-text { flex: 1; min-width: 0; color: var(--text); overflow-wrap: anywhere; }
+.ibx-result.is-error .ibx-result-text { color: var(--neg); }
+.ibx-field-narrow { max-width: 220px; }
+.ibx-laststatus { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ibx-mono-error { font-family: var(--font-mono); font-size: 12px; color: var(--neg); word-break: break-word; }
+.ibx-subject { font-size: 12px; }
+.ibx-files { display: flex; flex-direction: column; font-family: var(--font-mono); font-size: 11px; }
+
+@media (max-width: 900px) {
+  .ibx-gmail-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 520px) {
+  .ibx-pw-row { flex-wrap: wrap; }
+  .ibx-pw-row > .u434 { flex-basis: 100%; }
+  .ibx-pw-row > .btn { margin-top: 0; }
+  .ibx-filter { min-width: 0; flex: 1; }
+}

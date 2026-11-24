@@ -1,0 +1,15 @@
+/* Lucian UX/UI Prompt #437 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#437
+   Ported: the tooltip bubble with arrow and shortcut keys, the 400ms rest delay, the no-wait glide to
+   the next target (.42s) and Esc to close. Turned into one app-wide host that serves every element
+   with a data-tip attribute (fixed positioning, flips below when there is no room above); the demo
+   toolbar is dropped. */
+.u437-tip{position:fixed;left:0;top:0;z-index:2147483300;transform:translate(var(--x,0px),var(--y,0px));pointer-events:none}
+.u437-tip.is-glide{transition:transform .42s cubic-bezier(.3,1.35,.5,1)}
+.u437-in{position:relative;display:flex;align-items:center;gap:8px;max-width:min(320px,calc(100vw - 16px));min-height:28px;padding:5px 7px 5px 10px;border-radius:8px;font-size:12px;font-weight:600;line-height:1.35;background:#16151B;background:light-dark(var(--ux-ink),var(--ux-surface-3));color:#fff;color:light-dark(var(--ux-surface),var(--ux-ink));box-shadow:0 8px 20px -8px var(--ux-shadow-strong),0 0 0 1px light-dark(transparent,var(--ux-line-2));transform-origin:var(--ax,50%) 100%;opacity:0;transform:translateY(6px) scale(.6);transition:opacity .14s var(--ux-ease),transform .16s var(--ux-ease)}
+[data-theme="dark"] .u437-in{background:var(--ux-surface-3);color:var(--ux-ink);box-shadow:0 8px 20px -8px var(--ux-shadow-strong),0 0 0 1px var(--ux-line-2)}
+.u437-tip.is-below .u437-in{transform-origin:var(--ax,50%) 0;transform:translateY(-6px) scale(.6)}
+.u437-tip.is-on .u437-in{opacity:1;transform:none;transition:opacity .16s var(--ux-ease),transform .5s cubic-bezier(.3,1.6,.5,1)}
+.u437-in kbd{display:inline-flex;gap:2px}
+.u437-in kbd span{min-width:18px;height:18px;padding:0 4px;border-radius:5px;display:grid;place-items:center;background:color-mix(in srgb,currentColor 16%,transparent);font:inherit;font-size:11px;font-weight:600;opacity:.85}
+.u437-ar{position:absolute;left:var(--ax,50%);bottom:-4px;width:9px;height:9px;margin-left:-4.5px;transform:rotate(45deg);border-radius:2px;background:inherit;transition:left .42s cubic-bezier(.3,1.35,.5,1)}
+.u437-tip.is-below .u437-ar{bottom:auto;top:-4px}

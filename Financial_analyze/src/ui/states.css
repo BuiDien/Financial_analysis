@@ -1,0 +1,109 @@
+/* Legacy .empty-state text block (owned here; <EmptyState plain> renders it). */
+.empty-state { padding: 48px 24px; text-align: center; color: var(--text-muted); font-size: 13px; }
+.empty-state-title { font-family: var(--font-serif); font-size: 18px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+
+/* Lucian UX/UI Prompt #440 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#440
+   Ported: the floating empty folder (3.2s bob), the twinkling sparks and the CTA that drops a document
+   into the folder with a bounce and a burst. The fixed 340×300 frame is dropped (flows in its slot);
+   copy and action come from props; size="sm" shrinks the illustration for cards. */
+.u440{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:28px 16px;text-align:center;color:var(--ux-ink)}
+.u440-il{width:176px;height:132px;overflow:visible;animation:u440-float 3.2s ease-in-out infinite}
+.u440.is-sm{padding:16px 12px}
+.u440.is-sm .u440-il{width:112px;height:84px}
+@keyframes u440-float{50%{transform:translateY(-6px)}}
+.u440-il .sh{fill:var(--ux-ink);opacity:.08;transform-box:fill-box;transform-origin:center;animation:u440-sh 3.2s ease-in-out infinite}
+@keyframes u440-sh{50%{transform:scaleX(.86);opacity:.05}}
+.u440-il .bk{fill:color-mix(in srgb,var(--ux-accent) 38%,var(--ux-surface))}
+.u440-il .fr{fill:var(--ux-accent)}
+.u440-il .fh{fill:#fff;opacity:.16}
+.u440-il .doc rect.p{fill:var(--ux-surface);stroke:var(--ux-line-2);stroke-width:1.2}
+.u440-il .doc .ln{fill:var(--ux-line-2)}
+.u440-il .doc .hd{fill:var(--ux-mint)}
+.u440-il .doc{opacity:0;transform:translateY(-110px) rotate(-10deg);transform-box:view-box;transform-origin:80px 50px}
+.u440-il .fol{transform-box:view-box;transform-origin:80px 112px}
+.u440-il .sp{fill:var(--ux-warn);transform-box:fill-box;transform-origin:center;animation:u440-tw 2.4s ease-in-out infinite}
+.u440-il .sp:nth-of-type(2){animation-delay:-.8s;fill:var(--ux-mint)}
+.u440-il .sp:nth-of-type(3){animation-delay:-1.6s;fill:var(--ux-accent-2)}
+@keyframes u440-tw{0%,100%{transform:scale(.6);opacity:.35}50%{transform:scale(1);opacity:1}}
+.u440.is-done .u440-il .doc{animation:u440-drop .8s cubic-bezier(.4,0,.6,1) forwards}
+@keyframes u440-drop{0%{opacity:0;transform:translateY(-110px) rotate(-10deg)}20%{opacity:1}62%{transform:translateY(6px) rotate(2deg)}80%{transform:translateY(-3px) rotate(-1deg)}100%{opacity:1;transform:none}}
+.u440.is-done .u440-il .fol{animation:u440-bump .9s cubic-bezier(.3,1.4,.5,1) .38s}
+@keyframes u440-bump{0%{transform:none}25%{transform:scale(1.06,.9)}55%{transform:scale(.97,1.04)}100%{transform:none}}
+.u440-burst{position:absolute;left:50%;top:50%;width:0;height:0}
+.u440-burst i{position:absolute;left:-3px;top:-3px;width:6px;height:6px;border-radius:50%;background:var(--c);opacity:0}
+.u440.is-done .u440-burst i{animation:u440-pop .7s cubic-bezier(.2,.8,.3,1) .42s forwards}
+@keyframes u440-pop{0%{opacity:1;transform:rotate(var(--a)) translateY(0) scale(1)}100%{opacity:0;transform:rotate(var(--a)) translateY(-58px) scale(.4)}}
+.u440-ill{position:relative}
+.u440-h{margin:14px 0 0;font-size:16px;font-weight:700;letter-spacing:-.02em}
+.u440.is-sm .u440-h{margin-top:10px;font-size:14px}
+.u440-p{margin:5px 0 0;max-width:42ch;font-size:13px;line-height:1.5;color:var(--ux-ink-3)}
+.u440-act{margin-top:16px}
+.u440-go{position:relative;display:inline-flex;align-items:center;gap:7px;height:36px;padding:0 16px;border:0;border-radius:999px;background:var(--ux-accent);color:var(--ux-accent-ink);font-size:13px;font-weight:650;box-shadow:inset 0 1px 0 rgba(255,255,255,.2),0 10px 22px -12px var(--ux-accent);transform:scale(var(--k,1));transition:transform .45s cubic-bezier(.34,1.7,.5,1),box-shadow .2s}
+.u440-go:hover{--k:1.03}
+.u440-go:active{--k:.94;transition:transform .1s var(--ux-ease)}
+.u440-go svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.u440 .u440-go:focus-visible{outline:2px solid var(--ux-accent);outline-offset:3px}
+
+/* Lucian UX/UI Prompt #090 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#090
+   Ported: the unplugged-cable illustration, the status pill, the attempt dots, the retry button with
+   its countdown ring and spinner, the plug wobble while retrying, the spark + shake on failure and
+   the Details expander. The demo success chart is dropped (the parent shows real content once the
+   retry works). The 340×410 card shell is optional (card prop); sizes kept, button 50px → 38px. */
+.u090{position:relative;display:flex;flex-direction:column;align-items:center;padding:20px 16px;text-align:center;color:var(--ux-ink)}
+.u090.is-card{padding:18px;border-radius:var(--radius-lg);background:var(--ux-surface);box-shadow:0 0 0 1px var(--ux-line)}
+.u090-pill{height:22px;padding:0 9px;border-radius:999px;display:inline-flex;align-items:center;gap:6px;background:color-mix(in srgb,var(--c) 14%,transparent);color:var(--c);font-size:11.5px;font-weight:700;white-space:nowrap;transition:color .35s,background-color .35s}
+.u090-pill::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.u090-plug{width:220px;max-width:100%;height:70px;margin-top:8px;overflow:visible}
+.u090.is-sm .u090-plug{width:160px;height:51px}
+.u090-cord{fill:none;stroke:var(--ux-ink-3);stroke-width:4;stroke-linecap:round}
+.u090-pr{stroke:var(--ux-ink-2);stroke-width:4.5;stroke-linecap:round}
+.u090-bd{fill:var(--ux-ink)}
+.u090-hole{stroke:var(--ux-surface);stroke-width:3;stroke-linecap:round}
+.u090-led{fill:var(--ux-danger);transition:fill .3s}
+.u090-L,.u090-R{transition:transform .55s var(--ux-spring)}
+.u090-L{transform:translateX(-10px)}
+.u090-R{transform:translateX(8px)}
+.u090[data-s="try"] .u090-L{transform:translateX(9px);animation:u090-jig .28s .5s ease-in-out infinite}
+.u090[data-s="try"] .u090-R{transform:translateX(-2px)}
+.u090[data-s="try"] .u090-led{fill:var(--ux-warn);animation:u090-blink .5s steps(1) infinite}
+.u090[data-s="ok"] .u090-L{transform:translateX(16px)}
+.u090[data-s="ok"] .u090-R{transform:translateX(-4px)}
+.u090[data-s="ok"] .u090-led{fill:var(--ux-mint)}
+@keyframes u090-jig{50%{transform:translateX(6px)}}
+@keyframes u090-blink{50%{fill:var(--ux-surface-3)}}
+.u090-spark{stroke:var(--ux-warn);stroke-width:2.6;stroke-linecap:round;opacity:0;transform-box:fill-box;transform-origin:50% 50%}
+.u090.zap .u090-spark{animation:u090-zap .55s var(--ux-ease)}
+@keyframes u090-zap{0%{opacity:1;transform:scale(.4)}60%{opacity:1}100%{opacity:0;transform:scale(1.25)}}
+.u090-t{margin:14px 0 0;font-size:15px;font-weight:750;letter-spacing:-.02em}
+.u090-s{margin:4px 0 0;max-width:46ch;font-size:12.5px;font-weight:500;line-height:1.5;color:var(--ux-ink-3);overflow-wrap:anywhere}
+.u090-at{display:flex;align-items:center;justify-content:center;gap:8px;min-height:18px;margin-top:10px;font-size:12px;font-weight:650;color:var(--ux-ink-2);font-variant-numeric:tabular-nums}
+.u090-dots{display:flex;gap:4px}
+.u090-dots i{width:18px;height:6px;border-radius:3px;background:var(--ux-surface-3);transition:background-color .3s}
+.u090-dots i.f{background:var(--ux-danger)}
+.u090-dots i.cur{background:var(--ux-warn);animation:u090-cur .7s ease-in-out infinite}
+.u090-dots i.ok{background:var(--ux-mint)}
+@keyframes u090-cur{50%{opacity:.4}}
+.u090-more{display:inline-flex;align-items:center;gap:4px;height:26px;margin-top:6px;padding:0 8px;border:0;border-radius:8px;background:transparent;font-size:12px;font-weight:650;color:var(--ux-ink-3)}
+.u090-more:hover{color:var(--ux-ink);background:var(--ux-surface-2)}
+.u090-more svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;transition:transform .3s var(--ux-ease)}
+.u090-more[aria-expanded="true"] svg{transform:rotate(180deg)}
+.u090-det{display:grid;grid-template-rows:0fr;width:100%;max-width:520px;transition:grid-template-rows .35s var(--ux-ease)}
+.u090-more[aria-expanded="true"]+.u090-det{grid-template-rows:1fr}
+.u090-det>div{min-height:0;overflow:hidden}
+.u090-det code{display:block;margin-top:6px;padding:10px 12px;border-radius:10px;background:var(--ux-surface-2);text-align:left;font:500 11.5px/1.65 var(--font-mono);color:var(--ux-ink-2);white-space:pre-wrap;overflow-wrap:anywhere}
+.u090-go{position:relative;display:inline-flex;align-items:center;justify-content:center;gap:8px;height:38px;min-width:150px;margin-top:14px;padding:0 16px;border:0;border-radius:12px;background:var(--ux-ink);color:var(--ux-page);font-size:13.5px;font-weight:700;transition:transform .3s var(--ux-spring),opacity .3s}
+.u090-go:active{transform:scale(.97)}
+.u090-go[aria-disabled="true"]{opacity:.55;cursor:progress}
+.u090-ring{width:18px;height:18px;transform:rotate(-90deg);transition:width .3s,margin .3s}
+.u090-ring circle{fill:none;stroke-width:2.6;stroke-linecap:round}
+.u090-ring circle:first-child{stroke:color-mix(in srgb,var(--ux-page) 25%,transparent)}
+.u090-ring circle+circle{stroke:var(--ux-page);stroke-dasharray:100}
+.u090[data-s="try"] .u090-ring{animation:u090-spin .8s linear infinite}
+.u090[data-s="try"] .u090-ring circle+circle{stroke-dasharray:28 72;stroke-dashoffset:0!important;transition:none!important}
+.u090[data-s="ok"] .u090-ring{width:0;margin-right:-8px}
+@keyframes u090-spin{to{transform:rotate(270deg)}}
+.u090-go:focus-visible{outline:2px solid var(--ux-accent);outline-offset:2px}
+/* Adaptation: <EmptyState plain size="sm"> — the quiet text block at table-cell / side-panel scale. */
+.empty-state.is-sm { padding: 16px 12px; font-size: 12px; }
+.empty-state.is-sm .empty-state-title { font-family: inherit; font-size: 14px; font-weight: 650; margin-bottom: 3px; }
+.empty-state.is-sm .u440-act { margin-top: 10px; }

@@ -1,0 +1,84 @@
+/* Legacy .table classes (owned here so <DataTable> and old markup agree). */
+.table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-subtle);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-sunken);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.table th.right, .table td.right { text-align: right; }
+.table td { padding: 0 12px; height: var(--density-row-h); border-bottom: 1px solid var(--border); vertical-align: middle; }
+.table tbody tr:hover { background: var(--bg-hover); }
+.table:not(.u227) tbody tr { cursor: pointer; }
+.table tbody tr:last-child td { border-bottom: none; }
+
+/* Lucian UX/UI Prompt #227 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#227
+   Ported: sortable headers with the spinning sort arrow, rows that glide past each other into the new
+   order (FLIP, .45s cubic-bezier(.3,1.1,.4,1)) and the brief glow on newly arrived rows. The live order
+   stream, pause control and demo card are dropped. Built on a real <table> (sticky header, density
+   row height); the glide only runs for ≤ 100 rows. */
+.u227-wrap{position:relative;width:100%;overflow:auto;-webkit-overflow-scrolling:touch}
+.u227{color:var(--ux-ink)}
+.u227 th,.u227 td.num{white-space:nowrap}
+.u227.is-dense td{height:28px}
+.u227.is-dense th{padding-top:7px;padding-bottom:7px}
+.u227 td.num,.u227 th.num{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.u227 th.right .u227-th{flex-direction:row-reverse}
+.u227 tbody tr.is-click{cursor:pointer}
+.u227 tbody tr.is-click:focus-visible{outline:2px solid var(--ux-accent);outline-offset:-2px}
+.u227 tbody tr.is-selected{background:var(--accent-bg)}
+.u227-th{display:inline-flex;align-items:center;gap:4px;padding:0;border:0;background:none;color:inherit;font:inherit;text-transform:inherit;letter-spacing:inherit;cursor:pointer}
+.u227 th[aria-sort="ascending"],.u227 th[aria-sort="descending"]{color:var(--ux-ink)}
+.u227-th svg{width:9px;height:9px;flex:none;opacity:.35;transition:transform .35s cubic-bezier(.3,1.6,.5,1),opacity .2s}
+.u227 th[aria-sort="ascending"] .u227-th svg{opacity:1;transform:rotate(180deg)}
+.u227 th[aria-sort="descending"] .u227-th svg{opacity:1}
+.u227-th:hover svg{opacity:.7}
+.u227-th:focus-visible{outline:2px solid var(--ux-accent);outline-offset:2px;border-radius:4px}
+.u227 tbody tr.is-glide{transition:transform .45s cubic-bezier(.3,1.1,.4,1)}
+.u227 tbody tr.is-new{animation:u227-gl 1.4s ease}
+@keyframes u227-gl{0%{background:color-mix(in srgb,var(--ux-accent) 22%,transparent)}100%{background:transparent}}
+.u227 tbody tr.is-empty:hover,.u227 tbody tr.is-skel:hover{background:none}
+.u227 td.u227-empty{height:auto;padding:0;border-bottom:0}
+@media (prefers-reduced-motion: reduce){.u227 tbody tr.is-glide{transition:none}.u227 tbody tr.is-new{animation:none}}
+
+/* DataTable additions (token-built on the #227 table; no Lucian match for these table mechanics). */
+/* Sticky first column: the first data column (and the expand toggle column) stay pinned on sideways
+   scroll. Cells get an opaque card fill; hover / selected tints are layered on top as a gradient. */
+.u227.is-sticky1 .u227-c1,.u227.is-sticky1.has-expand .u227-xc{position:sticky;left:0;z-index:1;background-color:var(--ux-surface)}
+.u227.is-sticky1.has-expand .u227-c1{left:32px}
+.u227.is-sticky1 th.u227-c1,.u227.is-sticky1.has-expand th.u227-xc{z-index:3;background-color:var(--bg-sunken)}
+.u227.is-sticky1 tbody tr:hover>td.u227-c1,.u227.is-sticky1.has-expand tbody tr:hover>td.u227-xc{background-image:linear-gradient(var(--bg-hover),var(--bg-hover))}
+.u227.is-sticky1 tbody tr.is-selected>td.u227-c1,.u227.is-sticky1.has-expand tbody tr.is-selected>td.u227-xc{background-image:linear-gradient(var(--accent-bg),var(--accent-bg))}
+.u227.is-sticky1 .u227-c1{box-shadow:inset -1px 0 0 var(--border)}
+/* Expandable rows: a 32px toggle column; the chevron turns 90° when open (spring), detail row below. */
+.u227 .u227-xc{width:32px;min-width:32px;padding:0 0 0 8px}
+.u227-xb{display:grid;place-items:center;width:22px;height:22px;padding:0;border:0;border-radius:6px;background:none;color:var(--ux-ink-3);cursor:pointer}
+.u227-xb:hover{background:var(--ux-surface-2);color:var(--ux-ink)}
+.u227-xb:focus-visible{outline:2px solid var(--ux-accent);outline-offset:1px}
+.u227-xb svg{width:12px;height:12px;transition:transform .35s var(--ux-spring)}
+.u227-xb[aria-expanded="true"]{color:var(--ux-ink)}
+.u227-xb[aria-expanded="true"] svg{transform:rotate(90deg)}
+.u227 tbody tr.is-open>td{border-bottom-color:transparent}
+.u227 tbody tr.u227-exp:hover{background:none}
+.u227 tbody tr.u227-exp>td{height:auto;padding:0;background:var(--bg-sunken)}
+.u227-expin{padding:10px 12px 12px 40px;animation:u227-x .3s var(--ux-ease)}
+@keyframes u227-x{from{opacity:0;transform:translateY(-4px)}}
+/* Group header rows: a quiet full-width band; the label stays in view on sideways scroll. */
+.u227 tbody tr.u227-grp:hover{background:none}
+.u227 tbody tr.u227-grp>th{position:static;padding:6px 12px;background:var(--bg-sunken);color:var(--text-muted);font-size:10.5px;font-weight:650;letter-spacing:.06em;text-align:left;border-bottom:1px solid var(--border)}
+.u227 tbody tr.u227-grp>th .u227-gl{position:sticky;left:12px}
+.u227 tbody tr.u227-grp>th .u227-gm{float:right;font-family:var(--font-mono);font-weight:500;letter-spacing:0;text-transform:none;color:var(--text-subtle)}
+.u227 tbody tr+tr.u227-grp>th{border-top:1px solid var(--border)}
+/* Footer (totals): sticky at the bottom inside maxHeight, sunken like the header. */
+.u227 tfoot td{position:sticky;bottom:0;z-index:1;height:var(--density-row-h);padding:0 12px;background:var(--bg-sunken);border-top:1px solid var(--border-strong);font-weight:600;color:var(--ux-ink);white-space:nowrap}
+.u227 tfoot td.u227-c1,.u227.has-expand tfoot td.u227-xc{z-index:2;background-color:var(--bg-sunken)}
+.u227.is-dense tfoot td{height:28px}
+@media (prefers-reduced-motion: reduce){.u227-expin{animation:none}.u227-xb svg{transition:none}}

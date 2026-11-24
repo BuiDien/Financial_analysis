@@ -1,0 +1,20 @@
+/* Lucian UX/UI Prompt #047 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#047
+   Ported: only the segmented control with its stretching knob; the demo count-up number and chart
+   are dropped. The option count is set by the component (grid columns). */
+.u047{position:relative;display:inline-block;max-width:100%}
+.u047-seg{position:relative;display:grid;grid-template-columns:repeat(4,1fr);padding:4px;border-radius:16px;background:var(--ux-surface-2)}
+.u047-knob{position:absolute;top:4px;bottom:4px;left:var(--l,4px);right:var(--r,4px);border-radius:12px;background:var(--ux-surface);box-shadow:0 4px 12px -6px var(--ux-shadow-strong),0 0 0 1px var(--ux-line)}
+.u047-seg.go-r .u047-knob{transition:right .3s var(--ux-ease),left .5s var(--ux-spring) .07s}
+.u047-seg.go-l .u047-knob{transition:left .3s var(--ux-ease),right .5s var(--ux-spring) .07s}
+.u047-opt{position:relative;height:38px;border:0;padding:0 14px;border-radius:12px;background:none;font-size:14px;font-weight:680;color:var(--ux-ink-3);white-space:nowrap;transition:color .3s,transform .3s var(--ux-spring)}
+.u047-opt:hover{color:var(--ux-ink-2)}
+.u047-opt:active{transform:scale(.94)}
+.u047-opt[aria-checked="true"]{color:var(--ux-ink)}
+.u047-opt:focus-visible{outline:2px solid var(--ux-accent);outline-offset:1px}
+/* Adaptation: size="sm" for toolbars — same knob motion at 28px. */
+.u047.is-sm .u047-seg{padding:3px;border-radius:10px}
+.u047.is-sm .u047-knob{top:3px;bottom:3px;border-radius:8px}
+.u047.is-sm .u047-opt{height:28px;padding:0 10px;border-radius:8px;font-size:12.5px;font-weight:620}
+/* Adaptation: value={null} (no selection) — the knob fades out; it fades back in at the picked option. */
+.u047-seg:not(.go-r):not(.go-l) .u047-knob{transition:opacity .2s var(--ux-ease)}
+.u047-knob.is-none{opacity:0}

@@ -147,9 +147,42 @@ export ALLOWED_ORIGINS="${ALLOWED_ORIGINS:-http://localhost:$FRONTEND_PORT,http:
 (cd "$BACKEND" && ".venv/bin/uvicorn" app.main:app --host 127.0.0.1 --port "$BACKEND_PORT") &
 PIDS+=("$!")
 
-# ── Frontend (static file server — no build step, Babel-in-browser) ───
-echo "-- Serving frontend on :$FRONTEND_PORT --"
-(cd "$ROOT" && python3 -m http.server --bind 127.0.0.1 "$FRONTEND_PORT" >/tmp/helix_frontend.log 2>&1) &
+# ── Frontend (Vite build in dist/, served as static files) ───────────
+# Rebuild when dist/ is missing, any frontend source is newer than the last
+# build, or the set of source files changed (a deleted/renamed file leaves no
+# newer mtime behind, so the build records a hash of the file list in
+# dist/.src-manifest and a mismatch forces a rebuild).
+# `npm run dev` (Vite on :5500) is the hot-reload alternative for UI work — it
+# uses port 5500 too, so stop run.sh first (or run one of the two).
+DIST="$ROOT/dist"
+SRC_MANIFEST="$(cd "$ROOT" && find src -type f ! -name '.DS_Store' | LC_ALL=C sort | shasum | cut -d' ' -f1)"
+if [ ! -f "$DIST/index.html" ] \
+  || [ "$(cat "$DIST/.src-manifest" 2>/dev/null)" != "$SRC_MANIFEST" ] \
+  || [ -n "$(find "$ROOT/src" "$ROOT/package.json" "$ROOT/package-lock.json" "$ROOT/vite.config.mjs" -newer "$DIST/index.html" -print -quit 2>/dev/null)" ]; then
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "ERROR: npm is required to build the frontend (brew install node)." >&2
+    exit 1
+  fi
+  if [ ! -d "$ROOT/node_modules" ]; then
+    echo "-- Installing frontend dependencies (one-time, needs network) --"
+    (cd "$ROOT" && npm ci --no-audit --no-fund)
+  fi
+  echo "-- Building frontend (vite build → dist/) --"
+  (cd "$ROOT" && npm run build --silent)
+  echo "$SRC_MANIFEST" > "$DIST/.src-manifest"
+fi
+echo "-- Serving frontend (dist/) on :$FRONTEND_PORT --"
+# index.html is sent with Cache-Control: no-cache so a rebuild is picked up on the
+# next load; the hashed assets it references never change under the same name.
+(cd "$DIST" && python3 -c '
+import http.server, sys
+class H(http.server.SimpleHTTPRequestHandler):
+    def end_headers(self):
+        if self.path.split("?")[0].endswith(("/", ".html")):
+            self.send_header("Cache-Control", "no-cache")
+        super().end_headers()
+http.server.ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+' "$FRONTEND_PORT" >/tmp/helix_frontend.log 2>&1) &
 PIDS+=("$!")
 
 # Wait for the backend to actually answer before opening the browser — a
@@ -185,8 +218,7 @@ else
   echo "-- OCR worker not set up (run ./scripts/setup_ocr_mac.sh) — OCR Inbox jobs will wait --"
 fi
 
-UI_VERSION="20260723-hermes-label-review"
-URL="http://localhost:$FRONTEND_PORT/Financial%20Analyze.html?v=$UI_VERSION"
+URL="http://localhost:$FRONTEND_PORT/"
 echo
 echo "== Running =="
 echo "  Backend:  http://localhost:$BACKEND_PORT  (docs: /docs)"

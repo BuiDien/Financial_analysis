@@ -1,0 +1,36 @@
+/* Lucian UX/UI Prompt #029 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#029
+   Ported: width follows the slot (was 350px) and the field grows from a 52px minimum instead of a
+   fixed 142px box, so it fits a filter row. Suggestions filter as you type. Chip text uses the ink token
+   (dataviz: text never wears the data colour); the colour stays as the tint and an 8px swatch. */
+.u029{position:relative;width:100%}
+.u029-head{display:flex;align-items:baseline;justify-content:space-between;margin:0 4px 10px}
+.u029-head b{font-size:16px;font-weight:720;letter-spacing:-.02em}
+.u029-n{font-size:13px;font-weight:700;color:var(--ux-ink-3);font-variant-numeric:tabular-nums;transition:color .3s}
+.u029-n.full{color:var(--ux-warn)}
+.u029-field{display:flex;flex-wrap:wrap;align-content:flex-start;gap:7px;min-height:52px;padding:9px;border-radius:20px;background:var(--ux-surface);box-shadow:0 0 0 1.5px var(--ux-line-2);cursor:text;transition:box-shadow .3s var(--ux-ease)}
+.u029-field:focus-within{box-shadow:0 0 0 2px var(--ux-accent),0 0 0 6px var(--ux-accent-soft)}
+.u029-field.shake{animation:u029-shake .42s var(--ux-ease)}
+@keyframes u029-shake{20%{transform:translateX(-6px)}40%{transform:translateX(5px)}60%{transform:translateX(-3px)}}
+.u029-tag{display:inline-flex;align-items:center;gap:4px;height:34px;padding:0 6px 0 12px;border-radius:11px;background:color-mix(in srgb,var(--c) 16%,transparent);color:var(--ux-ink);font-size:14px;font-weight:700;
+  animation:u029-pop .45s var(--ux-spring);transition:transform .3s var(--ux-ease),opacity .3s var(--ux-ease),box-shadow .2s}
+@keyframes u029-pop{from{transform:scale(.4);opacity:0}}
+.u029-tag::before{content:"";flex:none;width:8px;height:8px;margin-right:3px;border-radius:50%;background:var(--c)}
+.u029-tag.out{transform:scale(.4);opacity:0}
+.u029-tag.armed{box-shadow:0 0 0 2px var(--c);animation:u029-arm .3s var(--ux-ease)}
+@keyframes u029-arm{50%{transform:scale(1.08)}}
+.u029-x{width:22px;height:22px;border:0;padding:0;border-radius:7px;background:none;color:inherit;display:grid;place-items:center;opacity:.7}
+.u029-x:hover{opacity:1;background:color-mix(in srgb,currentColor 15%,transparent)}
+.u029-x:focus-visible{outline:2px solid currentColor;outline-offset:1px}
+.u029-x svg{width:10px;height:10px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}
+.u029-in{flex:1;min-width:90px;height:34px;border:0;outline:0;background:none;font-size:14.5px;color:var(--ux-ink)}
+.u029-in::placeholder{color:var(--ux-ink-3)}
+.u029-msg{min-height:18px;margin:8px 4px 10px;font-size:12.5px;color:var(--ux-ink-3);transition:color .3s}
+.u029-msg.warn{color:var(--ux-danger)}
+.u029-sg-row{display:flex;flex-wrap:wrap;gap:6px}
+.u029-sg{display:inline-flex;align-items:center;gap:5px;height:32px;padding:0 12px 0 9px;border:0;border-radius:999px;background:none;box-shadow:inset 0 0 0 1px var(--ux-line-2);font-size:13px;font-weight:620;color:var(--ux-ink-2);transition:transform .35s var(--ux-spring),opacity .3s,box-shadow .2s}
+.u029-sg:hover{box-shadow:inset 0 0 0 1px var(--ux-ink-3);color:var(--ux-ink)}
+.u029-sg:active{transform:scale(.92)}
+.u029-sg:focus-visible{outline:2px solid var(--ux-accent);outline-offset:2px}
+.u029-sg svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round}
+.u029-sg.used{opacity:.3;pointer-events:none}
+.u029-in:focus-visible{outline:none}

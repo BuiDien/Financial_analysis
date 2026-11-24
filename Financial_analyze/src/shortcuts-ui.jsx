@@ -1,6 +1,11 @@
 // shortcuts-ui.jsx — the settings editor + the cheatsheet overlay.
 
 // ── Recorder row: click to capture a new combo ────────────────
+import React from 'react';
+import { Icon } from './icons.jsx';
+import { toast } from './ui/index.js';
+import { ALL_SHORTCUT_ACTIONS, HelixShortcuts, KbdCombo, SHORTCUT_GROUPS, comboFromEvent, prettyCombo } from './shortcuts.jsx';
+
 const ShortcutRow = ({ action, combo, recording, onStartRecord, onStopRecord, onClear }) => {
   React.useEffect(() => {
     if (!recording) return;
@@ -11,7 +16,7 @@ const ShortcutRow = ({ action, combo, recording, onStartRecord, onStopRecord, on
       // ignore lone modifier presses — wait for a real key
       if (['control', 'meta', 'shift', 'alt'].includes(key)) return;
       if (key === 'escape') { onStopRecord(null); return; }
-      const c = window.comboFromEvent(e);
+      const c = comboFromEvent(e);
       onStopRecord(c);
     };
     window.addEventListener('keydown', onKey, true);
@@ -51,24 +56,24 @@ const ShortcutRow = ({ action, combo, recording, onStartRecord, onStopRecord, on
 
 // ── Settings editor (rendered inside the Settings page) ───────
 const ShortcutsEditor = () => {
-  const [bindings, setBindings] = React.useState(() => window.HelixShortcuts.load());
+  const [bindings, setBindings] = React.useState(() => HelixShortcuts.load());
   const [recordingId, setRecordingId] = React.useState(null);
   const [conflict, setConflict] = React.useState(null);
 
-  React.useEffect(() => window.HelixShortcuts.subscribe(setBindings), []);
+  React.useEffect(() => HelixShortcuts.subscribe(setBindings), []);
 
   const commit = (actionId, combo) => {
     setRecordingId(null);
     if (!combo) return;
-    const owner = window.HelixShortcuts.conflictFor(combo, actionId);
+    const owner = HelixShortcuts.conflictFor(combo, actionId);
     if (owner) {
-      const label = window.ALL_SHORTCUT_ACTIONS.find(a => a.id === owner)?.label || owner;
+      const label = ALL_SHORTCUT_ACTIONS.find(a => a.id === owner)?.label || owner;
       setConflict({ combo, label });
       setTimeout(() => setConflict(null), 2600);
       return;
     }
-    window.HelixShortcuts.set(actionId, combo);
-    window.toast && window.toast('Shortcut updated', { type: 'success' });
+    HelixShortcuts.set(actionId, combo);
+    toast && toast('Shortcut updated', { type: 'success' });
   };
 
   return (
@@ -79,10 +84,10 @@ const ShortcutsEditor = () => {
           background: 'var(--neg-bg)', border: '1px solid var(--neg-soft)',
           color: 'var(--neg)', fontSize: 12,
         }}>
-          <strong>{window.prettyCombo(conflict.combo)}</strong> is already used by “{conflict.label}”. Pick another.
+          <strong>{prettyCombo(conflict.combo)}</strong> is already used by “{conflict.label}”. Pick another.
         </div>
       )}
-      {window.SHORTCUT_GROUPS.map(group => (
+      {SHORTCUT_GROUPS.map(group => (
         <div key={group.group} style={{ marginBottom: 18 }}>
           <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-subtle)', marginBottom: 4 }}>
             {group.group}
@@ -95,12 +100,12 @@ const ShortcutsEditor = () => {
               recording={recordingId === action.id}
               onStartRecord={() => setRecordingId(action.id)}
               onStopRecord={(combo) => commit(action.id, combo)}
-              onClear={() => { window.HelixShortcuts.reset(action.id); window.toast && window.toast('Reset to default', { type: 'info' }); }}
+              onClear={() => { HelixShortcuts.reset(action.id); toast && toast('Reset to default', { type: 'info' }); }}
             />
           ))}
         </div>
       ))}
-      <button className="btn" onClick={() => { window.HelixShortcuts.resetAll(); window.toast && window.toast('All shortcuts reset', { type: 'info' }); }}>
+      <button className="btn" onClick={() => { HelixShortcuts.resetAll(); toast && toast('All shortcuts reset', { type: 'info' }); }}>
         Reset all to defaults
       </button>
     </>
@@ -110,14 +115,14 @@ const ShortcutsEditor = () => {
 // ── Cheatsheet overlay (Shift+? ) ─────────────────────────────
 const ShortcutCheatsheet = () => {
   const [open, setOpen] = React.useState(false);
-  const [bindings, setBindings] = React.useState(() => window.HelixShortcuts.bindings);
+  const [bindings, setBindings] = React.useState(() => HelixShortcuts.bindings);
 
   React.useEffect(() => {
-    const show = () => { setBindings({ ...window.HelixShortcuts.bindings }); setOpen(true); };
+    const show = () => { setBindings({ ...HelixShortcuts.bindings }); setOpen(true); };
     window.addEventListener('show-shortcuts', show);
     const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
     window.addEventListener('keydown', onKey);
-    const unsub = window.HelixShortcuts.subscribe(setBindings);
+    const unsub = HelixShortcuts.subscribe(setBindings);
     return () => { window.removeEventListener('show-shortcuts', show); window.removeEventListener('keydown', onKey); unsub(); };
   }, []);
 
@@ -135,7 +140,7 @@ const ShortcutCheatsheet = () => {
           </button>
         </div>
         <div style={{ padding: '12px 20px 20px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 32px' }}>
-          {window.SHORTCUT_GROUPS.map(group => (
+          {SHORTCUT_GROUPS.map(group => (
             <div key={group.group} style={{ gridColumn: group.group === 'Go to' ? '2' : '1', gridRow: group.group === 'Go to' ? 'span 2' : 'auto' }}>
               <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-subtle)', margin: '12px 0 6px' }}>
                 {group.group}
@@ -157,5 +162,4 @@ const ShortcutCheatsheet = () => {
   );
 };
 
-window.ShortcutsEditor = ShortcutsEditor;
-window.ShortcutCheatsheet = ShortcutCheatsheet;
+export { ShortcutCheatsheet, ShortcutsEditor };

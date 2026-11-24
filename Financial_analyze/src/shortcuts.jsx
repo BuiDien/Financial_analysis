@@ -19,7 +19,7 @@ const SHORTCUT_GROUPS = [
   {
     group: 'General',
     actions: [
-      { id: 'command-palette', label: 'Open command palette', default: 'mod+k' },
+      { id: 'command-palette', label: 'Toggle command palette', default: 'mod+k' },
       { id: 'toggle-ai',       label: 'Toggle AI assistant',  default: 'mod+j' },
       { id: 'toggle-theme',    label: 'Toggle light / dark',  default: 'mod+shift+l' },
       { id: 'open-settings',   label: 'Open settings',        default: 'mod+,' },
@@ -29,16 +29,17 @@ const SHORTCUT_GROUPS = [
   {
     group: 'Go to',
     actions: [
-      { id: 'go-home',       label: 'Home',                default: 'g h' },
-      { id: 'go-dashboard',  label: 'Dashboard',           default: 'g d' },
-      { id: 'go-detail',     label: 'Asset Detail',        default: 'g e' },
+      { id: 'go-home',       label: 'Today',               default: 'g h' },
+      { id: 'go-dashboard',  label: 'Today (alias)',       default: 'g d' },
+      { id: 'go-detail',     label: 'Company',             default: 'g e' },
       { id: 'go-portfolio',  label: 'Portfolio',           default: 'g p' },
-      { id: 'go-screener',   label: 'Screener',            default: 'g s' },
-      { id: 'go-backtest',   label: 'Backtest',            default: 'g b' },
-      { id: 'go-statements', label: 'Financial Statements', default: 'g f' },
-      { id: 'go-sync',       label: 'Sync',                default: 'g y' },
-      { id: 'go-news',       label: 'News',                default: 'g n' },
-      { id: 'go-alerts',     label: 'Alerts',              default: 'g a' },
+      { id: 'go-screener',   label: 'Scan',                default: 'g s' },
+      { id: 'go-backtest',   label: 'Scan · Backtest',     default: 'g b' },
+      { id: 'go-statements', label: 'Company · Statements', default: 'g f' },
+      { id: 'go-ocr-inbox',  label: 'Inbox',               default: 'g i' },
+      { id: 'go-sync',       label: 'Inbox · Sync',        default: 'g y' },
+      { id: 'go-news',       label: 'Today · News',        default: 'g n' },
+      { id: 'go-alerts',     label: 'Today · Alerts',      default: 'g a' },
     ],
   },
 ];
@@ -177,9 +178,4 @@ const KbdCombo = ({ combo }) => {
   );
 };
 
-window.HelixShortcuts = HelixShortcuts;
-window.SHORTCUT_GROUPS = SHORTCUT_GROUPS;
-window.ALL_SHORTCUT_ACTIONS = ALL_ACTIONS;
-window.comboFromEvent = comboFromEvent;
-window.prettyCombo = prettyCombo;
-window.KbdCombo = KbdCombo;
+export { ALL_ACTIONS as ALL_SHORTCUT_ACTIONS, HelixShortcuts, KbdCombo, SHORTCUT_GROUPS, comboFromEvent, prettyCombo };

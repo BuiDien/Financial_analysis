@@ -1,6 +1,6 @@
 // node scripts/test-screener-plain.js — checks the Easy / Normal / Strict logic.
 const assert = require('assert');
-const P = require('../src/screener-plain.js');
+const P = require('../src/pages/scan/screener-plain.js');
 
 const cat = {
   roe_years: { kind: 'at_least', params: { x: { min: 0, max: 100 }, n: { min: 1, max: 8 } } },

@@ -1,0 +1,3 @@
+/* Shared Today-section helpers — .td-quiet: compact left-aligned empty text inside small cards. */
+.td-quiet.empty-state { padding: 14px 2px; text-align: left; }
+.td-quiet .empty-state-title { font-family: inherit; font-size: 13px; font-weight: 600; margin-bottom: 2px; }

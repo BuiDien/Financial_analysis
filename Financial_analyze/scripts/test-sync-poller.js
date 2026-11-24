@@ -1,6 +1,6 @@
 // node scripts/test-sync-poller.js — in-flight guard, back-off, one error report, hidden pause.
 const assert = require('assert');
-const { create } = require('../src/sync-poller.js');
+const { create } = require('../src/lib/sync-poller.js');
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
